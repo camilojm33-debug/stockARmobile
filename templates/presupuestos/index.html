@@ -91,7 +91,18 @@
             <td data-label="Vendedor"><div class="quotes-seller-cell"><div class="quotes-avatar quotes-avatar-soft"><i class="bi bi-person-badge"></i></div><span>{{ quote.seller.name if quote.seller else 'Sin asignar' }}</span></div></td>
             <td data-label="Fecha"><div class="fw-semibold">{{ quote.date.strftime('%d/%m/%Y') if quote.date else '-' }}</div><div class="small text-muted">{{ quote.date.strftime('%H:%M') if quote.date else '' }}</div></td>
             <td data-label="Vence"><div class="fw-semibold">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div></td>
-            <td data-label="Estado"><span class="quotes-status {% if quote.status == 'CONVERTIDO' %}quotes-status-success{% elif quote.status in ['APROBADO','ENVIADO'] %}quotes-status-primary{% elif quote.status == 'RECHAZADO' %}quotes-status-danger{% elif quote.status == 'VENCIDO' %}quotes-status-warning{% elif quote.status == 'ANULADO' %}quotes-status-dark{% else %}quotes-status-secondary{% endif %}"><i class="bi {% if quote.status == 'CONVERTIDO' %}bi-check2-circle{% elif quote.status in ['APROBADO','ENVIADO'] %}bi-send{% elif quote.status == 'RECHAZADO' %}bi-x-circle{% elif quote.status == 'VENCIDO' %}bi-exclamation-circle{% elif quote.status == 'ANULADO' %}bi-slash-circle{% else %}bi-hourglass-split{% endif %}"></i>{{ quote.status }}</span></td>
+            <td data-label="Estado">
+              <span class="quotes-status {% if quote.status == 'CONVERTIDO' %}quotes-status-success{% elif quote.status in ['APROBADO','ENVIADO'] %}quotes-status-primary{% elif quote.status == 'RECHAZADO' %}quotes-status-danger{% elif quote.status == 'VENCIDO' %}quotes-status-warning{% elif quote.status == 'ANULADO' %}quotes-status-dark{% else %}quotes-status-secondary{% endif %}"><i class="bi {% if quote.status == 'CONVERTIDO' %}bi-check2-circle{% elif quote.status in ['APROBADO','ENVIADO'] %}bi-send{% elif quote.status == 'RECHAZADO' %}bi-x-circle{% elif quote.status == 'VENCIDO' %}bi-exclamation-circle{% elif quote.status == 'ANULADO' %}bi-slash-circle{% else %}bi-hourglass-split{% endif %}"></i>{{ quote.status }}</span>
+              {% if quote.delivery and quote.delivery.method != 'envio' %}
+                {% if quote.delivery.pickup_status == 'picked_up' or quote.delivery.picked_up_at %}
+                  <div class="small text-success fw-semibold mt-1"><i class="bi bi-check2-circle me-1"></i>Retirado{% if quote.delivery.picked_up_at %} · {{ quote.delivery.picked_up_at_local }}{% endif %}</div>
+                {% elif quote.delivery.pickup_status == 'pending' and (quote.converted_sale_id or quote.status == 'CONVERTIDO') %}
+                  <div class="small text-warning fw-semibold mt-1"><i class="bi bi-box-seam me-1"></i>Listo para retirar</div>
+                {% elif quote.delivery.pickup_status == 'legacy' or not quote.delivery.pickup_status %}
+                  <div class="small text-muted mt-1"><i class="bi bi-clock-history me-1"></i>Anterior al seguimiento de retiros</div>
+                {% endif %}
+              {% endif %}
+            </td>
             <td data-label="Total" class="text-end"><div class="fw-bold quotes-total">${{ "%.2f"|format(quote.total_amount or 0) }}</div></td>
             <td data-label="Acciones" class="text-end"><div class="quotes-actions">
               <a class="btn quotes-action quotes-action-view" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}" title="Ver presupuesto" aria-label="Ver presupuesto"><i class="bi bi-eye"></i><span class="quotes-action-text">Ver</span></a>

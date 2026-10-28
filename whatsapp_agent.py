@@ -12,7 +12,7 @@ from flask import Blueprint, abort, current_app, flash, jsonify, redirect, rende
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import csrf, db
-from stockarmobile.helpers.dates import utcnow_naive
+from stockarmobile.helpers.dates import format_local_datetime, utcnow_naive
 from stockarmobile.decorators import company_admin_required
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
@@ -697,7 +697,7 @@ def _ai_order_row(company_id: int, quote):
             "auto_followup_supported": channel == "whatsapp",
         },
         "delivery": {
-            "method": getattr(getattr(quote, "delivery", None), "method", "retiro") if getattr(quote, "delivery", None) else "retiro",
+            "method": getattr(delivery_for_status, "method", "retiro") if delivery_for_status else "retiro",
             "recipient_name": getattr(getattr(quote, "delivery", None), "recipient_name", "") if getattr(quote, "delivery", None) else "",
             "phone": getattr(getattr(quote, "delivery", None), "phone", "") if getattr(quote, "delivery", None) else "",
             "address": getattr(getattr(quote, "delivery", None), "address", "") if getattr(quote, "delivery", None) else "",
@@ -712,6 +712,10 @@ def _ai_order_row(company_id: int, quote):
             "shipping_source": getattr(getattr(quote, "delivery", None), "shipping_source", "manual") if getattr(quote, "delivery", None) else "none",
             "shipping_confirmed_by_user_id": getattr(getattr(quote, "delivery", None), "shipping_confirmed_by_user_id", None) if getattr(quote, "delivery", None) else None,
             "shipping_confirmed_at": getattr(getattr(quote, "delivery", None), "shipping_confirmed_at", None) if getattr(quote, "delivery", None) else None,
+            "pickup_status": getattr(getattr(quote, "delivery", None), "pickup_status", None) if getattr(quote, "delivery", None) else None,
+            "picked_up_at": getattr(getattr(quote, "delivery", None), "picked_up_at", None) if getattr(quote, "delivery", None) else None,
+            "picked_up_at_local": format_local_datetime(getattr(delivery_for_status, "picked_up_at", None), getattr(company, "timezone", None), "%d/%m/%Y %H:%M") if delivery_for_status and getattr(delivery_for_status, "picked_up_at", None) else "",
+            "picked_up_by": getattr(getattr(getattr(quote, "delivery", None), "picked_up_by", None), "name", None) if getattr(quote, "delivery", None) else None,
         },
     }
 
@@ -732,14 +736,16 @@ def ai_orders():
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
-    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human"}
+    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human", "pickup_pending", "picked_up"}
     rows = [
         row for row in all_rows
         if not selected_status
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
         or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
-        or (selected_status not in {"shipping_pending", "human"} and row["order_key"] == selected_status)
+        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending")
+        or (selected_status == "picked_up" and row.get("delivery", {}).get("pickup_status") == "picked_up")
+        or (selected_status not in {"shipping_pending", "human", "pickup_pending", "picked_up"} and row["order_key"] == selected_status)
     ]
     channel_keys = []
     for row in all_rows:
@@ -753,6 +759,8 @@ def ai_orders():
         "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
+        "pickup_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending"),
+        "picked_up": sum(1 for row in all_rows if row.get("delivery", {}).get("pickup_status") == "picked_up"),
         "human_attention": sum(1 for row in all_rows if row.get("attention", {}).get("key") == "human"),
         "channel_keys": channel_keys,
         "channel_labels": channel_labels,
@@ -785,6 +793,49 @@ def _tenant_attention_actor():
     if company is None:
         abort(404)
     return int(company_id), company
+
+
+
+@bp.post("/pedidos-ia/<int:quote_id>/retirar")
+@login_required
+def ai_order_mark_picked_up(quote_id: int):
+    """Confirm physical pickup on the existing quote delivery, without altering sale/payment."""
+    company_id, _company = _tenant_attention_actor()
+    from app import Quote, QuoteDelivery
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote = Quote.query.filter_by(
+        id=int(quote_id),
+        company_id=int(company_id),
+        observations=marker,
+    ).with_for_update().first()
+    if quote is None:
+        abort(404)
+
+    delivery = QuoteDelivery.query.filter_by(
+        quote_id=int(quote.id),
+        company_id=int(company_id),
+    ).with_for_update().first()
+    if delivery is None or str(delivery.method or "retiro").strip().lower() != "retiro":
+        flash("Este pedido no está configurado para retiro en el comercio.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    if not getattr(quote, "converted_sale_id", None):
+        flash("Primero confirmá la venta por el flujo habitual antes de registrar el retiro.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    current_status = str(getattr(delivery, "pickup_status", None) or "pending").strip().lower()
+    if current_status == "picked_up" or getattr(delivery, "picked_up_at", None):
+        flash("El retiro ya estaba registrado; no se creó un segundo registro.", "info")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    delivery.pickup_status = "picked_up"
+    delivery.picked_up_at = utcnow_naive()
+    delivery.picked_up_by_user_id = int(current_user.id)
+    db.session.commit()
+    flash("Retiro registrado con fecha, hora y usuario responsable.", "success")
+    return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
 
 
 @bp.get("/pedidos-ia/atencion-whatsapp")
