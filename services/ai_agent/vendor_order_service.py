@@ -1290,7 +1290,12 @@ class VendorOrderService:
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
-        cart = VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
+        cart = VendorOrderService.get_cart(
+            company_id=company_id,
+            conversation_id=conversation_id,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
         if not cart["items"]:
             raise ValueError("El carrito está vacío.")
 
@@ -1407,31 +1412,11 @@ class VendorOrderService:
             raise ValueError("No hay un usuario activo para registrar el pedido.")
 
         phone = _normalize_phone(customer_phone)
-        client = None
-        if phone:
-            phone_matches = Client.query.filter(
-                Client.company_id == company_id,
-                or_(Client.whatsapp == customer_phone, Client.phone == customer_phone, Client.whatsapp == phone, Client.phone == phone),
-                Client.active.is_(True),
-            ).order_by(Client.id.asc()).all()
-
-            normalized_customer_name = _normalize_text(customer_name)
-            if normalized_customer_name:
-                # A phone number can be shared or reassigned. Reuse an existing
-                # profile only if its name agrees, or the profile is generic.
-                client = next(
-                    (candidate for candidate in phone_matches
-                     if _normalize_text(candidate.name) == normalized_customer_name),
-                    None,
-                )
-                if client is None:
-                    client = next(
-                        (candidate for candidate in phone_matches
-                         if _normalize_text(candidate.name) in {"", "consumidor final"}),
-                        None,
-                    )
-            elif len(phone_matches) == 1:
-                client = phone_matches[0]
+        client = _find_registered_client(
+            company_id=int(company_id),
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
 
         if client is None and (customer_name.strip() or phone):
             clean_name = customer_name.strip()[:200] or "Consumidor final"
@@ -1500,7 +1485,27 @@ class VendorOrderService:
                 ).quantize(Decimal("0.01")),
             })
 
-        line_inputs, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=line_inputs)
+        from services.wholesale_pricing_service import (
+            apply_wholesale_prices,
+            is_wholesale_client,
+            validate_wholesale_prices,
+        )
+        wholesale_buyer = is_wholesale_client(client)
+        if wholesale_buyer:
+            # Wholesale list prices are authoritative and do not stack legacy
+            # product discounts or retail promotions.
+            line_inputs = apply_wholesale_prices(
+                line_inputs,
+                company_id=int(company_id),
+                client=client,
+            )
+            validate_wholesale_prices(line_inputs, client=client)
+            promotion_results = []
+        else:
+            line_inputs, promotion_results = PromotionEngine.apply_to_lines(
+                company_id=company_id,
+                lines=line_inputs,
+            )
         promotion_by_product_id = {
             int(line["product"].id): line["promotion"]
             for line in line_inputs
@@ -1510,6 +1515,11 @@ class VendorOrderService:
         for result in promotion_results:
             if result.promotion_name and result.promotion_name not in promotion_names:
                 promotion_names.append(result.promotion_name)
+        pricing_line_by_product_id = {
+            int(line["product"].id): line
+            for line in line_inputs
+            if line.get("product") is not None
+        }
         base_totals = PricingService.calculate(lines=line_inputs, data={})
         shipping = _shipping_plan(
             company_id=company_id,
@@ -1564,9 +1574,14 @@ class VendorOrderService:
         for index, item in enumerate(cart["items"]):
             product = products[int(item["product_id"])]
             quantity = Decimal(str(item["quantity"]))
-            unit_price = _money(product.price)
+            pricing_line = pricing_line_by_product_id.get(int(product.id), {})
+            unit_price = _money(pricing_line.get("price", product.price))
             promotion = promotion_by_product_id.get(product.id)
-            discount = promotion.discount if promotion is not None else (_money(product.discount) * quantity).quantize(Decimal("0.01"))
+            discount = (
+                _money(promotion.discount)
+                if promotion is not None
+                else _money(pricing_line.get("line_discount", (_money(product.discount) * quantity)))
+            )
             subtotal = max((unit_price * quantity) - discount, Decimal("0.00"))
             db.session.add(
                 QuoteItem(
@@ -1577,6 +1592,10 @@ class VendorOrderService:
                     unit_price=unit_price,
                     discount=discount,
                     subtotal=subtotal,
+                    price_source=str(pricing_line.get("price_source") or "minorista"),
+                    price_list_id=pricing_line.get("price_list_id"),
+                    wholesale_discount_percent=pricing_line.get("wholesale_discount_percent"),
+                    wholesale_reference_price=pricing_line.get("wholesale_reference_price"),
                     sort_order=index,
                 )
             )
