@@ -5,7 +5,7 @@ const STATIC_ASSETS = [
   '/static/assets/css/styles.css',
   '/static/assets/css/landing.css?v=20260923',
   '/static/assets/css/landing-v3.css?v=20260923',
-  '/static/assets/js/cart-manager.js?v=20261028-pos-wholesale-diagnostics',
+  '/static/assets/js/cart-manager.js?v=20261028-wholesale-quote-prefill-fix',
   '/static/assets/js/landing.js',
   '/static/assets/js/edit-sale.js',
   '/static/assets/js/ventas-new.js',

@@ -349,6 +349,66 @@ def _quote_charge_snapshot(quote):
     return payload if isinstance(payload, list) else []
 
 
+def _quote_cart_prefill_item(quote_item, product, *, quantity=None):
+    """Build a POS cart line without dropping the saved wholesale price snapshot."""
+    quantity_value = to_decimal(
+        quantity if quantity is not None else getattr(quote_item, "quantity", 0)
+    )
+    unit_price = to_decimal(getattr(quote_item, "unit_price", 0)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    price_source = str(getattr(quote_item, "price_source", None) or "minorista").strip().lower()
+    price_list_id = getattr(quote_item, "price_list_id", None)
+    percent_raw = getattr(quote_item, "wholesale_discount_percent", None)
+    reference_raw = getattr(quote_item, "wholesale_reference_price", None)
+    percent = to_decimal(percent_raw) if percent_raw not in (None, "") else None
+    reference_price = (
+        to_decimal(reference_raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if reference_raw not in (None, "")
+        else None
+    )
+    if price_source == "mayorista" and reference_price is None:
+        reference_price = to_decimal(getattr(product, "price", 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    retail_price = (
+        reference_price
+        if price_source == "mayorista" and reference_price is not None
+        else to_decimal(getattr(product, "price", 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    )
+    wholesale_saving = Decimal("0.00")
+    if (
+        price_source == "mayorista"
+        and percent is not None
+        and reference_price is not None
+        and percent > 0
+        and reference_price > unit_price
+        and quantity_value > 0
+    ):
+        wholesale_saving = ((reference_price - unit_price) * quantity_value).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+    return {
+        "productId": int(product.id),
+        "name": str(getattr(quote_item, "description", None) or getattr(product, "name", None) or "Producto"),
+        "price": float(unit_price),
+        "retailPrice": float(retail_price),
+        "priceSource": price_source,
+        "priceListId": int(price_list_id) if price_list_id not in (None, "") else None,
+        "priceListName": "",
+        "wholesaleDiscountPercent": float(percent) if percent is not None else None,
+        "wholesaleReferencePrice": float(reference_price) if reference_price is not None else None,
+        "wholesaleDiscountAmount": float(wholesale_saving),
+        "quantity": float(quantity_value),
+        "stock": max(float(getattr(product, "stock", 0) or 0), 0.0),
+        "barcode": str(getattr(product, "barcode", None) or "")[:80],
+        "unitMeasure": str(getattr(product, "unit_measure", None) or "u")[:20],
+    }
+
+
 def _quote_charge_display_rows(quote):
     rows = []
     for charge in _quote_charge_snapshot(quote):
@@ -1766,13 +1826,16 @@ def convert_to_sale(quote_id):
     payload_items = []
     product_ids = []
     line_discounts = {}
+    quote_items_by_id = {}
     for item in quote.items:
         product_id = int(item.product_id or 0)
         if product_id <= 0:
             raise ValueError("Solo se pueden convertir presupuestos con productos asociados.")
         product_ids.append(product_id)
+        quote_items_by_id[int(item.id)] = item
         payload_items.append(
             {
+                "quoteItemId": int(item.id),
                 "productId": product_id,
                 "name": item.description,
                 "price": float(item.unit_price or 0),
@@ -1810,17 +1873,9 @@ def convert_to_sale(quote_id):
         if requested_qty <= 0:
             skipped_lines += 1
             continue
-        cart_items.append(
-            {
-                "productId": int(product.id),
-                "name": row["name"],
-                "price": float(row["price"]),
-                "quantity": requested_qty,
-                "stock": max_stock,
-                "barcode": (product.barcode or "")[:80],
-                "unitMeasure": (product.unit_measure or "u")[:20],
-            }
-        )
+        quote_item = quote_items_by_id.get(int(row.get("quoteItemId") or 0))
+        cart_item = _quote_cart_prefill_item(quote_item, product, quantity=requested_qty)
+        cart_items.append(cart_item)
 
     if stock_shortages:
         preview = "; ".join(stock_shortages[:5])

@@ -381,7 +381,16 @@ function loadCart() {
   // register navigates away and destroys in-memory JS state.
   restoreQuotePricingSnapshotFromStorage();
   updateCartUI();
-  if (cart.length && !quoteSnapshotMatchesCart()) {
+  // Quote prefill sets its authoritative client and price snapshot immediately
+  // after loadCart(). Do not start an async retail-price request before that
+  // client is selected: its response can arrive later and overwrite wholesale
+  // prices from the quote.
+  const hasPendingQuotePrefill = Boolean(
+    window.__quoteCartPrefill
+    && Array.isArray(window.__quoteCartPrefill.items)
+    && window.__quoteCartPrefill.items.length
+  );
+  if (cart.length && !quoteSnapshotMatchesCart() && !hasPendingQuotePrefill) {
     void refreshCartPricing({ quiet: true });
   }
 }
@@ -421,6 +430,13 @@ function applyQuoteCartPrefillFromServer() {
       productId,
       name: String(rawItem?.name || 'Producto'),
       price,
+      retailPrice: Number.isFinite(parseFloat(rawItem?.retailPrice)) ? parseFloat(rawItem.retailPrice) : price,
+      priceSource: String(rawItem?.priceSource || 'minorista'),
+      priceListId: rawItem?.priceListId || null,
+      priceListName: String(rawItem?.priceListName || ''),
+      wholesaleDiscountPercent: rawItem?.wholesaleDiscountPercent == null ? null : (parseFloat(rawItem.wholesaleDiscountPercent) || 0),
+      wholesaleReferencePrice: rawItem?.wholesaleReferencePrice == null ? null : (parseFloat(rawItem.wholesaleReferencePrice) || 0),
+      wholesaleDiscountAmount: parseFloat(rawItem?.wholesaleDiscountAmount || 0) || 0,
       stock,
       barcode: String(rawItem?.barcode || ''),
       unitMeasure: String(rawItem?.unitMeasure || 'u'),
@@ -436,6 +452,14 @@ function applyQuoteCartPrefillFromServer() {
       const existing = cart.find(item => item.productId === sanitizedItem.productId);
       if (existing) {
         existing.quantity = Math.min((parseFloat(existing.quantity) || 0) + sanitizedItem.quantity, sanitizedItem.stock);
+        existing.price = sanitizedItem.price;
+        existing.retailPrice = sanitizedItem.retailPrice;
+        existing.priceSource = sanitizedItem.priceSource;
+        existing.priceListId = sanitizedItem.priceListId;
+        existing.priceListName = sanitizedItem.priceListName;
+        existing.wholesaleDiscountPercent = sanitizedItem.wholesaleDiscountPercent;
+        existing.wholesaleReferencePrice = sanitizedItem.wholesaleReferencePrice;
+        existing.wholesaleDiscountAmount = sanitizedItem.wholesaleDiscountAmount;
       } else {
         cart.push(sanitizedItem);
       }
