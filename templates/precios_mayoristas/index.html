@@ -32,7 +32,7 @@
         <div class="list-group list-group-flush">
           {% for price_list in lists %}
             <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-2 {{ 'active' if selected_list and selected_list.id == price_list.id else '' }}" href="{{ url_for('wholesale_pricing.index', list_id=price_list.id) }}">
-              <span><span class="d-block fw-semibold">{{ price_list.name }}</span><small class="{{ 'text-white-50' if selected_list and selected_list.id == price_list.id else 'text-muted' }}">{{ price_list.code }} · {{ price_list.items|length }} tramos</small></span>
+              <span><span class="d-block fw-semibold">{{ price_list.name }}</span><small class="{{ 'text-white-50' if selected_list and selected_list.id == price_list.id else 'text-muted' }}">{{ price_list.code }} · {{ price_list.items|length }} tramos · {{ price_list.discount_rules|length }} reglas generales</small></span>
               <span class="badge {{ 'bg-success' if price_list.active else 'bg-secondary' }}">{{ 'Activa' if price_list.active else 'Inactiva' }}</span>
             </a>
           {% else %}<div class="p-3 text-muted small">Todavía no creaste listas.</div>{% endfor %}
@@ -217,7 +217,7 @@
                   <td><span class="badge {{ 'bg-success' if row.active else 'bg-secondary' }}">{{ 'Activo' if row.active else 'Inactivo' }}</span></td>
                   <td class="text-end">{% if row.active %}<form method="post" action="{{ url_for('wholesale_pricing.deactivate_item', list_id=selected_list.id, item_id=row.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Desactivar</button></form>{% endif %}</td>
                 </tr>
-              {% else %}<tr><td colspan="6" class="text-center text-muted py-4">No hay precios cargados en esta lista.</td></tr>{% endfor %}
+              {% else %}<tr><td colspan="6" class="text-center text-muted py-4">{% if general_rules %}No hay tarifas individuales. Las reglas generales de arriba calcularán el precio mayorista para los productos incluidos en cada tramo.{% else %}No hay precios cargados en esta lista. Agregá una tarifa individual o una regla general de descuento.{% endif %}</td></tr>{% endfor %}
             </tbody>
           </table>
         </div>
