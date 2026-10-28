@@ -1015,7 +1015,10 @@ function restoreRetailCartPrices() {
  * values when creating a sale.
  */
 async function refreshCartPricing({ quiet = true, force = false } = {}) {
-  if (!Array.isArray(cart) || !cart.length) return true;
+  if (!Array.isArray(cart) || !cart.length) {
+    setCartWholesalePricingStatus('');
+    return true;
+  }
   if (quoteSnapshotMatchesCart()) return true;
 
   if (!navigator.onLine) {
