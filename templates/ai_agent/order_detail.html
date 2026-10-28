@@ -183,13 +183,34 @@
             </form>
             {% endif %}
           {% else %}
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex justify-content-between align-items-center mb-3">
               <div>
                 <div class="fw-semibold">Retiro en el comercio</div>
                 <div class="small text-muted">No se aplica recargo de envío.</div>
               </div>
               <span class="badge text-bg-light border">Costo $0</span>
             </div>
+            {% set pickup_done = delivery and (delivery.pickup_status == 'picked_up' or delivery.picked_up_at) %}
+            {% if pickup_done %}
+            <div class="alert alert-success mb-0">
+              <div class="fw-bold"><i class="bi bi-check-circle-fill me-1"></i>Retirado</div>
+              <div class="small">Fecha y hora: {{ delivery.picked_up_at.strftime('%d/%m/%Y %H:%M') if delivery.picked_up_at else 'registrado' }}</div>
+              {% if delivery.picked_up_by %}<div class="small">Entregado por: {{ delivery.picked_up_by }}</div>{% endif %}
+            </div>
+            {% elif order.sale_id %}
+            <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
+              <div><div class="fw-bold">Listo para retirar</div><div class="small">Venta confirmada. El retiro aún no fue registrado.</div></div>
+              <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_picked_up', quote_id=order.quote_id) }}" onsubmit="return confirm('¿Confirmás que el cliente retiró toda la mercadería?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-success"><i class="bi bi-box-seam me-1"></i>Marcar retirado</button>
+              </form>
+            </div>
+            {% else %}
+            <div class="alert alert-light border mb-0">
+              <div class="fw-bold">Pendiente de confirmar la venta</div>
+              <div class="small">Primero completá el flujo habitual de pago/venta. El sistema habilitará el registro del retiro cuando la venta esté confirmada.</div>
+            </div>
+            {% endif %}
           {% endif %}
         </div>
       </div>
