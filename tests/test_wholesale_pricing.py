@@ -1460,6 +1460,9 @@ def test_pos_quick_create_defaults_to_retail_and_blocks_non_admin_wholesale_assi
     assert retail_client.customer_type == "minorista"
     assert retail_client.price_list_id is None
 
+    db.session.refresh(data["employee"])
+    assert data["employee"].role == "user"
+
     non_admin_browser = app.test_client()
     _login_test_client(non_admin_browser, data["employee"])
     denied = non_admin_browser.post(
