@@ -1400,3 +1400,137 @@ def test_general_discount_rule_admin_ui_is_company_scoped_and_upserts_threshold(
     assert denied.status_code in (302, 401, 403, 404)
 
 
+
+
+def _login_test_client(browser, user):
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(user.id)
+        session["_fresh"] = True
+
+
+def test_pos_quick_create_can_assign_wholesale_list_and_select_customer(wholesale_database, app):
+    data = wholesale_database
+    browser = app.test_client()
+    _login_test_client(browser, data["admin"])
+
+    page = browser.get("/ventas/")
+    assert page.status_code == 200
+    assert b'id="quick-client-type"' in page.data
+    assert b'id="quick-client-price-list"' in page.data
+    assert str(data["price_list"].id).encode() in page.data
+
+    response = browser.post(
+        "/clientes/api/quick-create",
+        json={
+            "name": "Cliente mayorista creado desde POS",
+            "email": "pos-mayorista@example.test",
+            "whatsapp": "5491100000000",
+            "customer_type": "mayorista",
+            "price_list_id": data["price_list"].id,
+        },
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["client"]["customer_type"] == "mayorista"
+    assert body["client"]["price_list_id"] == data["price_list"].id
+    assert body["client"]["price_list_name"] == data["price_list"].name
+
+    client = Client.query.filter_by(
+        company_id=data["company"].id,
+        email="pos-mayorista@example.test",
+    ).one()
+    assert client.customer_type == "mayorista"
+    assert client.price_list_id == data["price_list"].id
+
+
+def test_pos_quick_create_defaults_to_retail_and_blocks_non_admin_wholesale_assignment(wholesale_database, app):
+    data = wholesale_database
+    browser = app.test_client()
+    _login_test_client(browser, data["employee"])
+
+    retail_response = browser.post(
+        "/clientes/api/quick-create",
+        json={"name": "Cliente rápido minorista QA"},
+    )
+    assert retail_response.status_code == 201
+    retail_client = Client.query.filter_by(
+        company_id=data["company"].id,
+        name="Cliente rápido minorista QA",
+    ).one()
+    assert retail_client.customer_type == "minorista"
+    assert retail_client.price_list_id is None
+
+    denied = browser.post(
+        "/clientes/api/quick-create",
+        json={
+            "name": "Cliente mayorista sin permisos QA",
+            "customer_type": "mayorista",
+            "price_list_id": data["price_list"].id,
+        },
+    )
+    assert denied.status_code == 403
+    assert Client.query.filter_by(
+        company_id=data["company"].id,
+        name="Cliente mayorista sin permisos QA",
+    ).first() is None
+
+
+def test_pos_cart_pricing_uses_general_wholesale_rule_for_quantity_three(wholesale_database, app):
+    data = wholesale_database
+    db.session.add(PriceListDiscountRule(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        min_quantity=Decimal("3.000"),
+        discount_percent=Decimal("15.00"),
+        active=True,
+    ))
+    db.session.commit()
+    browser = app.test_client()
+    _login_test_client(browser, data["admin"])
+
+    response = browser.post(
+        "/ventas/api/cart-pricing",
+        headers={"X-Cart-Tenant": f"{data['company'].id}:{data['admin'].id}"},
+        json={
+            "client_id": data["wholesale_client"].id,
+            "items": [{"productId": data["product"].id, "quantity": 3}],
+        },
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["success"] is True
+    assert body["customer_type"] == "mayorista"
+    assert len(body["lines"]) == 1
+    line = body["lines"][0]
+    assert line["product_id"] == data["product"].id
+    assert Decimal(str(line["unit_price"])) == Decimal("85.00")
+    assert Decimal(str(line["discount_percent"])) == Decimal("15.00")
+    assert Decimal(str(line["reference_price"])) == Decimal("100.00")
+    assert Decimal(str(line["wholesale_discount_amount"])) == Decimal("45.00")
+    assert line["price_source"] == "mayorista"
+
+
+def test_pos_cart_pricing_rejects_client_from_another_company(wholesale_database, app):
+    data = wholesale_database
+    foreign_client = Client(
+        company_id=data["other_company"].id,
+        name="Cliente externo de otra empresa",
+        active=True,
+        customer_type="mayorista",
+        price_list_id=data["price_list"].id,
+    )
+    db.session.add(foreign_client)
+    db.session.commit()
+    browser = app.test_client()
+    _login_test_client(browser, data["admin"])
+
+    response = browser.post(
+        "/ventas/api/cart-pricing",
+        headers={"X-Cart-Tenant": f"{data['company'].id}:{data['admin'].id}"},
+        json={
+            "client_id": foreign_client.id,
+            "items": [{"productId": data["product"].id, "quantity": 3}],
+        },
+    )
+    assert response.status_code == 400
+    assert "no pertenece" in response.get_json()["error"].lower()
