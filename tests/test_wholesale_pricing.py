@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -1867,3 +1867,104 @@ def test_wholesale_price_list_page_shows_guarded_delete_button(wholesale_databas
     assert "Eliminar lista" in page
     assert "ningún cliente la tiene asignada" in page
     assert f"/precios-mayoristas/listas/{data['price_list'].id}/eliminar" in page
+
+def test_active_price_lists_only_offers_currently_valid_lists(wholesale_database):
+    from wholesale_pricing import active_price_lists
+
+    data = wholesale_database
+    today = date.today()
+    expired = PriceList(
+        company_id=data["company"].id,
+        name="Mayorista vencido QA",
+        code="mayorista-vencido-qa",
+        active=True,
+        effective_until=today - timedelta(days=1),
+        created_by_user_id=data["admin"].id,
+    )
+    future = PriceList(
+        company_id=data["company"].id,
+        name="Mayorista futuro QA",
+        code="mayorista-futuro-qa",
+        active=True,
+        effective_from=today + timedelta(days=1),
+        created_by_user_id=data["admin"].id,
+    )
+    inactive = PriceList(
+        company_id=data["company"].id,
+        name="Mayorista inactivo QA",
+        code="mayorista-inactivo-qa",
+        active=False,
+        created_by_user_id=data["admin"].id,
+    )
+    db.session.add_all([expired, future, inactive])
+    db.session.commit()
+
+    current_ids = {row.id for row in active_price_lists(data["company"].id)}
+    all_ids = {row.id for row in active_price_lists(data["company"].id, include_inactive=True)}
+    assert data["price_list"].id in current_ids
+    assert expired.id not in current_ids
+    assert future.id not in current_ids
+    assert inactive.id not in current_ids
+    assert {expired.id, future.id, inactive.id}.issubset(all_ids)
+
+
+def test_quote_parser_blocks_wholesale_line_without_a_tier_for_its_quantity(wholesale_database, app):
+    import quotes
+
+    data = wholesale_database
+    no_tier_product = Product(
+        company_id=data["company"].id,
+        barcode="WHOLESALE-NO-TIER",
+        name="Producto sin tramo mayorista QA",
+        category="Bebidas",
+        price=Decimal("120.00"),
+        cost_price=Decimal("60.00"),
+        discount=Decimal("0.00"),
+        stock=50,
+        min_stock=1,
+        active=True,
+        sale_type="unidad",
+        unit_measure="u",
+    )
+    db.session.add(no_tier_product)
+    db.session.add(PriceListDiscountRule(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        min_quantity=Decimal("3.000"),
+        discount_percent=Decimal("15.00"),
+        active=True,
+    ))
+    db.session.commit()
+
+    with app.test_request_context("/presupuestos/nuevo"):
+        login_user(data["employee"])
+        try:
+            with pytest.raises(ValueError, match="No se puede confirmar el pedido mayorista"):
+                quotes._parse_items(
+                    {"items": [{
+                        "product_id": no_tier_product.id,
+                        "description": no_tier_product.name,
+                        "quantity": 1,
+                        "unit_price": 120,
+                        "discount": 0,
+                    }]},
+                    client=data["wholesale_client"],
+                )
+        finally:
+            logout_user()
+
+
+def test_pos_checkout_and_public_webchat_fail_closed_for_incomplete_wholesale_prices():
+    from pathlib import Path
+
+    cart_script = Path("static/assets/js/cart-manager.js").read_text(encoding="utf-8")
+    public_template = Path("templates/ai_agents/public_vendor_chat.html").read_text(encoding="utf-8")
+    sale_service = Path("services/sales/sale_service.py").read_text(encoding="utf-8")
+    vendor_service = Path("services/ai_agent/vendor_order_service.py").read_text(encoding="utf-8")
+
+    assert "wholesalePricingIncomplete" in cart_script
+    assert "return false;" in cart_script[cart_script.index("wholesalePricingIncomplete"):]
+    assert "cart.pricing_valid === false" in public_template
+    assert "cart-pricing-warning" in public_template
+    assert "validate_wholesale_prices(lines, client=client)" in sale_service
+    assert "validate_wholesale_prices(line_inputs, client=client)" in vendor_service
