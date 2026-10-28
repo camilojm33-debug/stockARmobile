@@ -15,7 +15,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261028_01_gen_disc_rules"
+HEAD_REVISION = "20261028_02_pickup"
 
 
 def main() -> None:
@@ -74,6 +74,7 @@ def main() -> None:
             "sale_items": {"price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price"},
             "quote_items": {"price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price"},
             "price_list_items": {"discount_percent"},
+            "quote_deliveries": {"pickup_status", "picked_up_at", "picked_up_by_user_id"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -90,6 +91,7 @@ def main() -> None:
             "clients": "fk_clients_price_list_id_price_lists",
             "sale_items": "fk_sale_items_price_list_id_price_lists",
             "quote_items": "fk_quote_items_price_list_id_price_lists",
+            "quote_deliveries": "fk_quote_deliveries_picked_up_by_user_id_users",
         }
         for table_name, fk_name in expected_foreign_keys.items():
             present = {item.get("name") for item in inspector.get_foreign_keys(table_name)}
@@ -115,7 +117,11 @@ def main() -> None:
             if expected not in feature_tokens:
                 raise AssertionError(f"Existing Negocio plan lost expected feature: {expected}")
 
-        print("PASS: wholesale-pricing, percentage-discount, sale/quote snapshot, list-level general rule, and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
+        pickup_statuses = db.session.execute(text("SELECT DISTINCT pickup_status FROM quote_deliveries")).scalars().all()
+        if any(status == "picked_up" for status in pickup_statuses):
+            raise AssertionError("Legacy quote deliveries were incorrectly classified as picked up.")
+
+        print("PASS: wholesale-pricing and pickup-tracking migrations upgraded the pre-feature PostgreSQL schema.")
         print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.")
         print("PASS: existing Negocio plan gains wholesale_pricing while preserving other commercial features.")
 
