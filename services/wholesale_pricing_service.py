@@ -323,7 +323,12 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     if not ids or not company_id or not _has_wholesale_pricing_access(company_id):
         return {}
     from app import Product
-    from wholesale_pricing import PriceList, PriceListItem
+    from wholesale_pricing import (
+        PriceList,
+        PriceListDiscountRule,
+        PriceListItem,
+        _discounted_retail_price,
+    )
 
     products = {
         int(product.id): product
@@ -344,6 +349,15 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     }
     if not eligible:
         return {}
+    general_rules = (
+        PriceListDiscountRule.query.filter(
+            PriceListDiscountRule.company_id == int(company_id),
+            PriceListDiscountRule.price_list_id.in_(sorted(eligible)),
+            PriceListDiscountRule.active.is_(True),
+        )
+        .order_by(PriceListDiscountRule.price_list_id.asc(), PriceListDiscountRule.min_quantity.asc())
+        .all()
+    )
     rows = (
         PriceListItem.query.filter(
             PriceListItem.company_id == int(company_id),
@@ -355,6 +369,24 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
         .all()
     )
     result = {}
+    # Add list-wide tiers for every requested product. Specific product tiers
+    # are appended afterwards so they can win exact quantity-threshold ties.
+    for rule in general_rules:
+        percent = _decimal(rule.discount_percent, "0")
+        for product_id, product in products.items():
+            try:
+                price = _discounted_retail_price(product, percent)
+            except ValueError:
+                continue
+            product_rows = result.setdefault(product_id, {})
+            tiers = product_rows.setdefault(str(rule.price_list_id), [])
+            tiers.append({
+                "min_quantity": float(_decimal(rule.min_quantity)),
+                "price": float(price),
+                "discount_percent": float(percent),
+                "is_general_rule": True,
+            })
+
     for row in rows:
         price_list = eligible.get(int(row.price_list_id))
         if price_list is None or _decimal(row.unit_price) <= 0:
@@ -377,6 +409,7 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
         tier = {
             "min_quantity": float(_decimal(row.min_quantity)),
             "price": float(price),
+            "is_general_rule": False,
         }
         if discount_percent is not None:
             tier["discount_percent"] = discount_percent
