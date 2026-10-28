@@ -1786,18 +1786,17 @@ def test_delete_wholesale_list_blocks_when_clients_are_assigned(wholesale_databa
 def test_delete_unassigned_wholesale_list_cascades_only_its_pricing_rules(wholesale_database, app):
     data = wholesale_database
     list_id = data["price_list"].id
-    with app.app_context():
-        # Detach every client using this list; deletion is deliberately blocked otherwise.
-        data["wholesale_client"].price_list_id = None
-        data["retail_client"].price_list_id = None
-        db.session.add(PriceListDiscountRule(
-            company_id=data["company"].id,
-            price_list_id=list_id,
-            min_quantity=Decimal("3.000"),
-            discount_percent=Decimal("15.00"),
-            active=True,
-        ))
-        db.session.commit()
+    # Use the fixture's active session so these client assignments are actually persisted.
+    data["wholesale_client"].price_list_id = None
+    data["retail_client"].price_list_id = None
+    db.session.add(PriceListDiscountRule(
+        company_id=data["company"].id,
+        price_list_id=list_id,
+        min_quantity=Decimal("3.000"),
+        discount_percent=Decimal("15.00"),
+        active=True,
+    ))
+    db.session.commit()
 
     browser = _wholesale_admin_client(app, data["admin"])
     response = browser.post(
