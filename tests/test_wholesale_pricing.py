@@ -1591,3 +1591,169 @@ def test_pos_cart_template_and_client_script_explain_wholesale_fallback():
     assert "updateCartWholesalePricingStatus(data)" in script
     assert "no tiene una lista de precios asignada" in script
     assert "No hay una tarifa por producto ni un descuento general" in script
+
+def test_edit_wholesale_list_updates_metadata_and_preserves_pricing(wholesale_database, app):
+    data = wholesale_database
+    price_list = data["price_list"]
+    list_id = price_list.id
+    db.session.add(PriceListDiscountRule(
+        company_id=data["company"].id,
+        price_list_id=list_id,
+        min_quantity=Decimal("3.000"),
+        discount_percent=Decimal("15.00"),
+        active=True,
+    ))
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{list_id}/editar",
+        data={
+            "name": "Mayorista preferencial",
+            "code": "mayorista-preferencial",
+            "effective_from": "2026-10-28",
+            "effective_until": "2026-12-31",
+        },
+    )
+
+    assert response.status_code in (301, 302)
+    assert f"list_id={list_id}" in response.headers["Location"]
+    db.session.expire_all()
+    saved = PriceList.query.filter_by(id=list_id, company_id=data["company"].id).first()
+    assert saved is not None
+    assert saved.name == "Mayorista preferencial"
+    assert saved.code == "mayorista-preferencial"
+    assert saved.effective_from.isoformat() == "2026-10-28"
+    assert saved.effective_until.isoformat() == "2026-12-31"
+    # Metadata edits must never remove or rewrite product tiers or global quantity rules.
+    assert PriceListItem.query.filter_by(
+        company_id=data["company"].id, price_list_id=list_id
+    ).count() == 2
+    rule = PriceListDiscountRule.query.filter_by(
+        company_id=data["company"].id, price_list_id=list_id
+    ).first()
+    assert rule is not None
+    assert Decimal(str(rule.discount_percent)) == Decimal("15.00")
+
+
+def test_edit_wholesale_list_rejects_duplicate_code_without_partial_changes(wholesale_database, app):
+    data = wholesale_database
+    price_list = data["price_list"]
+    original_name, original_code = price_list.name, price_list.code
+    other_list = PriceList(
+        company_id=data["company"].id,
+        name="Otra lista",
+        code="codigo-ocupado",
+        active=True,
+        created_by_user_id=data["admin"].id,
+    )
+    db.session.add(other_list)
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{price_list.id}/editar",
+        data={
+            "name": "Nombre que no debe guardarse",
+            "code": "codigo-ocupado",
+            "effective_from": "",
+            "effective_until": "",
+        },
+    )
+
+    assert response.status_code in (301, 302)
+    db.session.expire_all()
+    saved = PriceList.query.filter_by(id=price_list.id, company_id=data["company"].id).first()
+    assert saved.name == original_name
+    assert saved.code == original_code
+
+
+def test_edit_wholesale_list_rejects_invalid_date_range_without_changes(wholesale_database, app):
+    data = wholesale_database
+    price_list = data["price_list"]
+    original_name = price_list.name
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{price_list.id}/editar",
+        data={
+            "name": "Nombre inválido",
+            "code": price_list.code,
+            "effective_from": "2026-12-31",
+            "effective_until": "2026-12-01",
+        },
+    )
+
+    assert response.status_code in (301, 302)
+    db.session.expire_all()
+    saved = PriceList.query.filter_by(id=price_list.id, company_id=data["company"].id).first()
+    assert saved.name == original_name
+    assert saved.effective_from is None
+    assert saved.effective_until is None
+
+
+def test_edit_wholesale_list_is_company_scoped(wholesale_database, app):
+    data = wholesale_database
+    foreign_list = PriceList(
+        company_id=data["other_company"].id,
+        name="Lista ajena",
+        code="lista-ajena",
+        active=True,
+        created_by_user_id=None,
+    )
+    db.session.add(foreign_list)
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{foreign_list.id}/editar",
+        data={
+            "name": "Intento de modificación",
+            "code": "intento-ajeno",
+            "effective_from": "",
+            "effective_until": "",
+        },
+    )
+
+    assert response.status_code == 404
+    db.session.expire_all()
+    saved = PriceList.query.filter_by(
+        id=foreign_list.id, company_id=data["other_company"].id
+    ).first()
+    assert saved.name == "Lista ajena"
+    assert saved.code == "lista-ajena"
+
+
+def test_edit_wholesale_list_requires_admin(wholesale_database, app):
+    data = wholesale_database
+    browser = app.test_client()
+    _login_test_client(browser, data["employee"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/editar",
+        data={
+            "name": "No permitido",
+            "code": data["price_list"].code,
+            "effective_from": "",
+            "effective_until": "",
+        },
+    )
+
+    assert response.status_code == 403
+    db.session.expire_all()
+    saved = PriceList.query.filter_by(
+        id=data["price_list"].id, company_id=data["company"].id
+    ).first()
+    assert saved.name == "Mayorista QA"
+
+
+def test_wholesale_price_list_page_shows_edit_metadata_form(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+    response = browser.get(f"/precios-mayoristas/?list_id={data['price_list'].id}")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Editar datos de esta lista" in page
+    assert f"/precios-mayoristas/listas/{data['price_list'].id}/editar" in page
+    assert "Los tramos, descuentos y clientes vinculados se mantienen." in page
