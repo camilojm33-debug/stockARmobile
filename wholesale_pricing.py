@@ -1153,6 +1153,50 @@ def deactivate_item(list_id, item_id):
     return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
+@bp.post("/listas/<int:list_id>/eliminar")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def delete_list(list_id):
+    """Delete an unused list without leaving clients with a broken assignment."""
+    _require_admin()
+    from app import Client
+
+    company_id = _company_id()
+    row = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    assigned_count = Client.query.filter_by(
+        company_id=company_id, price_list_id=row.id
+    ).count()
+    if assigned_count:
+        flash(
+            f"No se puede eliminar '{row.name}' porque está asignada a {assigned_count} cliente(s). "
+            "Reasigná esos clientes a otra lista primero; si solo querés dejar de usarla, desactivala.",
+            "warning",
+        )
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    list_name = row.name
+    try:
+        # ORM cascades remove this list's product tiers and general discount rules.
+        db.session.delete(row)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Wholesale price-list delete failed: company_id=%s list_id=%s",
+            company_id, list_id,
+        )
+        flash("No se pudo eliminar la lista. No se guardaron cambios.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    flash(
+        f"Lista '{list_name}' eliminada junto con sus tramos y reglas. No se modificaron productos ni ventas históricas.",
+        "success",
+    )
+    return redirect(url_for("wholesale_pricing.index"))
+
+
+
 @bp.post("/listas/<int:list_id>/estado")
 @tenant_required
 @login_required
