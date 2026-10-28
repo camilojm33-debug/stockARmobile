@@ -412,6 +412,41 @@ def _format_vendor_currency(value: Any, currency: str = "ARS") -> str:
     return "$" + rendered + " " + code
 
 
+def format_vendor_wholesale_price_details(
+    *,
+    quantity: Any,
+    unit_price: Any,
+    reference_price: Any,
+    discount_percent: Any,
+    currency: str = "ARS",
+) -> list[str]:
+    """Describe wholesale savings from saved quote/cart fields, without recalculating the charged price."""
+    try:
+        quantity_value = Decimal(str(quantity or 0))
+        percent = Decimal(str(discount_percent))
+    except (TypeError, ValueError, ArithmeticError):
+        return []
+    if not quantity_value.is_finite() or quantity_value <= 0 or not percent.is_finite() or percent <= 0:
+        return []
+
+    reference = _money(reference_price)
+    charged_unit = _money(unit_price)
+    saving_per_unit = max(reference - charged_unit, Decimal("0.00"))
+    if saving_per_unit <= Decimal("0.00"):
+        return []
+
+    saving_total = (saving_per_unit * quantity_value).quantize(Decimal("0.01"))
+    percent_text = format(percent.normalize(), "f").replace(".", ",")
+    return [
+        f"  Precio de lista: {_format_vendor_currency(reference, currency)} c/u",
+        (
+            f"  Descuento mayorista ({percent_text}%): "
+            f"-{_format_vendor_currency(saving_per_unit, currency)} c/u; "
+            f"ahorro total {_format_vendor_currency(saving_total, currency)}"
+        ),
+    ]
+
+
 def format_vendor_order_confirmation(*, company_id: int, order: Dict[str, Any]) -> str:
     """Build the final seller reply only from the persisted quote and checkout snapshot."""
     from app import Quote, QuoteItem, QuoteDelivery
@@ -487,6 +522,14 @@ def format_vendor_order_confirmation(*, company_id: int, order: Dict[str, Any]) 
             f"{_format_vendor_currency(unit_price, currency)} c/u; "
             f"subtotal {_format_vendor_currency(subtotal, currency)}"
         )
+        if str(getattr(item, "price_source", "") or "").strip().lower() == "mayorista":
+            lines.extend(format_vendor_wholesale_price_details(
+                quantity=quantity,
+                unit_price=unit_price,
+                reference_price=getattr(item, "wholesale_reference_price", None),
+                discount_percent=getattr(item, "wholesale_discount_percent", None),
+                currency=currency,
+            ))
         line_discount = _money(item.discount)
         if line_discount > Decimal("0.00"):
             lines.append(f"  Descuento de línea incluido: -{_format_vendor_currency(line_discount, currency)}")
