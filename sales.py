@@ -696,7 +696,7 @@ def checkout():
 @tenant_required
 def api_cart_pricing():
     """Return server-resolved prices for the current POS cart and selected client."""
-    from app import Client, scope_query_to_company
+    from app import Client, db, scope_query_to_company
 
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
@@ -749,6 +749,7 @@ def api_cart_pricing():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception:
+        db.session.rollback()
         current_app.logger.exception("POS cart pricing failed for company_id=%s", getattr(current_user, "company_id", None))
         return jsonify({"error": "No se pudieron actualizar los precios del carrito. Revisá la conexión e intentá de nuevo."}), 500
 
