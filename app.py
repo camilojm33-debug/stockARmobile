@@ -960,6 +960,19 @@ class QuoteDelivery(db.Model):
     quote = db.relationship("Quote", backref=db.backref("delivery", uselist=False, cascade="all, delete-orphan"))
     company = db.relationship("Company")
 
+    @property
+    def picked_up_at_local(self):
+        """Present stored UTC pickup time in the owning company's timezone."""
+        from stockarmobile.helpers.dates import format_local_datetime
+
+        if not self.picked_up_at:
+            return ""
+        return format_local_datetime(
+            self.picked_up_at,
+            getattr(self.company, "timezone", None),
+            "%d/%m/%Y %H:%M",
+        )
+
 
 class BusinessDocumentSequence(db.Model):
     __tablename__ = "business_document_sequences"
