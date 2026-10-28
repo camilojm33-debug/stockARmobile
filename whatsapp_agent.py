@@ -712,6 +712,9 @@ def _ai_order_row(company_id: int, quote):
             "shipping_source": getattr(getattr(quote, "delivery", None), "shipping_source", "manual") if getattr(quote, "delivery", None) else "none",
             "shipping_confirmed_by_user_id": getattr(getattr(quote, "delivery", None), "shipping_confirmed_by_user_id", None) if getattr(quote, "delivery", None) else None,
             "shipping_confirmed_at": getattr(getattr(quote, "delivery", None), "shipping_confirmed_at", None) if getattr(quote, "delivery", None) else None,
+            "pickup_status": getattr(getattr(quote, "delivery", None), "pickup_status", None) if getattr(quote, "delivery", None) else None,
+            "picked_up_at": getattr(getattr(quote, "delivery", None), "picked_up_at", None) if getattr(quote, "delivery", None) else None,
+            "picked_up_by": getattr(getattr(getattr(quote, "delivery", None), "picked_up_by", None), "name", None) if getattr(quote, "delivery", None) else None,
         },
     }
 
@@ -785,6 +788,49 @@ def _tenant_attention_actor():
     if company is None:
         abort(404)
     return int(company_id), company
+
+
+
+@bp.post("/pedidos-ia/<int:quote_id>/retirar")
+@login_required
+def ai_order_mark_picked_up(quote_id: int):
+    """Confirm physical pickup on the existing quote delivery, without altering sale/payment."""
+    company_id, _company = _tenant_attention_actor()
+    from app import Quote, QuoteDelivery
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote = Quote.query.filter_by(
+        id=int(quote_id),
+        company_id=int(company_id),
+        observations=marker,
+    ).with_for_update().first()
+    if quote is None:
+        abort(404)
+
+    delivery = QuoteDelivery.query.filter_by(
+        quote_id=int(quote.id),
+        company_id=int(company_id),
+    ).with_for_update().first()
+    if delivery is None or str(delivery.method or "retiro").strip().lower() != "retiro":
+        flash("Este pedido no está configurado para retiro en el comercio.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    if not getattr(quote, "converted_sale_id", None):
+        flash("Primero confirmá la venta por el flujo habitual antes de registrar el retiro.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    current_status = str(getattr(delivery, "pickup_status", None) or "pending").strip().lower()
+    if current_status == "picked_up" or getattr(delivery, "picked_up_at", None):
+        flash("El retiro ya estaba registrado; no se creó un segundo registro.", "info")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    delivery.pickup_status = "picked_up"
+    delivery.picked_up_at = utcnow_naive()
+    delivery.picked_up_by_user_id = int(current_user.id)
+    db.session.commit()
+    flash("Retiro registrado con fecha, hora y usuario responsable.", "success")
+    return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
 
 
 @bp.get("/pedidos-ia/atencion-whatsapp")
