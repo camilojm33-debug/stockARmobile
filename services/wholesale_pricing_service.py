@@ -366,8 +366,8 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
         .all()
     )
     result = {}
-    # Add list-wide tiers for every requested product. Specific product tiers
-    # are appended afterwards so they can win exact quantity-threshold ties.
+    # Add list-wide tiers for each requested product. The quote UI uses these
+    # rules only when no eligible product-specific tier exists for that quantity.
     for rule in general_rules:
         percent = _decimal(rule.discount_percent, "0")
         for product_id, product in products.items():
