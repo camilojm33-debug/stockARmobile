@@ -758,7 +758,7 @@ def ai_orders():
         "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
-        "pickup_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and not row.get("delivery", {}).get("picked_up_at") and row.get("delivery", {}).get("pickup_status") != "picked_up"),
+        "pickup_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending"),
         "picked_up": sum(1 for row in all_rows if row.get("delivery", {}).get("pickup_status") == "picked_up"),
         "human_attention": sum(1 for row in all_rows if row.get("attention", {}).get("key") == "human"),
         "channel_keys": channel_keys,
