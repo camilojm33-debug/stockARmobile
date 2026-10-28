@@ -608,7 +608,6 @@ def _ai_order_row(company_id: int, quote):
     conversation = _ai_order_conversation(company_id, quote.id, payment=payment)
     payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
     delivery_for_status = getattr(quote, "delivery", None)
-    delivery_for_status = getattr(quote, "delivery", None)
     if getattr(quote, "converted_sale_id", None):
         order_key, order_label, order_badge = "confirmed", "Confirmado · venta manual", "text-bg-success"
     elif (
@@ -699,9 +698,6 @@ def _ai_order_row(company_id: int, quote):
         },
         "delivery": {
             "method": getattr(delivery_for_status, "method", "retiro") if delivery_for_status else "retiro",
-            "pickup_status": getattr(delivery_for_status, "pickup_status", None) if delivery_for_status else None,
-            "picked_up_at": getattr(delivery_for_status, "picked_up_at", None) if delivery_for_status else None,
-            "picked_up_by": getattr(getattr(delivery_for_status, "picked_up_by", None), "name", None) if delivery_for_status else None,
             "recipient_name": getattr(getattr(quote, "delivery", None), "recipient_name", "") if getattr(quote, "delivery", None) else "",
             "phone": getattr(getattr(quote, "delivery", None), "phone", "") if getattr(quote, "delivery", None) else "",
             "address": getattr(getattr(quote, "delivery", None), "address", "") if getattr(quote, "delivery", None) else "",
@@ -746,7 +742,7 @@ def ai_orders():
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
         or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
-        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and not row.get("delivery", {}).get("picked_up_at") and row.get("delivery", {}).get("pickup_status") != "picked_up")
+        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending")
         or (selected_status == "picked_up" and row.get("delivery", {}).get("pickup_status") == "picked_up")
         or (selected_status not in {"shipping_pending", "human", "pickup_pending", "picked_up"} and row["order_key"] == selected_status)
     ]
