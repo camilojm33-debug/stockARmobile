@@ -308,6 +308,10 @@ def save_general_rule(list_id):
             raise ValueError("El descuento debe ser mayor a 0% y menor a 100%.")
         quantity = quantity.quantize(Decimal("0.001"))
         percent = percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if quantity <= 0:
+            raise ValueError("La cantidad mínima debe ser de al menos 0,001.")
+        if percent <= 0 or percent >= Decimal("100"):
+            raise ValueError("El descuento debe quedar entre 0,01% y 99,99%.")
     except (InvalidOperation, TypeError, ValueError) as exc:
         message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad y un porcentaje válidos."
         flash(message, "danger")
@@ -324,7 +328,6 @@ def save_general_rule(list_id):
         company_id=company_id,
         price_list_id=price_list.id,
         min_quantity=quantity,
-        active=True,
     ).first()
     if collision is not None and (rule is None or collision.id != rule.id):
         if rule is not None:
