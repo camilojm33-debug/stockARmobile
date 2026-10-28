@@ -1,6 +1,6 @@
 """Blueprint de clientes: CRUD y API."""
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
 
@@ -483,6 +483,31 @@ def api_quick_create():
     name = (payload.get("name") or "").strip()
     email = (payload.get("email") or "").strip() or None
     whatsapp = (payload.get("whatsapp") or "").strip() or None
+    customer_type = str(payload.get("customer_type") or "minorista").strip().lower()
+    raw_price_list_id = payload.get("price_list_id")
+
+    if customer_type not in {"minorista", "mayorista"}:
+        return jsonify({"error": "Elegí un tipo de cliente válido."}), 400
+    price_list = None
+    if customer_type == "mayorista":
+        if getattr(current_user, "role", None) != "admin":
+            return jsonify({"error": "Solo un administrador puede asignar clientes a listas mayoristas."}), 403
+        if raw_price_list_id in (None, ""):
+            return jsonify({"error": "Para crear un cliente mayorista, seleccioná una lista de precios activa."}), 400
+        try:
+            parsed_price_list_id = int(raw_price_list_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "La lista mayorista seleccionada no es válida."}), 400
+        from wholesale_pricing import PriceList
+        price_list = PriceList.query.filter_by(
+            id=parsed_price_list_id,
+            company_id=getattr(current_user, "company_id", None),
+            active=True,
+        ).first()
+        if price_list is None:
+            return jsonify({"error": "La lista debe estar activa y pertenecer a tu empresa."}), 400
+    elif raw_price_list_id not in (None, "") and getattr(current_user, "role", None) == "admin":
+        return jsonify({"error": "La lista mayorista solo se puede asignar a un cliente de tipo mayorista."}), 400
 
     if not name:
         return jsonify({"error": "El nombre del cliente es obligatorio."}), 400
@@ -501,10 +526,17 @@ def api_quick_create():
         name=name,
         email=email,
         whatsapp=whatsapp,
+        customer_type=customer_type,
+        price_list_id=price_list.id if customer_type == "mayorista" and price_list is not None else None,
         active=True,
     )
     db.session.add(client)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("POS quick client creation failed for company_id=%s", getattr(current_user, "company_id", None))
+        return jsonify({"error": "No se pudo crear el cliente. Intentá nuevamente."}), 500
 
     return jsonify({
         "client": {
@@ -512,5 +544,8 @@ def api_quick_create():
             "name": client.name,
             "email": client.email or "",
             "whatsapp": client.whatsapp or "",
+            "customer_type": client.customer_type,
+            "price_list_id": client.price_list_id,
+            "price_list_name": price_list.name if price_list is not None else "",
         }
     }), 201

@@ -277,6 +277,7 @@
         <div id="cart-items-container" class="mb-3"></div>
         <div class="summary-panel">
           <div class="d-flex justify-content-between mb-1"><span class="text-muted">Subtotal</span><strong id="cart-subtotal">$0.00</strong></div>
+          <div id="cart-wholesale-savings-row" class="d-flex justify-content-between mb-1 text-success d-none"><span>Ahorro mayorista (ya incluido)</span><strong id="cart-wholesale-savings">$0.00</strong></div>
           <div class="d-flex justify-content-between mb-1"><span class="text-muted">Descuento</span><strong id="cart-discount">$0.00</strong></div>
           <div class="d-flex justify-content-between mb-1"><span class="text-muted">Recargos</span><strong id="cart-surcharge">$0.00</strong></div>
           <div class="d-flex justify-content-between mb-1"><span class="text-muted">Impuestos / IVA</span><strong id="cart-tax">$0.00</strong></div>
@@ -291,7 +292,7 @@
               <div class="input-group">
                 <select id="checkout-client-select" class="form-select" name="client_id">
                   <option value="">Consumidor final</option>
-                  {% for cliente in clientes %}<option value="{{ cliente.id }}">{{ cliente.name }}</option>{% endfor %}
+                  {% for cliente in clientes %}<option value="{{ cliente.id }}" data-customer-type="{{ cliente.customer_type or 'minorista' }}" data-price-list-id="{{ cliente.price_list_id or '' }}">{{ cliente.name }}{% if cliente.customer_type == 'mayorista' %} · Mayorista{% endif %}</option>{% endfor %}
                 </select>
                 <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#quickClientModal"><i class="bi bi-person-plus me-1"></i>Nuevo cliente</button>
               </div>
@@ -418,8 +419,29 @@
             <label class="form-label">WhatsApp</label>
             <input id="quick-client-whatsapp" class="form-control" maxlength="30" placeholder="opcional">
           </div>
+          {% if can_assign_wholesale_client %}
+          <div class="col-md-6">
+            <label class="form-label" for="quick-client-type">Tipo de cliente</label>
+            <select id="quick-client-type" class="form-select">
+              <option value="minorista" selected>Minorista</option>
+              <option value="mayorista" {% if not quick_price_lists %}disabled{% endif %}>Mayorista</option>
+            </select>
+          </div>
+          <div class="col-md-6 d-none" id="quick-client-price-list-wrap">
+            <label class="form-label" for="quick-client-price-list">Lista mayorista</label>
+            <select id="quick-client-price-list" class="form-select">
+              <option value="">Seleccionar lista activa…</option>
+              {% for price_list in quick_price_lists %}
+              <option value="{{ price_list.id }}">{{ price_list.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% if not quick_price_lists %}
+          <div class="col-12"><div class="form-text text-warning">Para crear clientes mayoristas primero necesitás una lista de precios activa.</div></div>
+          {% endif %}
+          {% endif %}
         </div>
-        <div class="small text-muted mt-2">Se crea sin salir de la venta y queda seleccionado automáticamente.</div>
+        <div class="small text-muted mt-2">Se crea sin salir de la venta y queda seleccionado automáticamente. Los precios mayoristas se actualizan al seleccionar el cliente.</div>
       </div>
       <div class="modal-footer d-flex flex-wrap gap-2">
         <button class="btn btn-outline-secondary w-100 w-md-auto" data-bs-dismiss="modal">Cancelar</button>
@@ -989,7 +1011,7 @@
 {% endif %}
 <script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
 <script src="{{ url_for('static', filename='assets/js/barcode-scanner.js') }}"></script>
-<script src="{{ url_for('static', filename='assets/js/cart-manager.js', v='20261016-quote-context') }}"></script>
+<script src="{{ url_for('static', filename='assets/js/cart-manager.js', v='20261028-pos-wholesale-pricing') }}"></script>
 <script>
   const posSearch = document.getElementById('pos-search-input');
   const posFoundCount = document.getElementById('pos-found-count');
