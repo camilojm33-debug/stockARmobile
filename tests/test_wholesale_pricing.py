@@ -1446,7 +1446,7 @@ def test_pos_quick_create_can_assign_wholesale_list_and_select_customer(wholesal
 def test_pos_quick_create_defaults_to_retail_and_blocks_non_admin_wholesale_assignment(wholesale_database, app):
     data = wholesale_database
     browser = app.test_client()
-    _login_test_client(browser, data["employee"])
+    _login_test_client(browser, data["admin"])
 
     retail_response = browser.post(
         "/clientes/api/quick-create",
@@ -1460,7 +1460,9 @@ def test_pos_quick_create_defaults_to_retail_and_blocks_non_admin_wholesale_assi
     assert retail_client.customer_type == "minorista"
     assert retail_client.price_list_id is None
 
-    denied = browser.post(
+    non_admin_browser = app.test_client()
+    _login_test_client(non_admin_browser, data["employee"])
+    denied = non_admin_browser.post(
         "/clientes/api/quick-create",
         json={
             "name": "Cliente mayorista sin permisos QA",
