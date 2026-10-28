@@ -48,6 +48,7 @@
             <a class="btn btn-outline-success" href="{{ url_for('wholesale_pricing.download_template', list_id=selected_list.id) }}">Plantilla catálogo</a>
             <a class="btn btn-outline-primary" href="{{ url_for('wholesale_pricing.export_list', list_id=selected_list.id) }}">Exportar Excel</a>
             <form method="post" action="{{ url_for('wholesale_pricing.toggle_list', list_id=selected_list.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn {{ 'btn-outline-danger' if selected_list.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar lista' if selected_list.active else 'Activar lista' }}</button></form>
+            <form method="post" action="{{ url_for('wholesale_pricing.delete_list', list_id=selected_list.id) }}" onsubmit="return confirm('¿Eliminar esta lista mayorista? Se borrarán sus tramos y reglas. Solo se podrá si ningún cliente la tiene asignada.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger" type="submit">Eliminar lista</button></form>
           </div>
         </div>
         <div class="card-body">
