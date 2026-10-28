@@ -58,5 +58,5 @@ def test_quote_cart_prefill_does_not_start_retail_pricing_before_client_selectio
     assert "wholesaleDiscountPercent" in pos_template
     assert "wholesaleReferencePrice" in pos_template
     assert "wholesaleDiscountAmount" in pos_template
-    assert "/static/assets/js/cart-manager.js?v=20261028-wholesale-quote-prefill-fix" in pos_template
+    assert "cart-manager.js\', v=\'20261028-wholesale-quote-prefill-fix\'" in pos_template
     assert "/static/assets/js/cart-manager.js?v=20261028-wholesale-quote-prefill-fix" in service_worker
