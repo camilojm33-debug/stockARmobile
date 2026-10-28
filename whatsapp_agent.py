@@ -608,6 +608,7 @@ def _ai_order_row(company_id: int, quote):
     conversation = _ai_order_conversation(company_id, quote.id, payment=payment)
     payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
     delivery_for_status = getattr(quote, "delivery", None)
+    delivery_for_status = getattr(quote, "delivery", None)
     if getattr(quote, "converted_sale_id", None):
         order_key, order_label, order_badge = "confirmed", "Confirmado · venta manual", "text-bg-success"
     elif (
@@ -697,7 +698,10 @@ def _ai_order_row(company_id: int, quote):
             "auto_followup_supported": channel == "whatsapp",
         },
         "delivery": {
-            "method": getattr(getattr(quote, "delivery", None), "method", "retiro") if getattr(quote, "delivery", None) else "retiro",
+            "method": getattr(delivery_for_status, "method", "retiro") if delivery_for_status else "retiro",
+            "pickup_status": getattr(delivery_for_status, "pickup_status", None) if delivery_for_status else None,
+            "picked_up_at": getattr(delivery_for_status, "picked_up_at", None) if delivery_for_status else None,
+            "picked_up_by": getattr(getattr(delivery_for_status, "picked_up_by", None), "name", None) if delivery_for_status else None,
             "recipient_name": getattr(getattr(quote, "delivery", None), "recipient_name", "") if getattr(quote, "delivery", None) else "",
             "phone": getattr(getattr(quote, "delivery", None), "phone", "") if getattr(quote, "delivery", None) else "",
             "address": getattr(getattr(quote, "delivery", None), "address", "") if getattr(quote, "delivery", None) else "",
