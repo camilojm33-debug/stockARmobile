@@ -96,7 +96,12 @@ def resolve_product_price(
         return {**fallback, "reason": "mayorista_sin_lista"}
 
     # Deferred imports avoid coupling model import order to the resolver.
-    from wholesale_pricing import PriceList, PriceListItem
+    from wholesale_pricing import (
+        PriceList,
+        PriceListDiscountRule,
+        PriceListItem,
+        _discounted_retail_price,
+    )
 
     price_list = PriceList.query.filter_by(id=price_list_id, company_id=effective_company_id).first()
     if not _active_today(price_list):
@@ -117,9 +122,41 @@ def resolve_product_price(
         .order_by(PriceListItem.min_quantity.desc(), PriceListItem.id.desc())
         .first()
     )
+    general_rule = (
+        PriceListDiscountRule.query.filter(
+            PriceListDiscountRule.company_id == effective_company_id,
+            PriceListDiscountRule.price_list_id == price_list.id,
+            PriceListDiscountRule.active.is_(True),
+            PriceListDiscountRule.min_quantity <= qty,
+        )
+        .order_by(PriceListDiscountRule.min_quantity.desc(), PriceListDiscountRule.id.desc())
+        .first()
+    )
+
+    # Explicit product tiers are exceptions to the list-wide policy whenever
+    # a product-specific tier is eligible for this quantity. General rules fill
+    # only the products/quantity ranges that have no applicable specific tier.
+    if row is None and general_rule is not None:
+        candidate_percent = _decimal(general_rule.discount_percent, "0")
+        try:
+            price = _discounted_retail_price(product, candidate_percent)
+        except ValueError:
+            return {**fallback, "reason": "regla_general_sin_precio_minorista"}
+        return {
+            "price": price,
+            "source": "mayorista",
+            "price_list_id": int(price_list.id),
+            "price_list_name": str(price_list.name),
+            "min_quantity": _decimal(general_rule.min_quantity),
+            "discount_percent": candidate_percent,
+            "reason": None,
+            "price_rule_type": "general",
+        }
+
     if row is None:
         return {**fallback, "reason": "producto_sin_tarifa_mayorista"}
 
+    row_quantity = _decimal(row.min_quantity)
     price = _decimal(row.unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
     discount_percent = None
     if getattr(row, "discount_percent", None) is not None:
@@ -138,9 +175,10 @@ def resolve_product_price(
         "source": "mayorista",
         "price_list_id": int(price_list.id),
         "price_list_name": str(price_list.name),
-        "min_quantity": _decimal(row.min_quantity),
+        "min_quantity": row_quantity,
         "discount_percent": discount_percent,
         "reason": None,
+        "price_rule_type": "product",
     }
 
 
@@ -282,7 +320,12 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     if not ids or not company_id or not _has_wholesale_pricing_access(company_id):
         return {}
     from app import Product
-    from wholesale_pricing import PriceList, PriceListItem
+    from wholesale_pricing import (
+        PriceList,
+        PriceListDiscountRule,
+        PriceListItem,
+        _discounted_retail_price,
+    )
 
     products = {
         int(product.id): product
@@ -303,6 +346,15 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     }
     if not eligible:
         return {}
+    general_rules = (
+        PriceListDiscountRule.query.filter(
+            PriceListDiscountRule.company_id == int(company_id),
+            PriceListDiscountRule.price_list_id.in_(sorted(eligible)),
+            PriceListDiscountRule.active.is_(True),
+        )
+        .order_by(PriceListDiscountRule.price_list_id.asc(), PriceListDiscountRule.min_quantity.asc())
+        .all()
+    )
     rows = (
         PriceListItem.query.filter(
             PriceListItem.company_id == int(company_id),
@@ -314,6 +366,24 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
         .all()
     )
     result = {}
+    # Add list-wide tiers for each requested product. The quote UI uses these
+    # rules only when no eligible product-specific tier exists for that quantity.
+    for rule in general_rules:
+        percent = _decimal(rule.discount_percent, "0")
+        for product_id, product in products.items():
+            try:
+                price = _discounted_retail_price(product, percent)
+            except ValueError:
+                continue
+            product_rows = result.setdefault(product_id, {})
+            tiers = product_rows.setdefault(str(rule.price_list_id), [])
+            tiers.append({
+                "min_quantity": float(_decimal(rule.min_quantity)),
+                "price": float(price),
+                "discount_percent": float(percent),
+                "is_general_rule": True,
+            })
+
     for row in rows:
         price_list = eligible.get(int(row.price_list_id))
         if price_list is None or _decimal(row.unit_price) <= 0:

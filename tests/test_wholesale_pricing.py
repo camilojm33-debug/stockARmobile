@@ -14,7 +14,7 @@ from services.wholesale_pricing_service import (
     product_price_catalog,
     resolve_product_price,
 )
-from wholesale_pricing import PriceList, PriceListItem
+from wholesale_pricing import PriceList, PriceListDiscountRule, PriceListItem
 
 
 @pytest.fixture
@@ -1221,3 +1221,183 @@ def test_quote_shows_wholesale_discount_percent_and_savings(wholesale_database, 
     assert rows[0]["wholesale_discount_percent"] == 13.0
     assert rows[0]["wholesale_reference_price"] == 100.0
     assert rows[0]["wholesale_discount_amount"] == 39.0
+
+
+def test_general_list_discount_rules_fill_gaps_and_specific_tiers_override(wholesale_database, app):
+    data = wholesale_database
+    second_product = Product(
+        company_id=data["company"].id,
+        barcode="WHOLESALE-GENERAL-002",
+        name="Producto sin tarifa específica",
+        category="Bebidas",
+        price=Decimal("200.00"),
+        cost_price=Decimal("80.00"),
+        discount=Decimal("0.00"),
+        stock=30,
+        min_stock=1,
+        active=True,
+        sale_type="unidad",
+        unit_measure="u",
+    )
+    db.session.add(second_product)
+    db.session.add_all([
+        PriceListDiscountRule(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            min_quantity=Decimal("3.000"),
+            discount_percent=Decimal("15.00"),
+            active=True,
+        ),
+        PriceListDiscountRule(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            min_quantity=Decimal("12.000"),
+            discount_percent=Decimal("25.00"),
+            active=True,
+        ),
+    ])
+    db.session.commit()
+
+    product_at_three = resolve_product_price(
+        company_id=data["company"].id,
+        product=data["product"],
+        quantity=3,
+        client=data["wholesale_client"],
+    )
+    product_specific_tie = resolve_product_price(
+        company_id=data["company"].id,
+        product=data["product"],
+        quantity=12,
+        client=data["wholesale_client"],
+    )
+    second_product_at_three = resolve_product_price(
+        company_id=data["company"].id,
+        product=second_product,
+        quantity=3,
+        client=data["wholesale_client"],
+    )
+    second_product_at_twelve = resolve_product_price(
+        company_id=data["company"].id,
+        product=second_product,
+        quantity=12,
+        client=data["wholesale_client"],
+    )
+
+    # The product has a specific min-quantity=1 tier, so it remains an exception
+    # to the general rule even though the general threshold starts at 3.
+    assert product_at_three["price"] == Decimal("80.00")
+    assert product_at_three["discount_percent"] is None
+    assert product_at_three["price_rule_type"] == "product"
+    # Explicit min-quantity=12 also remains the selected product-specific tier.
+    assert product_specific_tie["price"] == Decimal("70.00")
+    assert product_specific_tie["discount_percent"] is None
+    assert product_specific_tie["price_rule_type"] == "product"
+    assert second_product_at_three["price"] == Decimal("170.00")
+    assert second_product_at_three["discount_percent"] == Decimal("15.00")
+    assert second_product_at_twelve["price"] == Decimal("150.00")
+    assert second_product_at_twelve["discount_percent"] == Decimal("25.00")
+
+    catalog = product_price_catalog(
+        company_id=data["company"].id,
+        product_ids=[data["product"].id, second_product.id],
+    )
+    tiers = catalog[data["product"].id][str(data["price_list"].id)]
+    general_three = next(
+        tier for tier in tiers
+        if tier.get("is_general_rule") and tier["min_quantity"] == 3.0
+    )
+    assert general_three["price"] == 85.0
+    assert general_three["discount_percent"] == 15.0
+    # A product without an individual applicable tariff receives the list rule.
+    second_tiers = catalog[second_product.id][str(data["price_list"].id)]
+    assert any(tier.get("is_general_rule") and tier["price"] == 170.0 for tier in second_tiers)
+
+
+def test_quote_parser_uses_list_general_discount_rule(wholesale_database, app):
+    import quotes
+
+    data = wholesale_database
+    db.session.add(PriceListDiscountRule(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        min_quantity=Decimal("3.000"),
+        discount_percent=Decimal("15.00"),
+        active=True,
+    ))
+    # Leave only the min-quantity=12 product tier, so quantity 3 falls through
+    # to the general list rule rather than a product-specific tier.
+    low_tier = PriceListItem.query.filter_by(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        product_id=data["product"].id,
+        min_quantity=Decimal("1.000"),
+    ).first()
+    db.session.delete(low_tier)
+    db.session.commit()
+
+    with app.test_request_context("/presupuestos/nuevo"):
+        login_user(data["employee"])
+        try:
+            items = quotes._parse_items(
+                {"items": [{
+                    "product_id": data["product"].id,
+                    "description": data["product"].name,
+                    "quantity": 3,
+                    "unit_price": 100,
+                    "discount": 0,
+                }]},
+                client=data["wholesale_client"],
+            )
+        finally:
+            logout_user()
+
+    assert len(items) == 1
+    assert items[0]["unit_price"] == Decimal("85.00")
+    assert items[0]["discount"] == Decimal("0.00")
+    assert items[0]["price_source"] == "mayorista"
+    assert items[0]["wholesale_discount_percent"] == Decimal("15.00")
+    assert items[0]["wholesale_reference_price"] == Decimal("100.00")
+
+
+def test_general_discount_rule_admin_ui_is_company_scoped_and_upserts_threshold(wholesale_database, app):
+    data = wholesale_database
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(data["admin"].id)
+        session["_fresh"] = True
+
+    url = f"/precios-mayoristas/listas/{data['price_list'].id}/reglas-generales"
+    response = browser.post(
+        url,
+        data={"min_quantity": "3", "discount_percent": "15"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"Reglas generales de descuento" in response.data
+    assert b"15.00% de descuento desde 3" in response.data
+
+    # Posting the same threshold updates the existing rule instead of duplicating it.
+    response = browser.post(
+        url,
+        data={"min_quantity": "3", "discount_percent": "18"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        rules = PriceListDiscountRule.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            min_quantity=Decimal("3.000"),
+        ).all()
+        assert len(rules) == 1
+        assert Decimal(str(rules[0].discount_percent)) == Decimal("18.00")
+
+    # A list from this tenant cannot be administered by another tenant's account.
+    other_browser = app.test_client()
+    with other_browser.session_transaction() as session:
+        session["_user_id"] = "999999"
+        session["_fresh"] = True
+    denied = other_browser.post(url, data={"min_quantity": "3", "discount_percent": "25"})
+    assert denied.status_code in (302, 401, 403, 404)
+
+

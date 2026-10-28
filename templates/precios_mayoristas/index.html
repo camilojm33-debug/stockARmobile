@@ -32,7 +32,7 @@
         <div class="list-group list-group-flush">
           {% for price_list in lists %}
             <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-2 {{ 'active' if selected_list and selected_list.id == price_list.id else '' }}" href="{{ url_for('wholesale_pricing.index', list_id=price_list.id) }}">
-              <span><span class="d-block fw-semibold">{{ price_list.name }}</span><small class="{{ 'text-white-50' if selected_list and selected_list.id == price_list.id else 'text-muted' }}">{{ price_list.code }} · {{ price_list.items|length }} tramos</small></span>
+              <span><span class="d-block fw-semibold">{{ price_list.name }}</span><small class="{{ 'text-white-50' if selected_list and selected_list.id == price_list.id else 'text-muted' }}">{{ price_list.code }} · {{ price_list.items|length }} tramos · {{ price_list.discount_rules|length }} reglas generales</small></span>
               <span class="badge {{ 'bg-success' if price_list.active else 'bg-secondary' }}">{{ 'Activa' if price_list.active else 'Inactiva' }}</span>
             </a>
           {% else %}<div class="p-3 text-muted small">Todavía no creaste listas.</div>{% endfor %}
@@ -51,6 +51,67 @@
           </div>
         </div>
         <div class="card-body">
+          <section class="border rounded-3 p-3 mb-3" aria-labelledby="wholesaleGeneralRulesTitle">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+              <div>
+                <h3 class="h6 mb-1" id="wholesaleGeneralRulesTitle">Reglas generales de descuento</h3>
+                <p class="small text-muted mb-0">Aplican a todos los productos de esta lista por cantidad, usando el precio minorista actual de cada producto.</p>
+              </div>
+              <span class="badge text-bg-light border">{{ general_rules|length }} reglas</span>
+            </div>
+            <form method="post" action="{{ url_for('wholesale_pricing.save_general_rule', list_id=selected_list.id) }}" class="row g-2 align-items-end mb-3">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="col-6 col-md-4">
+                <label class="form-label" for="generalRuleMinQty">Desde cantidad</label>
+                <input class="form-control" id="generalRuleMinQty" name="min_quantity" type="number" min="0.001" step="0.001" value="3" required>
+              </div>
+              <div class="col-6 col-md-4">
+                <label class="form-label" for="generalRulePercent">Descuento (%)</label>
+                <input class="form-control" id="generalRulePercent" name="discount_percent" type="number" min="0.01" max="99.99" step="0.01" placeholder="15" required>
+              </div>
+              <div class="col-12 col-md-4 d-grid">
+                <button class="btn btn-outline-success" type="submit">Agregar regla general</button>
+              </div>
+            </form>
+            {% if general_rules %}
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-2">
+                <thead><tr><th>Desde cantidad</th><th>Descuento</th><th class="text-end">Acciones</th></tr></thead>
+                <tbody>
+                  {% for rule in general_rules %}
+                  <tr>
+                    <td colspan="2">
+                      <form id="generalRuleForm{{ rule.id }}" method="post" action="{{ url_for('wholesale_pricing.save_general_rule', list_id=selected_list.id) }}" class="row g-2 align-items-center">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                        <div class="col-6">
+                          <input class="form-control form-control-sm" name="min_quantity" type="number" min="0.001" step="0.001" value="{{ '%.3f'|format(rule.min_quantity|float) }}" required aria-label="Cantidad mínima de regla general">
+                        </div>
+                        <div class="col-6">
+                          <div class="input-group input-group-sm">
+                            <input class="form-control" name="discount_percent" type="number" min="0.01" max="99.99" step="0.01" value="{{ '%.2f'|format(rule.discount_percent|float) }}" required aria-label="Porcentaje de regla general">
+                            <span class="input-group-text">%</span>
+                          </div>
+                        </div>
+                      </form>
+                    </td>
+                    <td class="text-end text-nowrap">
+                      <button class="btn btn-sm btn-outline-primary" type="submit" form="generalRuleForm{{ rule.id }}">Guardar</button>
+                      <form class="d-inline" method="post" action="{{ url_for('wholesale_pricing.delete_general_rule', list_id=selected_list.id, rule_id=rule.id) }}" onsubmit="return confirm('¿Eliminar esta regla general? Los precios específicos por producto se conservan.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                      </form>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="form-text mb-0">Las tarifas específicas de un producto tienen prioridad cuando existe un tramo aplicable. La regla general completa productos o cantidades sin tarifa específica. Dentro de cada grupo se usa el tramo aplicable con mayor cantidad mínima; los porcentajes no se acumulan.</p>
+            {% else %}
+            <p class="small text-muted mb-0">Todavía no hay reglas generales. Agregá la primera para aplicar descuentos a la lista completa sin cargar cada producto por separado.</p>
+            {% endif %}
+          </section>
           <form method="post" id="wholesalePriceForm" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end" data-search-url="{{ url_for('wholesale_pricing.search_products') }}" data-preview-url="{{ url_for('wholesale_pricing.bulk_preview', list_id=selected_list.id) }}" data-total-products="{{ active_products_count }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-4 col-lg-3">
@@ -156,7 +217,7 @@
                   <td><span class="badge {{ 'bg-success' if row.active else 'bg-secondary' }}">{{ 'Activo' if row.active else 'Inactivo' }}</span></td>
                   <td class="text-end">{% if row.active %}<form method="post" action="{{ url_for('wholesale_pricing.deactivate_item', list_id=selected_list.id, item_id=row.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Desactivar</button></form>{% endif %}</td>
                 </tr>
-              {% else %}<tr><td colspan="6" class="text-center text-muted py-4">No hay precios cargados en esta lista.</td></tr>{% endfor %}
+              {% else %}<tr><td colspan="6" class="text-center text-muted py-4">{% if general_rules %}No hay tarifas individuales. Las reglas generales de arriba calcularán el precio mayorista para los productos incluidos en cada tramo.{% else %}No hay precios cargados en esta lista. Agregá una tarifa individual o una regla general de descuento.{% endif %}</td></tr>{% endfor %}
             </tbody>
           </table>
         </div>

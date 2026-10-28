@@ -15,7 +15,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261026_02_wholesale_disc_snap"
+HEAD_REVISION = "20261028_01_gen_disc_rules"
 
 
 def main() -> None:
@@ -49,6 +49,7 @@ def main() -> None:
         db.session.commit()
 
         with db.engine.begin() as connection:
+            connection.execute(text("DROP TABLE IF EXISTS price_list_discount_rules CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
             for table_name, columns in (
@@ -80,7 +81,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")
@@ -114,8 +115,8 @@ def main() -> None:
             if expected not in feature_tokens:
                 raise AssertionError(f"Existing Negocio plan lost expected feature: {expected}")
 
-        print("PASS: wholesale-pricing, percentage-discount, sale/quote snapshot, and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
-        print("PASS: wholesale tables, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.")
+        print("PASS: wholesale-pricing, percentage-discount, sale/quote snapshot, list-level general rule, and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
+        print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.")
         print("PASS: existing Negocio plan gains wholesale_pricing while preserving other commercial features.")
 
 
