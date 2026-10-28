@@ -738,6 +738,7 @@ def api_cart_pricing():
         if client is None:
             return jsonify({"error": "El cliente seleccionado no pertenece a tu empresa o está inactivo."}), 400
 
+    client_price_list_name = None
     try:
         lines = _calculate_lines(items)
         from services.wholesale_pricing_service import apply_wholesale_prices
@@ -746,6 +747,14 @@ def api_cart_pricing():
             company_id=int(getattr(current_user, "company_id", 0) or 0),
             client=client,
         )
+        if client is not None and getattr(client, "price_list_id", None):
+            from wholesale_pricing import PriceList
+            client_price_list = PriceList.query.filter_by(
+                id=client.price_list_id,
+                company_id=getattr(current_user, "company_id", None),
+            ).first()
+            if client_price_list is not None:
+                client_price_list_name = str(client_price_list.name or "")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception:
@@ -779,6 +788,7 @@ def api_cart_pricing():
             "price_source": source,
             "price_list_id": line.get("price_list_id"),
             "price_list_name": str(line.get("price_list_name") or ""),
+            "price_resolution_reason": str(line.get("price_resolution_reason") or "") or None,
             "discount_percent": float(percent) if percent is not None else None,
             "reference_price": float(_to_decimal(reference_price)) if reference_price is not None else None,
             "wholesale_discount_amount": float(saving),
@@ -789,6 +799,7 @@ def api_cart_pricing():
         "client_id": int(client.id) if client is not None else None,
         "customer_type": str(getattr(client, "customer_type", "minorista") or "minorista"),
         "price_list_id": getattr(client, "price_list_id", None) if client is not None else None,
+        "client_price_list_name": client_price_list_name,
         "lines": result,
     })
 
