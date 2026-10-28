@@ -394,6 +394,15 @@ def index():
     products = products_query.order_by(Product.favorite.desc(), Product.name).all()
     categories = [c[0] for c in scope_query_to_company(Product.query.with_entities(Product.category), Product).filter(Product.active.is_(True)).distinct().order_by(Product.category).all() if c[0]]
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
+    quick_price_lists = []
+    can_assign_wholesale_client = getattr(current_user, "role", None) == "admin"
+    if can_assign_wholesale_client:
+        try:
+            from wholesale_pricing import active_price_lists
+            quick_price_lists = active_price_lists(getattr(current_user, "company_id", None))
+        except Exception:
+            current_app.logger.exception("Could not load wholesale lists for POS quick client creation")
+            quick_price_lists = []
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
     has_qr_data = bool(
         company
@@ -436,6 +445,8 @@ def index():
         products=products,
         categorias=categories,
         clientes=clients,
+        quick_price_lists=quick_price_lists,
+        can_assign_wholesale_client=can_assign_wholesale_client,
         sales=sales,
         total_sales=total_sales_amount,
         company_name=(company.name if company else "Mi comercio"),
@@ -678,6 +689,107 @@ def checkout():
         checkout_url=url_for("sales.checkout"),
         selected_client_id=selected_client_id,
     )
+
+
+
+@bp.route("/api/cart-pricing", methods=["POST"])
+@tenant_required
+def api_cart_pricing():
+    """Return server-resolved prices for the current POS cart and selected client."""
+    from app import Client, scope_query_to_company
+
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Los datos del carrito no son válidos."}), 400
+    incoming_tenant = (request.headers.get("X-Cart-Tenant") or "").strip()
+    if incoming_tenant != _cart_tenant_key():
+        return jsonify({"error": "Carrito fuera de contexto de empresa o usuario."}), 409
+
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list) or not raw_items or len(raw_items) > 250:
+        return jsonify({"error": "El carrito debe contener entre 1 y 250 productos."}), 400
+    items = {}
+    try:
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                raise ValueError("Cada producto del carrito debe ser válido.")
+            product_id = int(raw.get("productId") or raw.get("product_id") or 0)
+            quantity = _to_float(raw.get("quantity") or 0)
+            if product_id <= 0 or not quantity or quantity <= 0:
+                raise ValueError("El producto o la cantidad del carrito no son válidos.")
+            if str(product_id) in items:
+                raise ValueError("El carrito contiene productos duplicados.")
+            items[str(product_id)] = quantity
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc) or "Datos de carrito inválidos."}), 400
+
+    client_id = payload.get("client_id")
+    client = None
+    if client_id not in (None, ""):
+        try:
+            parsed_client_id = int(client_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "El cliente seleccionado no es válido."}), 400
+        client = (
+            scope_query_to_company(Client.query.filter_by(active=True), Client)
+            .filter(Client.id == parsed_client_id)
+            .first()
+        )
+        if client is None:
+            return jsonify({"error": "El cliente seleccionado no pertenece a tu empresa o está inactivo."}), 400
+
+    try:
+        lines = _calculate_lines(items)
+        from services.wholesale_pricing_service import apply_wholesale_prices
+        lines = apply_wholesale_prices(
+            lines,
+            company_id=int(getattr(current_user, "company_id", 0) or 0),
+            client=client,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        current_app.logger.exception("POS cart pricing failed for company_id=%s", getattr(current_user, "company_id", None))
+        return jsonify({"error": "No se pudieron actualizar los precios del carrito. Revisá la conexión e intentá de nuevo."}), 500
+
+    result = []
+    for line in lines:
+        product = line.get("product")
+        if product is None:
+            continue
+        price = _to_decimal(line.get("price"))
+        quantity = _to_decimal(line.get("quantity"))
+        source = str(line.get("price_source") or "minorista")
+        percent = line.get("wholesale_discount_percent")
+        reference_price = line.get("wholesale_reference_price")
+        saving = Decimal("0.00")
+        if source == "mayorista" and percent is not None and reference_price is not None:
+            saving = max(
+                (_to_decimal(reference_price) - price) * quantity,
+                Decimal("0.00"),
+            ).quantize(Decimal("0.01"))
+        result.append({
+            "product_id": int(product.id),
+            "name": str(product.name or ""),
+            "quantity": float(quantity),
+            "retail_price": float(_to_decimal(getattr(product, "price", 0))),
+            "unit_price": float(price),
+            "line_discount": float(_to_decimal(line.get("discount", 0))),
+            "price_source": source,
+            "price_list_id": line.get("price_list_id"),
+            "price_list_name": str(line.get("price_list_name") or ""),
+            "discount_percent": float(percent) if percent is not None else None,
+            "reference_price": float(_to_decimal(reference_price)) if reference_price is not None else None,
+            "wholesale_discount_amount": float(saving),
+        })
+
+    return jsonify({
+        "success": True,
+        "client_id": int(client.id) if client is not None else None,
+        "customer_type": str(getattr(client, "customer_type", "minorista") or "minorista"),
+        "price_list_id": getattr(client, "price_list_id", None) if client is not None else None,
+        "lines": result,
+    })
 
 
 @bp.route("/api/checkout", methods=["POST"])
