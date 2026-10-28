@@ -739,13 +739,15 @@ def ai_orders():
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
-    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human"}
+    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human", "pickup_pending", "picked_up"}
     rows = [
         row for row in all_rows
         if not selected_status
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
         or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
+        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and not row.get("delivery", {}).get("picked_up_at") and row.get("delivery", {}).get("pickup_status") != "picked_up")
+        or (selected_status == "picked_up" and row.get("delivery", {}).get("pickup_status") == "picked_up")
         or (selected_status not in {"shipping_pending", "human"} and row["order_key"] == selected_status)
     ]
     channel_keys = []
@@ -760,6 +762,8 @@ def ai_orders():
         "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
+        "pickup_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and not row.get("delivery", {}).get("picked_up_at") and row.get("delivery", {}).get("pickup_status") != "picked_up"),
+        "picked_up": sum(1 for row in all_rows if row.get("delivery", {}).get("pickup_status") == "picked_up"),
         "human_attention": sum(1 for row in all_rows if row.get("attention", {}).get("key") == "human"),
         "channel_keys": channel_keys,
         "channel_labels": channel_labels,
