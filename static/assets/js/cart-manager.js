@@ -801,6 +801,18 @@ async function processCheckout() {
     return;
   }
 
+  // Always refresh just before collecting payment, so the amount shown and
+  // the amount the checkout server independently computes use the same rules.
+  const pricingUpdated = await refreshCartPricing({ quiet: false, force: true });
+  if (!pricingUpdated && selectedPosClientIsWholesale()) {
+    checkoutInFlight = false;
+    if (checkoutProcessButton) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Procesar venta';
+    }
+    return;
+  }
+
   const selectedMethod = document.getElementById('checkout-payment-method')?.value || '';
   if (selectedMethod === 'QR Mercado Pago') {
     if (mpQrDraftState.approved && mpQrDraftState.finalizeUrl && mpQrDraftState.paymentId) {
