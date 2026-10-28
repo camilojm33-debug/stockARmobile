@@ -133,25 +133,33 @@ def resolve_product_price(
         .first()
     )
 
-    # Explicit product tiers are exceptions to the list-wide policy whenever
-    # a product-specific tier is eligible for this quantity. General rules fill
-    # only the products/quantity ranges that have no applicable specific tier.
-    if row is None and general_rule is not None:
+    row_quantity = _decimal(row.min_quantity) if row is not None else None
+    general_quantity = _decimal(general_rule.min_quantity) if general_rule is not None else None
+
+    # A higher quantity threshold overrides a lower one. When a general rule and
+    # a product-specific tier start at the same quantity, the specific tier wins.
+    if general_rule is not None and (
+        row is None or general_quantity > row_quantity
+    ):
         candidate_percent = _decimal(general_rule.discount_percent, "0")
         try:
             price = _discounted_retail_price(product, candidate_percent)
         except ValueError:
-            return {**fallback, "reason": "regla_general_sin_precio_minorista"}
-        return {
-            "price": price,
-            "source": "mayorista",
-            "price_list_id": int(price_list.id),
-            "price_list_name": str(price_list.name),
-            "min_quantity": _decimal(general_rule.min_quantity),
-            "discount_percent": candidate_percent,
-            "reason": None,
-            "price_rule_type": "general",
-        }
+            # Keep a valid product-specific tariff if present when the general
+            # rule cannot be calculated from this product's retail price.
+            if row is None:
+                return {**fallback, "reason": "regla_general_sin_precio_minorista"}
+        else:
+            return {
+                "price": price,
+                "source": "mayorista",
+                "price_list_id": int(price_list.id),
+                "price_list_name": str(price_list.name),
+                "min_quantity": general_quantity,
+                "discount_percent": candidate_percent,
+                "reason": None,
+                "price_rule_type": "general",
+            }
 
     if row is None:
         return {**fallback, "reason": "producto_sin_tarifa_mayorista"}
