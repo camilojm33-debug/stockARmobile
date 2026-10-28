@@ -1511,6 +1511,8 @@ def test_pos_cart_pricing_uses_general_wholesale_rule_for_quantity_three(wholesa
     body = response.get_json()
     assert body["success"] is True
     assert body["customer_type"] == "mayorista"
+    assert body["price_list_id"] == data["price_list"].id
+    assert body["client_price_list_name"] == data["price_list"].name
     assert len(body["lines"]) == 1
     line = body["lines"][0]
     assert line["product_id"] == data["product"].id
@@ -1519,6 +1521,7 @@ def test_pos_cart_pricing_uses_general_wholesale_rule_for_quantity_three(wholesa
     assert Decimal(str(line["reference_price"])) == Decimal("100.00")
     assert Decimal(str(line["wholesale_discount_amount"])) == Decimal("45.00")
     assert line["price_source"] == "mayorista"
+    assert line["price_resolution_reason"] is None
 
 
 def test_pos_cart_pricing_rejects_client_from_another_company(wholesale_database, app):
@@ -1545,3 +1548,46 @@ def test_pos_cart_pricing_rejects_client_from_another_company(wholesale_database
     )
     assert response.status_code == 400
     assert "no pertenece" in response.get_json()["error"].lower()
+
+def test_pos_cart_pricing_explains_missing_wholesale_list(wholesale_database, app):
+    data = wholesale_database
+    client_without_list = Client(
+        company_id=data["company"].id,
+        name="Cliente mayorista sin lista QA",
+        active=True,
+        customer_type="mayorista",
+        price_list_id=None,
+    )
+    db.session.add(client_without_list)
+    db.session.commit()
+
+    browser = app.test_client()
+    _login_test_client(browser, data["admin"])
+    response = browser.post(
+        "/ventas/api/cart-pricing",
+        headers={"X-Cart-Tenant": f"{data['company'].id}:{data['admin'].id}"},
+        json={
+            "client_id": client_without_list.id,
+            "items": [{"productId": data["product"].id, "quantity": 3}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["customer_type"] == "mayorista"
+    assert body["price_list_id"] is None
+    assert body["client_price_list_name"] is None
+    assert body["lines"][0]["price_source"] == "minorista"
+    assert body["lines"][0]["price_resolution_reason"] == "mayorista_sin_lista"
+
+
+def test_pos_cart_template_and_client_script_explain_wholesale_fallback():
+    from pathlib import Path
+
+    template = Path("templates/ventas/index.html").read_text(encoding="utf-8")
+    script = Path("static/assets/js/cart-manager.js").read_text(encoding="utf-8")
+
+    assert 'id="cart-wholesale-status"' in template
+    assert "updateCartWholesalePricingStatus(data)" in script
+    assert "no tiene una lista de precios asignada" in script
+    assert "No hay una tarifa por producto ni un descuento general" in script
