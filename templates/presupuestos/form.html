@@ -551,15 +551,14 @@
     if (!product || !clientData || clientData.customer_type !== 'mayorista' || !clientData.price_list_id) return null;
     const tiers = (product.price_lists || {})[String(clientData.price_list_id)] || [];
     const qty = Math.max(Number(quantity || 0), 0);
-    const eligible = tiers
-      .filter((tier) => Number(tier.min_quantity || 1) <= qty)
-      .sort((a, b) => {
-        const quantityOrder = Number(a.min_quantity || 1) - Number(b.min_quantity || 1);
-        if (quantityOrder !== 0) return quantityOrder;
-        // A product-specific rate wins when its threshold exactly matches a list-wide rule.
-        return Number(Boolean(b.is_general_rule)) - Number(Boolean(a.is_general_rule));
-      });
-    return eligible.length ? eligible[eligible.length - 1] : null;
+    const eligible = tiers.filter((tier) => Number(tier.min_quantity || 1) <= qty);
+    if (!eligible.length) return null;
+    // Product-specific eligible tiers are exceptions to the list-wide policy.
+    // Use the general rule only when no specific product tier applies at this quantity.
+    const productTiers = eligible.filter((tier) => !tier.is_general_rule);
+    const candidates = productTiers.length ? productTiers : eligible;
+    candidates.sort((a, b) => Number(a.min_quantity || 1) - Number(b.min_quantity || 1));
+    return candidates[candidates.length - 1];
   }
 
   function wholesaleUnitPrice(product, quantity, clientData = selectedClientData()) {
