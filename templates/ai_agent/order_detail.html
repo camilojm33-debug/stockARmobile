@@ -197,7 +197,12 @@
               <div class="small">Fecha y hora: {{ delivery.picked_up_at.strftime('%d/%m/%Y %H:%M') if delivery.picked_up_at else 'registrado' }}</div>
               {% if delivery.picked_up_by %}<div class="small">Entregado por: {{ delivery.picked_up_by }}</div>{% endif %}
             </div>
-            {% elif order.sale_id %}
+            {% elif delivery and delivery.pickup_status == 'legacy' %}
+            <div class="alert alert-secondary mb-0">
+              <div class="fw-bold">Registro anterior al seguimiento de retiros</div>
+              <div class="small">No hay evidencia histórica suficiente para saber si el cliente ya retiró la mercadería; no se presume pendiente ni retirada.</div>
+            </div>
+            {% elif order.sale_id and delivery and delivery.pickup_status == 'pending' %}
             <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
               <div><div class="fw-bold">Listo para retirar</div><div class="small">Venta confirmada. El retiro aún no fue registrado.</div></div>
               <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_picked_up', quote_id=order.quote_id) }}" onsubmit="return confirm('¿Confirmás que el cliente retiró toda la mercadería?');">
