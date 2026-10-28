@@ -1223,7 +1223,7 @@ def test_quote_shows_wholesale_discount_percent_and_savings(wholesale_database, 
     assert rows[0]["wholesale_discount_amount"] == 39.0
 
 
-def test_general_list_discount_rules_apply_across_products_and_specific_tiers_win_ties(wholesale_database, app):
+def test_general_list_discount_rules_fill_gaps_and_specific_tiers_override(wholesale_database, app):
     data = wholesale_database
     second_product = Product(
         company_id=data["company"].id,
@@ -1283,10 +1283,12 @@ def test_general_list_discount_rules_apply_across_products_and_specific_tiers_wi
         client=data["wholesale_client"],
     )
 
-    assert product_at_three["price"] == Decimal("85.00")
-    assert product_at_three["discount_percent"] == Decimal("15.00")
-    assert product_at_three["price_rule_type"] == "general"
-    # Explicit min-quantity=12 wins a tie against the 25% general rule.
+    # The product has a specific min-quantity=1 tier, so it remains an exception
+    # to the general rule even though the general threshold starts at 3.
+    assert product_at_three["price"] == Decimal("80.00")
+    assert product_at_three["discount_percent"] is None
+    assert product_at_three["price_rule_type"] == "product"
+    # Explicit min-quantity=12 also remains the selected product-specific tier.
     assert product_specific_tie["price"] == Decimal("70.00")
     assert product_specific_tie["discount_percent"] is None
     assert product_specific_tie["price_rule_type"] == "product"
@@ -1306,6 +1308,9 @@ def test_general_list_discount_rules_apply_across_products_and_specific_tiers_wi
     )
     assert general_three["price"] == 85.0
     assert general_three["discount_percent"] == 15.0
+    # A product without an individual applicable tariff receives the list rule.
+    second_tiers = catalog[second_product.id][str(data["price_list"].id)]
+    assert any(tier.get("is_general_rule") and tier["price"] == 170.0 for tier in second_tiers)
 
 
 def test_quote_parser_uses_list_general_discount_rule(wholesale_database, app):
@@ -1319,6 +1324,15 @@ def test_quote_parser_uses_list_general_discount_rule(wholesale_database, app):
         discount_percent=Decimal("15.00"),
         active=True,
     ))
+    # Leave only the min-quantity=12 product tier, so quantity 3 falls through
+    # to the general list rule rather than a product-specific tier.
+    low_tier = PriceListItem.query.filter_by(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        product_id=data["product"].id,
+        min_quantity=Decimal("1.000"),
+    ).first()
+    db.session.delete(low_tier)
     db.session.commit()
 
     with app.test_request_context("/presupuestos/nuevo"):
