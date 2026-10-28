@@ -219,6 +219,8 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
         if resolution["source"] == "mayorista":
             line["price"] = resolution["price"]
             line["discount"] = Decimal("0.00")
+            if "line_discount" in line:
+                line["line_discount"] = Decimal("0.00")
         elif resolution["reason"] == "plan_sin_mayoristas":
             # A previously assigned list must not keep applying after a downgrade.
             line["price"] = resolution["price"]
