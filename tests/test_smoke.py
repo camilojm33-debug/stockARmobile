@@ -4563,8 +4563,7 @@ def test_landing_seo_phase2_copy_and_single_h1():
 
     assert "<title>StockArmobile | Sistema de gestión para comercios en Argentina</title>" in html
     assert (
-        'name="description" content="Sistema de gestión para comercios en Argentina: control de stock, ventas, caja y clientes '
-        'en una sola plataforma. Funciona desde el celular, con modo offline y prueba gratuita de 10 días."' in html
+        'name="description" content="Gestión comercial para comercios: stock, ventas, caja, precios mayoristas, promociones y ajustes masivos de precios. Desde PC o celular, con prueba gratis."' in html
     )
     assert html.count("<h1") == 1
     assert "Tu negocio más ordenado. Tus ventas más inteligentes." in html
