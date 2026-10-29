@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ seo.title }}</title>
+  <meta name="description" content="{{ seo.description }}">
+  <link rel="canonical" href="{{ seo.url }}">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0f62fe">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ seo.title }}">
+  <meta property="og:description" content="{{ seo.description }}">
+  <meta property="og:url" content="{{ seo.url }}">
+  <meta property="og:site_name" content="{{ seo.site_name }}">
+  <meta property="og:image" content="{{ seo.image }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ seo.title }}">
+  <meta name="twitter:description" content="{{ seo.description }}">
+  <meta name="twitter:image" content="{{ seo.image }}">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"WebPage","name":{{ seo.title|tojson }},"description":{{ seo.description|tojson }},"url":{{ seo.url|tojson }},"isPartOf":{"@type":"WebSite","name":{{ seo.site_name|tojson }},"url":{{ (seo.url.split('/')[0:3]|join('/'))|tojson }}}}
+  </script>
+  <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/branding/favicon.ico') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/branding/apple-touch-icon.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='assets/css/landing.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="page-shell"><header class="hero-section"><div class="bg-orb orb-one"></div><div class="bg-orb orb-two"></div><div class="bg-grid" aria-hidden="true"></div>
+    <nav class="navbar navbar-expand-lg py-3"><div class="container"><a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="{{ url_for('index') }}"><span class="brand-mark"><img class="brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo"></span><span>StockArmobile</span></a><div class="navbar-actions"><a class="btn btn-outline-primary btn-pill btn-cta-login fw-semibold" href="{{ url_for('auth.login') }}"><i class="bi bi-box-arrow-in-right"></i><span class="btn-cta-text">Iniciar sesión</span></a><a class="btn btn-primary btn-pill btn-cta-register fw-bold shadow-sm" href="{{ url_for('auth.register') }}?selected_plan=trial"><i class="bi bi-rocket-takeoff"></i><span class="btn-cta-text">Prueba gratuita</span></a></div></div></nav>
+    <div class="container py-5 py-lg-6"><div class="row align-items-center g-5"><div class="col-lg-9 mx-auto text-center reveal" data-delay="80"><span class="eyebrow"><i class="bi {{ feature.icon }}"></i> {{ feature.eyebrow }}</span><h1 class="display-4 fw-bold mb-3">{{ feature.heading }}</h1><p class="lead text-muted mb-4">{{ feature.intro }}</p><div class="d-flex flex-wrap justify-content-center gap-3"><a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a><a class="btn btn-outline-primary btn-lg btn-pill" href="{{ url_for('auth.demo') }}">Ver demo interactiva</a></div></div></div></div>
+  </header><main>
+    <section class="section" id="beneficios"><div class="container"><div class="section-heading text-center reveal"><span class="eyebrow">Cómo te ayuda</span><h2 class="section-title">{{ feature.benefits_heading }}</h2></div><div class="row g-4 mt-2">{% for item in feature.sections %}<div class="col-md-6 {% if feature.sections|length == 3 %}col-xl-4{% else %}col-xl-6{% endif %} reveal"><article class="feature-card p-4 h-100"><div class="feature-icon"><i class="bi {{ feature.icon }}"></i></div><h3 class="h4">{{ item.title }}</h3><p class="text-muted mb-0">{{ item.body }}</p></article></div>{% endfor %}</div></div></section>
+    <section class="section section-soft" id="funciones"><div class="container"><div class="row align-items-center g-4"><div class="col-lg-7"><h2 class="section-title">{{ feature.benefits_heading }}</h2><p class="text-muted">Funciones sujetas a la disponibilidad del plan comercial de tu empresa.</p><div class="row g-3">{% for bullet in feature.bullets %}<div class="col-md-6"><div class="feature-card p-3 h-100"><i class="bi bi-check-circle text-success me-2"></i>{{ bullet }}</div></div>{% endfor %}</div></div><div class="col-lg-5"><div class="cta-block"><h2 class="h3 mb-3">Tu negocio, con más control</h2><p>Conocé StockArmobile y evaluá estas herramientas con tu propio catálogo.</p><a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}?selected_plan=trial">Probar gratis</a></div></div></div></div></section>
+    <section class="section" id="preguntas"><div class="container"><div class="section-heading text-center"><span class="eyebrow">Preguntas frecuentes</span><h2 class="section-title">Respuestas antes de empezar</h2></div><div class="row justify-content-center mt-3"><div class="col-lg-10"><div class="accordion" id="featureFaq">{% for item in feature.faq %}<div class="accordion-item"><h3 class="accordion-header"><button class="accordion-button {{ 'collapsed' if not loop.first else '' }}" type="button" data-bs-toggle="collapse" data-bs-target="#tool-faq-{{ loop.index }}" aria-expanded="{{ 'true' if loop.first else 'false' }}">{{ item.question }}</button></h3><div id="tool-faq-{{ loop.index }}" class="accordion-collapse collapse {{ 'show' if loop.first else '' }}" data-bs-parent="#featureFaq"><div class="accordion-body">{{ item.answer }}</div></div></div>{% endfor %}</div></div></div></div></section>
+    <section class="section section-soft" id="relacionadas"><div class="container"><div class="section-heading text-center"><span class="eyebrow">También te puede servir</span><h2 class="section-title">Más herramientas comerciales</h2></div><div class="row g-3 justify-content-center">{% for item in related_pages %}<div class="col-md-6"><a class="feature-card p-4 h-100 d-block text-decoration-none" href="{{ item.url }}"><strong>{{ item.title }}</strong><span class="d-block small text-muted mt-2">Conocé cómo se complementa con la gestión de tu negocio.</span></a></div>{% endfor %}</div><div class="text-center mt-4"><a class="btn btn-outline-primary btn-pill" href="{{ url_for('index') }}#planes">Ver planes y funciones</a></div></div></section>
+  </main><footer class="footer"><div class="container"><div class="row g-4 align-items-start"><div class="col-md-6"><a class="navbar-brand d-flex align-items-center gap-2 fw-bold mb-3" href="{{ url_for('index') }}"><span class="brand-mark"><img class="brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo"></span><span>StockArmobile</span></a><p class="text-muted">Sistema de gestión comercial para comercios en Argentina.</p></div><div class="col-md-3"><h3>Producto</h3><ul><li><a href="{{ url_for('index') }}">Inicio</a></li><li><a href="{{ url_for('index') }}#herramientas-comerciales">Herramientas comerciales</a></li><li><a href="{{ url_for('seo_pages.presupuestos') }}">Presupuestos</a></li><li><a href="{{ url_for('seo_pages.control_de_stock') }}">Control de stock</a></li></ul></div><div class="col-md-3"><h3>Acceso</h3><ul><li><a href="{{ url_for('auth.login') }}">Iniciar sesión</a></li><li><a href="{{ url_for('auth.register') }}">Crear cuenta</a></li></ul></div></div><div class="footer-bottom">© 2026 StockArmobile. Todos los derechos reservados.</div></div></footer></div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script src="{{ url_for('static', filename='assets/js/landing.js') }}" defer></script>
+</body>
+</html>

@@ -2180,6 +2180,8 @@ def _plan_feature_flags(plan):
         "productos": int(getattr(plan, "max_products", 0) or 0),
         "clientes": int(getattr(plan, "max_clients", 0) or 0),
         "ventas": has("ventas"),
+        "compras": has("compras"),
+        "mayoristas": has("wholesale_pricing"),
         "caja": has("caja"),
         "reportes": has("reportes", "reportes_basicos"),
         "controlador_precios": has("pricing_controller"),
@@ -2289,7 +2291,7 @@ def index():
     app_base_url = (os.environ.get("APP_URL") or request.url_root.rstrip("/")).rstrip("/")
     seo = {
         "title": "StockArmobile | Sistema de gestión para comercios en Argentina",
-        "description": "Sistema de gestión para comercios en Argentina: control de stock, ventas, caja y clientes en una sola plataforma. Funciona desde el celular, con modo offline y prueba gratuita de 10 días.",
+        "description": "Gestión comercial para comercios: stock, ventas, caja, precios mayoristas, promociones y ajustes masivos de precios. Desde PC o celular, con prueba gratis.",
         "url": f"{app_base_url}/",
         # Branding centralizado: esta ruta quedara estable para futuros reemplazos de identidad visual.
         "image": f"{app_base_url}{url_for('static', filename='images/branding/logo.png')}",
