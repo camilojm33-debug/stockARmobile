@@ -19,7 +19,7 @@
   <meta name="twitter:description" content="{{ seo.description }}">
   <meta name="twitter:image" content="{{ seo.image }}">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"WebPage","name":{{ seo.title|tojson }},"description":{{ seo.description|tojson }},"url":{{ seo.url|tojson }},"isPartOf":{"@type":"WebSite","name":{{ seo.site_name|tojson }},"url":{{ (seo.url.split('/')[0:3]|join('/'))|tojson }}}
+  {"@context":"https://schema.org","@type":"WebPage","name":{{ seo.title|tojson }},"description":{{ seo.description|tojson }},"url":{{ seo.url|tojson }},"isPartOf":{"@type":"WebSite","name":{{ seo.site_name|tojson }},"url":{{ (seo.url.split('/')[0:3]|join('/'))|tojson }}}}
   </script>
   <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/branding/favicon.ico') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/branding/apple-touch-icon.png') }}">

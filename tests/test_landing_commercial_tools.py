@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import json
+import re
 
 import pytest
 
@@ -47,6 +49,9 @@ def test_commercial_tool_seo_pages_are_public_and_have_unique_metadata(app, path
     assert expected_heading in body
     assert f"/{canonical}" in body
     assert 'name="description"' in body
+    schema_match = re.search(r'<script type="application/ld\\+json">(.*?)</script>', body, re.S)
+    assert schema_match is not None
+    json.loads(schema_match.group(1))
     assert "Comenzar prueba gratuita" in body
 
 
