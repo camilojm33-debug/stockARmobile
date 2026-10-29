@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import mimetypes
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -27,7 +26,7 @@ from stockarmobile.enums import QuoteStatus
 from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_today, parse_date_yyyy_mm_dd
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
 from services.promotion_service import PromotionEngine
-from services.whatsapp_share_service import build_whatsapp_share_url
+from services.whatsapp_share_service import build_whatsapp_share_url, normalize_whatsapp_number
 from services.quote_cleanup_service import QuoteCleanupService
 
 bp = Blueprint("quotes", __name__)
@@ -332,12 +331,6 @@ def _quote_missing_whatsapp_phone_message(quote):
     if getattr(quote, "client", None) is None:
         return "El presupuesto no tiene un cliente asociado con teléfono/WhatsApp. Seleccioná un cliente y cargá su teléfono antes de enviarlo por WhatsApp."
     return "El cliente del presupuesto no tiene teléfono/WhatsApp registrado. Cargá el teléfono del cliente antes de enviarlo por WhatsApp."
-
-
-def _company_whatsapp_digits(company):
-    """Return the company's configured WhatsApp number in wa.me-compatible digits."""
-    raw_number = str(getattr(company, "whatsapp", None) or "").strip()
-    return re.sub(r"\D+", "", raw_number)
 
 
 def _quote_number(quote):
@@ -1798,7 +1791,7 @@ def quote_public_view(token):
         charge_rows=_quote_charge_display_rows(quote),
         pdf_url=_build_public_quote_pdf_url(quote.id),
         accept_url=_build_public_quote_accept_url(quote.id),
-        whatsapp_number=_company_whatsapp_digits(company),
+        whatsapp_number=normalize_whatsapp_number(getattr(company, "whatsapp", None)),
     )
 
 
