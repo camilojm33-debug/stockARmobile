@@ -6,6 +6,7 @@ import uuid
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from stockarmobile.extensions import csrf, db
+from stockarmobile.helpers.strings import is_safe_relative_redirect
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import ensure_agent_for_key
 from services.ai_agent.providers.base import AIProviderError
@@ -154,7 +155,7 @@ def tour_complete():
     session["guided_tour_seen"] = True
     flash("Recorrido guiado finalizado.", "info")
     next_url = (request.form.get("next") or "").strip()
-    return redirect(next_url) if next_url.startswith("/") else redirect(url_for("dashboard.index"))
+    return redirect(next_url) if is_safe_relative_redirect(next_url) else redirect(url_for("dashboard.index"))
 
 
 @bp.route("/ai-agent/chat", methods=["POST"])

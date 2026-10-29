@@ -421,15 +421,24 @@ def kardex_export_excel(product_id):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Kardex"
-    sheet.append(["Fecha", "Tipo", "Detalle", "Cantidad", "Valor unitario", "Importe"])
+    _append_product_xlsx_row_as_text(
+        sheet,
+        ["Fecha", "Tipo", "Detalle", "Cantidad", "Valor unitario", "Importe"],
+    )
     for movement in movements:
         quantity = movement["quantity"]
         unit_value = movement["unit_value"]
-        sheet.append([
-            movement["date"].strftime("%Y-%m-%d %H:%M:%S") if movement["date"] else "",
-            movement["type"], movement["detail"], quantity, unit_value,
-            (quantity * unit_value) if quantity is not None and unit_value is not None else None,
-        ])
+        _append_product_xlsx_row_as_text(
+            sheet,
+            [
+                movement["date"].strftime("%Y-%m-%d %H:%M:%S") if movement["date"] else "",
+                movement["type"],
+                movement["detail"],
+                quantity,
+                unit_value,
+                (quantity * unit_value) if quantity is not None and unit_value is not None else None,
+            ],
+        )
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     for column in sheet.columns:
@@ -500,6 +509,14 @@ def kardex_print(product_id):
         return redirect(url_for("products.index"))
     return render_template("productos/kardex.html", product=product, movements=movements, auto_print=True)
 
+
+def _append_product_xlsx_row_as_text(sheet, values):
+    sheet.append(values)
+    for cell in sheet[sheet.max_row]:
+        if isinstance(cell.value, str):
+            cell.data_type = "s"
+
+
 @bp.route("/export.xlsx")
 @tenant_required
 def export_excel():
@@ -510,9 +527,10 @@ def export_excel():
     sheet = workbook.active
     sheet.title = "Productos"
     headers = ["barcode", "name", "category", "brand", "supplier", "cost_price", "price", "stock", "min_stock", "sale_type", "unit_measure", "discount"]
-    sheet.append(headers)
+    _append_product_xlsx_row_as_text(sheet, headers)
     for product in scope_query_to_company(Product.query.filter_by(active=True), Product).order_by(Product.name).all():
-        sheet.append(
+        _append_product_xlsx_row_as_text(
+            sheet,
             [
                 product.barcode,
                 product.name,
