@@ -581,11 +581,23 @@ def _ai_order_conversation(company_id: int, quote_id: int, payment=None):
 
 
 def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
-    """Resolve the real channel that created an AI order."""
-    conversation = _ai_order_conversation(company_id, quote_id, payment=payment)
-    if conversation is not None:
-        return str(conversation.channel or "unknown").strip().lower() or "unknown"
-    return "webchat"
+    """Resolve the real channel that created an AI order without mislabeling tenants."""
+    payment = payment or _ai_order_payment(company_id, quote_id)
+    conversation_id = _ai_order_conversation_id(payment)
+    if conversation_id is None:
+        # Older AI orders did not persist the conversation ID and were created
+        # through the original public webchat flow.
+        return "webchat"
+
+    conversation = Conversation.query.filter_by(
+        id=conversation_id,
+        company_id=int(company_id),
+    ).first()
+    if conversation is None:
+        # An explicit but unresolved conversation must not be silently labeled
+        # Webchat: it may be stale data or an attempt to reference another tenant.
+        return "unknown"
+    return str(conversation.channel or "unknown").strip().lower() or "unknown"
 
 
 def _ai_order_channel_meta(channel: str) -> dict:
