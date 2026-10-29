@@ -122,7 +122,7 @@ def test_public_quote_consult_buttons_target_company_whatsapp_setting(app):
     # must open the same tenant-configured WhatsApp number in wa.me format.
     import re
 
-    links = re.findall(r'href="(https://wa\\.me/[^"]+)"', page)
+    links = re.findall(r'href="(https://wa\.me/[^"]+)"', page)
     assert len(links) == 2
     assert all(link.startswith("https://wa.me/5493624123456?text=") for link in links)
     assert "P-OBS-BRAND-001" in page
