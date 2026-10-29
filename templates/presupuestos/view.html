@@ -131,7 +131,7 @@
           <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary">${{ "%.2f"|format(quote.total_amount or 0) }}</strong></div>
           {% if quote.observations %}
           <hr>
-          <div class="small text-muted"><strong>Observaciones:</strong> {{ quote.observations }}</div>
+          <div class="small text-muted"><strong>Observaciones:</strong> {{ display_observations }}</div>
           {% endif %}
           {% if quote.commercial_conditions %}
           <hr>
