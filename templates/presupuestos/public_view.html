@@ -35,7 +35,7 @@
     </header>
     <div class="content">
       <div class="head"><div><div class="muted">PRESUPUESTO</div><h1>{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1><div class="muted">Emitido {{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div></div>
-        <div class="cta-row"><a class="btn" href="{{ pdf_url }}" target="_blank" rel="noopener">📄 Ver PDF</a>{% if whatsapp_number %}<a class="btn secondary" href="https://wa.me/{{ whatsapp_number }}?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar</a>{% else %}<span class="btn secondary" aria-disabled="true" title="La empresa debe configurar su WhatsApp en Mi empresa">💬 WhatsApp no configurado</span>{% endif %}</div>
+        <div class="cta-row"><a class="btn" href="{{ pdf_url }}" target="_blank" rel="noopener">📄 Ver PDF</a><a class="btn secondary" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar</a></div>
       </div>
       <div class="client-grid"><div class="box"><span class="label">Cliente</span><div class="value">{{ quote.delivery.recipient_name if quote.delivery and quote.delivery.recipient_name else (quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final')) }}</div>{% set displayed_phone = (quote.delivery.phone if quote.delivery and quote.delivery.phone else ((quote.client.whatsapp or quote.client.phone) if quote.client else '')) %}{% if displayed_phone %}<div class="small">📱 {{ displayed_phone }}</div>{% endif %}{% set displayed_address = (quote.delivery.address if quote.delivery and quote.delivery.address else (quote.client.address if quote.client else '')) %}{% if displayed_address %}<div class="small">📍 {{ displayed_address }}</div>{% endif %}</div>
         <div class="box"><span class="label">Validez</span><div class="value">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div><div class="small">{{ quote.currency or 'ARS' }}</div></div></div>
@@ -60,7 +60,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn success" style="width:100%" type="submit">✅ Aceptar presupuesto</button>
           </form>
-          <div class="cta-row">{% if whatsapp_number %}<a class="btn secondary" style="flex:1" href="https://wa.me/{{ whatsapp_number }}?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar por WhatsApp</a>{% else %}<span class="btn secondary" style="flex:1" aria-disabled="true" title="La empresa debe configurar su WhatsApp en Mi empresa">💬 WhatsApp no configurado</span>{% endif %}</div>
+          <div class="cta-row"><a class="btn secondary" style="flex:1" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar por WhatsApp</a></div>
         </div>{% endif %}
       </div>
       {% set wholesale_savings = rows|sum(attribute="wholesale_discount_amount") %}
