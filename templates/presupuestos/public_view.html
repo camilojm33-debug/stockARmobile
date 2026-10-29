@@ -54,7 +54,7 @@
         {% endif %}
       </td><td>{{ '%.3g'|format(row.quantity) }}</td><td>${{ '%.2f'|format(row.price) }}</td><td><strong>${{ '%.2f'|format(row.total) }}</strong></td></tr>{% endfor %}</tbody></table></div>
       <div class="bottom-grid"><div>
-        {% if quote.observations or quote.commercial_conditions %}<div class="notes">{% if quote.commercial_conditions %}<h3>Condiciones comerciales</h3><p>{{ quote.commercial_conditions }}</p>{% endif %}{% if quote.observations %}<h3>Observaciones</h3><p>{{ quote.observations }}</p>{% endif %}</div>{% endif %}
+        {% if quote.observations or quote.commercial_conditions %}<div class="notes">{% if quote.commercial_conditions %}<h3>Condiciones comerciales</h3><p>{{ quote.commercial_conditions }}</p>{% endif %}{% if quote.observations %}<h3>Observaciones</h3><p>{{ display_observations }}</p>{% endif %}</div>{% endif %}
         {% if status not in ['APROBADO','RECHAZADO','ANULADO','VENCIDO'] %}<div class="accept-box"><h2>¿Querés avanzar con este presupuesto?</h2><p>Al aceptar, la empresa recibirá la confirmación y podrá continuar con el pedido.</p>
           <form method="post" action="{{ accept_url }}" onsubmit="return confirm('¿Confirmás que querés aceptar este presupuesto?');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

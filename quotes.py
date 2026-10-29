@@ -337,6 +337,28 @@ def _quote_number(quote):
     return quote.number or f"P-{quote.id:06d}"
 
 
+# Este texto identifica internamente los pedidos creados por el Vendedor IA.
+# Se conserva en la base porque otros flujos lo usan para clasificar el origen;
+# al mostrar el presupuesto se traduce al nombre de la empresa contratante.
+AI_VENDOR_ORDER_OBSERVATION = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+
+
+def _quote_observations_for_display(quote, company=None):
+    """Present the internal AI-order marker with the contracting business name."""
+    observations = str(getattr(quote, "observations", None) or "").strip()
+    if not observations:
+        return ""
+    if observations != AI_VENDOR_ORDER_OBSERVATION:
+        return observations
+
+    if company is None:
+        company = getattr(quote, "company", None)
+    business_name = str(getattr(company, "name", None) or "").strip()
+    if not business_name:
+        return observations
+    return f"Pedido generado por el Vendedor 24 hs de {business_name}."
+
+
 def _quote_charge_snapshot(quote):
     """Return the immutable checkout charge snapshot stored on the quote, if any."""
     raw = getattr(quote, "charges_json", None)
@@ -508,8 +530,9 @@ def _build_quote_whatsapp_message(quote, company):
 
     if quote.commercial_conditions:
         lines.extend(["", f"Condiciones comerciales: {_plain_whatsapp_text(quote.commercial_conditions, max_length=500)}"])
-    if quote.observations:
-        lines.extend(["", f"Observaciones: {_plain_whatsapp_text(quote.observations, max_length=500)}"])
+    display_observations = _quote_observations_for_display(quote, company=company)
+    if display_observations:
+        lines.extend(["", f"Observaciones: {_plain_whatsapp_text(display_observations, max_length=500)}"])
 
     if company is not None:
         company_lines = [f"Comercio: {_plain_whatsapp_text(getattr(company, 'name', None) or 'StockArmobile', max_length=160)}"]
@@ -1078,6 +1101,7 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     from app import Company
 
     company = Company.query.filter_by(id=quote.company_id).first()
+    display_observations = _quote_observations_for_display(quote, company=company)
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -1191,12 +1215,12 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     pdf.drawString(40, y, f"Creado por: {quote.created_by_user.name if quote.created_by_user else ''}")
     y -= 18
     pdf.drawString(40, y, f"Vendedor: {quote.seller.name if quote.seller else ''}")
-    if quote.observations:
+    if display_observations:
         y -= 28
         pdf.setFont("Helvetica", 10)
         pdf.drawString(40, y, "Observaciones:")
         text = pdf.beginText(40, y - 12)
-        for line in (quote.observations or "").splitlines():
+        for line in display_observations.splitlines():
             text.textLine(line[:95])
         pdf.drawText(text)
     if quote.commercial_conditions:
@@ -1507,7 +1531,7 @@ def view_quote(quote_id):
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     company = Company.query.filter_by(id=quote.company_id).first()
-    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote))
+    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote), display_observations=_quote_observations_for_display(quote, company=company))
 
 
 @bp.route("/<int:quote_id>/editar", methods=["GET", "POST"])
@@ -1740,7 +1764,7 @@ def quote_public_accept(token):
 
 @bp.route("/publico/<token>")
 def quote_public_view(token):
-    from app import Quote, QuoteItem
+    from app import Company, Quote, QuoteItem
 
     quote_id = _quote_id_from_public_token(token)
     if not quote_id:
@@ -1758,9 +1782,11 @@ def quote_public_view(token):
     )
     if quote is None:
         abort(404)
+    company = Company.query.filter_by(id=quote.company_id).first()
     return render_template(
         "presupuestos/public_view.html",
         quote=quote,
+        display_observations=_quote_observations_for_display(quote, company=company),
         rows=_quote_rows(quote),
         charge_rows=_quote_charge_display_rows(quote),
         pdf_url=_build_public_quote_pdf_url(quote.id),
