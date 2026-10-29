@@ -27,8 +27,8 @@ def test_custom_observations_and_missing_business_name_keep_existing_behavior():
     assert _quote_observations_for_display(type("QuoteStub", (), {"observations": None})()) == ""
 
 
-def _create_ai_quote():
-    company = Company(name="Almacen Central", active=True)
+def _create_ai_quote(*, whatsapp=None, phone=None):
+    company = Company(name="Almacen Central", active=True, whatsapp=whatsapp, phone=phone)
     db.session.add(company)
     db.session.flush()
     user = User(
@@ -107,3 +107,38 @@ def test_public_quote_pdf_shows_tenant_name(app, monkeypatch):
     with app.app_context():
         quote = db.session.get(Quote, quote_id)
         assert quote.observations == AI_VENDOR_ORDER_OBSERVATION
+
+
+def test_public_quote_consult_buttons_target_company_whatsapp_setting(app):
+    with app.app_context():
+        quote_id = _create_ai_quote(whatsapp="+54 (9) 3624-123456")
+        token = _public_token(quote_id)
+
+    response = app.test_client().get(f"/presupuestos/publico/{token}")
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+
+    # Both the upper "Consultar" and lower "Consultar por WhatsApp" buttons
+    # must open the same tenant-configured WhatsApp number in wa.me format.
+    import re
+
+    links = re.findall(r'href="(https://wa\.me/[^"]+)"', page)
+    assert len(links) == 2
+    assert all(link.startswith("https://wa.me/5493624123456?text=") for link in links)
+    assert "P-OBS-BRAND-001" in page
+    assert "https://wa.me/?text=" not in page
+
+
+def test_public_quote_consult_buttons_are_disabled_when_company_whatsapp_is_missing(app):
+    with app.app_context():
+        # A general phone number is not a substitute for the explicit WhatsApp setting.
+        quote_id = _create_ai_quote(phone="+54 11 5555-1111")
+        token = _public_token(quote_id)
+
+    response = app.test_client().get(f"/presupuestos/publico/{token}")
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+
+    assert page.count("WhatsApp no configurado") == 2
+    assert "https://wa.me/?text=" not in page
+    assert 'aria-disabled="true"' in page
