@@ -21,6 +21,7 @@ def _create_order_reference(*, channel=None, foreign_conversation=False, include
         company_id=company.id,
     )
     db.session.add(user)
+    db.session.flush()  # Quote.created_by_user_id is non-nullable.
 
     conversation_company = company
     if foreign_conversation:
