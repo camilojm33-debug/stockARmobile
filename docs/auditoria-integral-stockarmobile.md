@@ -214,3 +214,30 @@ Para validar migraciones, utilizar una base PostgreSQL **desechable** según el 
 3. Ampliar gradualmente la matriz multiempresa al resto de recursos y operaciones.
 4. Separar tests de proveedor simulados de pruebas de sandbox reales y mantener ambas evidencias diferenciadas.
 5. Atender las advertencias de Python/SQLAlchemy con cambios aislados y pruebas específicas.
+
+
+## N. Revisión complementaria — redirección en el panel SaaS
+
+**Fecha:** 2026-10-29  
+**Rama de revisión:** `fix/saas-safe-redirect-20261029`  
+**PR de revisión:** https://github.com/camilojm33-debug/stockARmobile/pull/333
+
+### Hallazgo adicional
+
+La función `_redirect_back()` en `saas.py` aceptaba `next` cuando simplemente comenzaba con `/`. Esa regla acepta destinos ambiguos como `//attacker.example/path`, que algunos navegadores interpretan como una URL externa. Esto dejaba un camino de redirección no seguro en acciones del panel SaaS aunque el login y el recorrido guiado ya usaran el validador compartido.
+
+### Corrección preparada
+
+- `saas.py`: importa y reutiliza `is_safe_relative_redirect()`; ante un destino externo o ambiguo, vuelve al endpoint interno por defecto.
+- `tests/test_security_regressions.py`: agrega casos para los valores externos/ambiguos (incluyendo barras múltiples, barras invertidas, codificación y doble codificación URL) enviados tanto por query string como por formulario. También comprueba que una ruta interna legítima siga funcionando.
+- La corrección y sus pruebas están en una rama aislada y en un PR draft; no se han fusionado en `main`.
+
+### Estado de validación de esta corrección adicional
+
+- **Inspección de diff remoto:** realizada; el cambio afecta `saas.py`, `tests/test_security_regressions.py` y este informe.
+- **Pruebas de regresión de la app:** añadidas, pero su ejecución en CI aún no está confirmada. No se deben presentar como aprobadas hasta obtener los resultados del workflow.
+- **Suite general y 285 advertencias:** no reejecutadas en este entorno.
+- **PostgreSQL, navegador e integraciones reales:** siguen pendientes, según las limitaciones de las secciones C, H e I.
+- **Producción:** no se desplegó ni se modificó Render.
+
+**Evaluación de la corrección adicional:** cambio preparado y aislado; pendiente de ejecución de pruebas automatizadas antes de considerarlo verificado. Este suplemento no cambia el resultado de los tests históricos de `main` descritos en las secciones anteriores.

@@ -29,6 +29,7 @@ from werkzeug.security import check_password_hash
 
 from app import model_table_exists, superadmin_required, utcnow
 from stockarmobile.extensions import csrf
+from stockarmobile.helpers.strings import is_safe_relative_redirect
 from config.billing_config import load_billing_config
 from services.backup_service import BackupService
 from services.payment_flow import (
@@ -224,7 +225,7 @@ def _require_superadmin_step_up() -> bool:
 
 def _redirect_back(default_endpoint: str = "saas.companies_panel"):
     next_url = (request.form.get("next") or request.args.get("next") or "").strip()
-    if next_url.startswith("/"):
+    if is_safe_relative_redirect(next_url):
         return redirect(next_url)
     return redirect(url_for(default_endpoint))
 

@@ -219,3 +219,48 @@ def test_product_kardex_xlsx_keeps_user_detail_as_text(authenticated_tenant_clie
     assert cell.value == malicious_detail
     assert cell.data_type == "s"
     workbook.close()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://attacker.example/path",
+        "//attacker.example/path",
+        "///attacker.example/path",
+        r"/\\attacker.example/path",
+        "/%2f%2fattacker.example/path",
+        "/%252f%252fattacker.example/path",
+        "/%5c%5cattacker.example/path",
+        "/%25255c%25255cattacker.example/path",
+        "javascript:alert(1)",
+    ],
+)
+@pytest.mark.parametrize("source", ["query", "form"])
+def test_saas_redirect_back_rejects_external_and_ambiguous_destinations(app, target, source):
+    from saas import _redirect_back
+
+    if source == "query":
+        request_context = app.test_request_context("/", query_string={"next": target})
+    else:
+        request_context = app.test_request_context("/", method="POST", data={"next": target})
+
+    with request_context:
+        response = _redirect_back(default_endpoint="dashboard.index")
+        assert response.status_code == 302
+        assert response.headers["Location"] == url_for("dashboard.index")
+
+
+@pytest.mark.parametrize("source", ["query", "form"])
+def test_saas_redirect_back_preserves_valid_internal_destinations(app, source):
+    from saas import _redirect_back
+
+    target = "/clientes?page=2"
+    if source == "query":
+        request_context = app.test_request_context("/", query_string={"next": target})
+    else:
+        request_context = app.test_request_context("/", method="POST", data={"next": target})
+
+    with request_context:
+        response = _redirect_back(default_endpoint="dashboard.index")
+        assert response.status_code == 302
+        assert response.headers["Location"] == target
