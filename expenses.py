@@ -21,14 +21,17 @@ def _record_cash_expense_movement(*, user, expense):
     from app import CashMovement, CashSession, db
 
     company_id = getattr(user, "company_id", None)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    open_session_query = CashSession.query.filter_by(
+        company_id=company_id,
+        user_id=user.id,
+        status="abierta",
+    )
+    if active_branch_id is not None:
+        open_session_query = open_session_query.filter(CashSession.branch_id == active_branch_id)
     open_session = (
-        CashSession.query
-        .filter_by(
-            company_id=company_id,
-            user_id=user.id,
-            status="abierta",
-        )
-        .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+        open_session_query.order_by(CashSession.opened_at.desc(), CashSession.id.desc())
         .with_for_update()
         .first()
     )
