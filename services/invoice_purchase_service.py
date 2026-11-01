@@ -126,7 +126,7 @@ class InvoicePurchaseService:
         return computed_subtotal
 
     @staticmethod
-    def confirm(*, company_id: int, user_id: int, invoice: dict, conversation):
+    def confirm(*, company_id: int, user_id: int, invoice: dict, conversation, branch_id: int | None = None):
         if invoice.get("status") in {"CONFIRMADA", "APLICADA"}:
             return invoice.get("result") or {"status": invoice.get("status")}
         if invoice.get("status") != "LISTA_PARA_CONFIRMAR":
@@ -144,7 +144,7 @@ class InvoicePurchaseService:
         currency, subtotal, tax, total = InvoicePurchaseService._prepare_invoice(invoice)
         InvoicePurchaseService._validate_line_subtotal(lines, subtotal)
 
-        from app import AuditLog, Product, PurchaseItem, PurchaseOrder, Supplier, db
+        from app import AuditLog, Branch, Product, PurchaseItem, PurchaseOrder, Supplier, db
 
         supplier_match = invoice.get("supplier_match") or {}
         supplier_status = supplier_match.get("status")
@@ -200,9 +200,16 @@ class InvoicePurchaseService:
                 db.session.add(supplier)
                 db.session.flush()
 
+            if branch_id is None:
+                default_branch = Branch.query.filter_by(company_id=company_id, is_default=True, active=True).first()
+                branch_id = default_branch.id if default_branch is not None else None
+            branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first() if branch_id is not None else None
+            if branch_id is not None and branch is None:
+                raise InvoicePurchaseError("La sucursal seleccionada no pertenece a esta empresa.")
             order = PurchaseOrder(
                 supplier_id=supplier.id if supplier else None,
                 company_id=company_id,
+                branch_id=branch.id if branch is not None else None,
                 date=utcnow_naive(),
                 status="recibida",
                 subtotal=subtotal,
@@ -243,6 +250,13 @@ class InvoicePurchaseService:
                 average_cost = ((previous_stock * previous_cost) + (quantity * unit_cost)) / new_stock if new_stock else unit_cost
 
                 product.stock = float(new_stock)
+                if branch is not None:
+                    from stockarmobile.branch_inventory import adjust_branch_stock
+                    adjust_branch_stock(
+                        product, branch.id, quantity, movement_type="purchase_ai",
+                        source_type="purchase", source_id=order.id, user_id=user_id,
+                        update_company_total=False, note="Ingreso desde factura procesada con IA",
+                    )
                 product.cost_price = average_cost
                 product.supplier_id = supplier.id if supplier else product.supplier_id
                 product.margin = Decimal(str(product.price or 0)) - average_cost
