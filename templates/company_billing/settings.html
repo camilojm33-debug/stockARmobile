@@ -1018,16 +1018,17 @@
             </div>
             <div class="table-responsive mb-3">
               <table class="table table-sm table-hover align-middle mb-0">
-                <thead><tr><th>Número</th><th>Descripción</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Número</th><th>Descripción</th><th>Sucursal asociada</th><th>Estado</th></tr></thead>
                 <tbody>
                   {% for pos in billing_config.points_of_sale %}
                   <tr>
                     <td>{{ pos.number }}</td>
                     <td>{{ pos.description }}</td>
+                    <td>{{ pos.branch or 'Casa central' }}</td>
                     <td><span class="badge {{ 'text-bg-success' if pos.number == billing_config.active_pos else 'text-bg-secondary' }}">{{ 'Activo' if pos.number == billing_config.active_pos else 'Inactivo' }}</span></td>
                   </tr>
                   {% else %}
-                  <tr><td colspan="3" class="text-center text-muted py-3">Sin puntos de venta configurados.</td></tr>
+                  <tr><td colspan="4" class="text-center text-muted py-3">Sin puntos de venta configurados.</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
@@ -1036,8 +1037,9 @@
               <div class="col-md-4"><label class="form-label">Punto de venta activo</label><select class="form-select" name="active_pos">{% for pos in billing_config.points_of_sale %}<option value="{{ pos.number }}" {% if pos.number == billing_config.active_pos %}selected{% endif %}>{{ pos.number }} · {{ pos.description }}</option>{% endfor %}</select></div>
               <div class="col-md-8">
                 <div class="row g-2">
-                  <div class="col-md-4"><label class="form-label">Número</label><input class="form-control" name="pos_number" placeholder="00002"></div>
-                  <div class="col-md-6"><label class="form-label">Descripción</label><input class="form-control" name="pos_description" placeholder="Sucursal Centro"></div>
+                  <div class="col-md-3"><label class="form-label">Número</label><input class="form-control" name="pos_number" placeholder="00002"></div>
+                  <div class="col-md-4"><label class="form-label">Descripción</label><input class="form-control" name="pos_description" placeholder="Punto de venta Sucursal Centro"></div>
+                  <div class="col-md-3"><label class="form-label">Sucursal</label><select class="form-select" name="branch">{% for branch in company_branches %}<option value="{{ branch.name }}">{{ branch.name }}</option>{% endfor %}</select></div>
                   <div class="col-md-2 d-grid"><label class="form-label d-none d-md-block">&nbsp;</label><button class="btn btn-outline-primary" type="submit" formaction="{{ url_for('company_billing.company_settings_billing_pos_add') }}" formmethod="post">Agregar punto de venta</button></div>
                 </div>
               </div>
