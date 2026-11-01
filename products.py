@@ -861,6 +861,8 @@ def import_excel():
                         product.stock = data["stock"]
                 if data["min_stock"] is not None:
                     product.min_stock = data["min_stock"]
+                if branch_stock_row is not None:
+                    branch_stock_row.min_stock = product.min_stock or 0
                 if data["sale_type"]:
                     product.sale_type = data["sale_type"]
                 if data["unit_measure"]:
