@@ -1617,7 +1617,7 @@ def delete_sale(sale_id):
     if getattr(current_user, "role", None) != "admin":
         abort(403)
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
 
     service = SaleService(
         require_open_cash_session=_require_open_cash_session,
