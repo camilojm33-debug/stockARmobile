@@ -101,9 +101,16 @@ def upgrade():
                 "INSERT INTO branches(company_id,name,code,address,city,province,phone,whatsapp,active,is_default,created_at,updated_at) "
                 "VALUES(:cid,'Casa central','CASA-CENTRAL',:address,:city,:province,:phone,:whatsapp,TRUE,TRUE,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING id"
             ), {"cid":company["id"],"address":company["address"],"city":company["city"],"province":company["province"],"phone":company["phone"],"whatsapp":company["whatsapp"]}).scalar_one())
-        for table in ("sales","purchase_orders","cash_sessions","cash_movements","expenses","business_documents","quotes"):
+        for table in ("sales","purchase_orders","cash_sessions","cash_movements","expenses","business_documents"):
             if _has_table(bind,table) and "branch_id" in _columns(bind,table):
                 bind.execute(sa.text(f"UPDATE {table} SET branch_id=:bid WHERE company_id=:cid AND branch_id IS NULL"),{"bid":branch_id,"cid":company["id"]})
+        if _has_table(bind, "quotes") and "branch_id" in _columns(bind, "quotes"):
+            # Quotes carried an unvalidated integer before the Branch entity existed.
+            # Keep only references already owned by this company; map all other legacy values to Casa central.
+            bind.execute(sa.text(
+                "UPDATE quotes SET branch_id=:bid WHERE company_id=:cid AND "
+                "(branch_id IS NULL OR NOT EXISTS (SELECT 1 FROM branches b WHERE b.id=quotes.branch_id AND b.company_id=:cid))"
+            ), {"bid": branch_id, "cid": company["id"]})
         if _has_table(bind,"users"):
             users=bind.execute(sa.text("SELECT id FROM users WHERE company_id=:cid AND role <> 'superadmin'"),{"cid":company["id"]}).all()
             for user in users:
