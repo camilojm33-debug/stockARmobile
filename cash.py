@@ -63,6 +63,10 @@ def _base_session_query():
     from app import CashSession, scope_query_to_company
 
     query = scope_query_to_company(CashSession.query, CashSession)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(CashSession.branch_id == active_branch_id)
     if not _is_admin():
         query = query.filter(CashSession.user_id == current_user.id)
     return query
@@ -72,6 +76,10 @@ def _base_movement_query():
     from app import CashMovement, CashSession, scope_query_to_company
 
     query = scope_query_to_company(CashMovement.query, CashMovement)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(CashMovement.branch_id == active_branch_id)
     if not _is_admin():
         query = query.join(CashSession, CashSession.id == CashMovement.session_id).filter(CashSession.user_id == current_user.id)
     return query
@@ -251,6 +259,7 @@ def index():
                 target_session = CashSession(
                     user_id=current_user.id,
                     company_id=getattr(current_user, "company_id", None),
+                    branch_id=__import__("stockarmobile.branch_context", fromlist=["get_active_branch_id"]).get_active_branch_id(),
                     opened_by_user_id=current_user.id,
                     opening_amount=_to_decimal(request.form.get("opening_amount")),
                     note=request.form.get("note"),
@@ -275,6 +284,7 @@ def index():
                             session_id=target_session.id,
                             user_id=current_user.id,
                             company_id=getattr(current_user, "company_id", None),
+                            branch_id=getattr(target_session, "branch_id", None),
                             movement_type=movement_type,
                             category=request.form.get("category"),
                             amount=amount,

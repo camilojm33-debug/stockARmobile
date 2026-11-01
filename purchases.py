@@ -144,7 +144,7 @@ def _recalculate_purchase_edit_values(
     return updated_stock, updated_cost
 
 
-def _apply_product_purchase_totals(product_totals):
+def _apply_product_purchase_totals(product_totals, *, branch_id=None):
     """Apply stock and moving-average cost while serializing concurrent purchases."""
     from app import Product, db
 
@@ -171,6 +171,11 @@ def _apply_product_purchase_totals(product_totals):
         previous_cost = float(product.cost_price or 0)
         new_stock = previous_stock + purchase_quantity
         product.stock = new_stock
+        if branch_id is not None:
+            from stockarmobile.branch_inventory import adjust_branch_stock
+            adjust_branch_stock(product, branch_id, purchase_quantity, movement_type="purchase",
+                                source_type="purchase", user_id=getattr(current_user, "id", None),
+                                update_company_total=False)
         product.cost_price = (
             ((previous_stock * previous_cost) + purchase_value) / new_stock
             if new_stock
@@ -218,9 +223,12 @@ def index():
                 product_totals[product.id][1] += line["quantity"]
                 product_totals[product.id][2] += line["quantity"] * line["unit_cost"]
             subtotal = sum(line["quantity"] * line["unit_cost"] for _, line in resolved_lines)
+            from stockarmobile.branch_context import get_active_branch_id
+            branch_id = get_active_branch_id()
             order = PurchaseOrder(
                 supplier_id=supplier.id if supplier else None,
                 company_id=company_id,
+                branch_id=branch_id,
                 date=utcnow(),
                 status="recibida",
                 subtotal=subtotal,
@@ -231,7 +239,7 @@ def index():
             db.session.flush()
             for product, line in resolved_lines:
                 db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=line["quantity"], unit_cost=line["unit_cost"]))
-            _apply_product_purchase_totals(product_totals)
+            _apply_product_purchase_totals(product_totals, branch_id=branch_id)
             record_audit(
                 action="purchase_create",
                 entity="purchase_order",

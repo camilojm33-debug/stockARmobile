@@ -20,7 +20,7 @@ from flask import abort, current_app, flash, g, jsonify, make_response, redirect
 from flask_login import UserMixin, current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFError
-from sqlalchemy import CheckConstraint, Index, text
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
 from sqlalchemy.exc import ProgrammingError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -811,6 +811,7 @@ class Sale(db.Model):
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id"))
     seller_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"), index=True)
     client = db.relationship("Client", backref="sales")
     seller = db.relationship("User", backref="sales")
@@ -1001,6 +1002,7 @@ class BusinessDocument(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     source_type = db.Column(db.String(20), nullable=False, default="sale")
     source_id = db.Column(db.Integer, nullable=False, index=True)
     doc_type = db.Column(db.String(40), nullable=False, index=True)
@@ -1071,6 +1073,69 @@ class Company(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow)
 
 
+class Branch(db.Model):
+    __tablename__ = "branches"
+    __table_args__ = (UniqueConstraint("company_id", "code", name="uq_branches_company_code"), Index("ix_branches_company_active", "company_id", "active"))
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    code = db.Column(db.String(40), nullable=False)
+    address = db.Column(db.String(255))
+    city = db.Column(db.String(120))
+    province = db.Column(db.String(120))
+    phone = db.Column(db.String(40))
+    whatsapp = db.Column(db.String(40))
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    is_default = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    company = db.relationship("Company", backref="branches")
+
+
+class UserBranchAccess(db.Model):
+    __tablename__ = "user_branch_access"
+    __table_args__ = (UniqueConstraint("user_id", "branch_id", name="uq_user_branch_access"), Index("ix_user_branch_access_company_user", "company_id", "user_id"))
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    user = db.relationship("User")
+    branch = db.relationship("Branch")
+
+
+class BranchStock(db.Model):
+    __tablename__ = "branch_stock"
+    __table_args__ = (UniqueConstraint("branch_id", "product_id", name="uq_branch_stock_branch_product"), Index("ix_branch_stock_company_branch", "company_id", "branch_id"))
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    stock = db.Column(db.Numeric(18, 3), nullable=False, default=0)
+    min_stock = db.Column(db.Numeric(18, 3), nullable=False, default=0)
+    reserved_stock = db.Column(db.Numeric(18, 3), nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    branch = db.relationship("Branch")
+    product = db.relationship("Product")
+
+
+class BranchStockMovement(db.Model):
+    __tablename__ = "branch_stock_movements"
+    __table_args__ = (Index("ix_branch_stock_movements_company_branch_date", "company_id", "branch_id", "created_at"),)
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    movement_type = db.Column(db.String(30), nullable=False)
+    quantity_delta = db.Column(db.Numeric(18, 3), nullable=False)
+    stock_after = db.Column(db.Numeric(18, 3), nullable=False)
+    source_type = db.Column(db.String(40))
+    source_id = db.Column(db.Integer)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+
 class MercadoPagoConnection(db.Model):
     __tablename__ = "mercadopago_connections"
 
@@ -1106,6 +1171,7 @@ class Plan(db.Model):
     max_users = db.Column(db.Integer, default=1)
     max_products = db.Column(db.Integer, default=1000)
     max_clients = db.Column(db.Integer, default=1000)
+    max_branches = db.Column(db.Integer, default=1, nullable=False)
     features_json = db.Column(db.Text)
     state = db.Column(db.String(20), default="active", index=True)
     active = db.Column(db.Boolean, default=True, nullable=False)
@@ -1306,6 +1372,7 @@ class PurchaseOrder(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     date = db.Column(db.DateTime, default=utcnow, index=True)
     status = db.Column(db.String(30), default="recibida", index=True)
     subtotal = db.Column(MONEY, default=Decimal("0.00"))
@@ -1337,6 +1404,7 @@ class CashSession(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     opened_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     opened_at = db.Column(db.DateTime, default=utcnow, index=True)
     closed_at = db.Column(db.DateTime)
@@ -1368,6 +1436,7 @@ class CashMovement(db.Model):
     session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), index=True)
     movement_type = db.Column(db.String(20), nullable=False)
     category = db.Column(db.String(80))
@@ -1393,6 +1462,7 @@ class Expense(db.Model):
     payment_method = db.Column(db.String(50))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     user = db.relationship("User")
 
 
@@ -2115,6 +2185,7 @@ import seo_pages  # noqa: E402
 import ai_agents  # noqa: E402
 import promotions  # noqa: E402
 import wholesale_pricing  # noqa: E402
+import branches as branches_module  # noqa: E402
 from services.ai_agent.admin import bp as ai_admin_bp  # noqa: E402
 from whatsapp_agent import bp as whatsapp_agent_bp  # noqa: E402
 
@@ -2162,9 +2233,24 @@ app.register_blueprint(seo_pages_bp)
 app.register_blueprint(ai_agents_bp)
 app.register_blueprint(promotions_bp)
 app.register_blueprint(wholesale_pricing.bp)
+app.register_blueprint(branches_module.bp)
 app.register_blueprint(ai_admin_bp)
 app.register_blueprint(whatsapp_agent_bp)
 app.register_blueprint(maintenance_bp)
+
+
+@app.context_processor
+def inject_branch_switcher_context():
+    try:
+        from stockarmobile.branch_context import accessible_branches, get_active_branch_id, multibranch_enabled
+        enabled = multibranch_enabled()
+        choices = accessible_branches() if enabled else []
+        return {"branch_switcher_enabled": bool(enabled and len(choices) > 1),
+                "branch_switcher_options": choices,
+                "active_branch_id": get_active_branch_id() if enabled else None}
+    except Exception:
+        app.logger.exception("Could not prepare branch switcher context")
+        return {"branch_switcher_enabled": False, "branch_switcher_options": [], "active_branch_id": None}
 
 
 def _plan_feature_flags(plan):

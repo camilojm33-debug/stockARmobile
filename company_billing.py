@@ -4998,11 +4998,19 @@ def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, CashSession, Quote, Sale, SaleItem, User
+    from app import AuditLog, Branch, CashSession, Quote, Sale, SaleItem, User, UserBranchAccess
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
     settings_panel = (request.args.get("panel") or "").strip().lower()
+    from services.ai_agent.usage_service import can_use_commercial_feature
+    multi_branch_access = can_use_commercial_feature(company, "multi_branch").allowed
+    company_branches = Branch.query.filter_by(company_id=company.id).order_by(Branch.is_default.desc(), Branch.name.asc()).all()
+    branch_user_access = {
+        branch.id: {row.user_id for row in UserBranchAccess.query.filter_by(company_id=company.id, branch_id=branch.id).all()}
+        for branch in company_branches
+    }
+    branch_limit = max(1, int(getattr(PlanUsageService._active_plan_for_company(company.id)[1], "max_branches", 1) or 1))
 
     pin_verified = _is_pin_verified(company.id)
     date_from_raw = request.args.get("from") or ""
@@ -5221,6 +5229,10 @@ def company_settings():
         billing_enabled_documents=billing_enabled_documents,
         billing_last_receipt=billing_last_receipt,
         billing_history_rows=billing_history_rows,
+        multi_branch_access=multi_branch_access,
+        company_branches=company_branches,
+        branch_user_access=branch_user_access,
+        branch_limit=branch_limit,
     )
 
 

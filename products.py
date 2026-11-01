@@ -213,6 +213,12 @@ def add():
         try:
             db.session.add(product)
             db.session.flush()
+            from stockarmobile.branch_context import get_active_branch_id
+            branch_id = get_active_branch_id()
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import set_branch_stock
+                set_branch_stock(product, branch_id, product.stock or 0, movement_type="initial",
+                                 user_id=current_user.id, note="Stock inicial del producto")
             db.session.add(
                 ProductModification(
                     product_id=product.id,
@@ -262,8 +268,22 @@ def edit(product_id=None, id=None):
             return redirect(url_for("products.edit", product_id=product.id))
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
+        old_company_stock = float(product.stock or 0)
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
+        old_branch_stock = 0.0
+        if branch_id is not None:
+            from stockarmobile.branch_inventory import get_branch_stock
+            branch_stock_row = get_branch_stock(product, branch_id, lock=True)
+            old_branch_stock = float(branch_stock_row.stock or 0) if branch_stock_row is not None else 0.0
         try:
             _apply_product_form(product, form)
+            if branch_id is not None:
+                new_branch_stock = float(product.stock or 0)
+                product.stock = old_company_stock + new_branch_stock - old_branch_stock
+                from stockarmobile.branch_inventory import set_branch_stock
+                set_branch_stock(product, branch_id, new_branch_stock, movement_type="manual_adjustment",
+                                 user_id=current_user.id, note="Ajuste manual desde ficha de producto")
         except ValueError as exc:
             flash(str(exc), "danger")
             return redirect(url_for("products.edit", product_id=product.id))

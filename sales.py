@@ -184,6 +184,10 @@ def _current_open_cash_session():
     from app import CashSession, scope_query_to_company
 
     session_query = scope_query_to_company(CashSession.query.filter_by(status="abierta", user_id=current_user.id), CashSession)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        session_query = session_query.filter(CashSession.branch_id == active_branch_id)
     return session_query.order_by(CashSession.opened_at.desc()).first()
 
 
@@ -202,6 +206,11 @@ def _sale_accessible_query(query, model):
     from app import scope_query_to_company
 
     scoped_query = scope_query_to_company(query, model)
+    if hasattr(model, "branch_id"):
+        from stockarmobile.branch_context import get_active_branch_id
+        active_branch_id = get_active_branch_id()
+        if active_branch_id is not None:
+            scoped_query = scoped_query.filter(model.branch_id == active_branch_id)
     if getattr(current_user, "role", None) in {"admin", "superadmin"}:
         return scoped_query
     seller_id = getattr(current_user, "id", None)

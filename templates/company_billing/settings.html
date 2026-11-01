@@ -1153,17 +1153,57 @@
   {% elif panel == 'branches' %}
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Sucursales</span>
+      <span>Gestión de sucursales</span>
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver a Mi Empresa</a>
     </div>
     <div class="card-body p-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-        <div>
-          <div class="fw-bold h5 mb-1">Este módulo estará disponible próximamente.</div>
-          <p class="text-muted mb-0">La gestión de sucursales se habilitará en una próxima versión sin afectar tu operación actual.</p>
+      {% if not multi_branch_access %}
+        <div class="alert alert-info mb-0">
+          <strong>Disponible desde Premium.</strong>
+          <p class="mb-2">Administrá varias sedes desde una única empresa, con stock, ventas y cajas diferenciadas.</p>
+          <a class="btn btn-primary" href="{{ url_for('company_billing.subscription_portal') }}">Ver planes y actualizar</a>
         </div>
-        <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
-      </div>
+      {% else %}
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+          <div><div class="h5 mb-1">{{ company_branches|length }} de {{ branch_limit }} sucursales activas/permitidas</div><div class="text-muted small">La facturación y el catálogo siguen perteneciendo a la empresa matriz.</div></div>
+        </div>
+        <form method="post" action="{{ url_for('branches.create_branch') }}" class="row g-2 border rounded-3 p-3 mb-4">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" required maxlength="120" placeholder="Sucursal Norte"></div>
+          <div class="col-md-2"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="NORTE"></div>
+          <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" maxlength="255"></div>
+          <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" maxlength="120"></div>
+          <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if company_branches|length >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
+        </form>
+        <div class="row g-3">
+          {% for branch in company_branches %}
+          <div class="col-12">
+            <div class="border rounded-3 p-3">
+              <form method="post" action="{{ url_for('branches.update_branch', branch_id=branch.id) }}" class="row g-2 align-items-end">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" value="{{ branch.name }}" required maxlength="120"></div>
+                <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" value="{{ branch.address or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" value="{{ branch.city or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Estado</label><select class="form-select" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
+                <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Guardar</button></div>
+              </form>
+              {% if branch.is_default %}<span class="badge text-bg-primary mt-2">Casa central</span>{% endif %}
+              <form method="post" action="{{ url_for('branches.assign_users', branch_id=branch.id) }}" class="mt-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="fw-semibold small mb-2">Personal habilitado</div>
+                <div class="row g-2">
+                  {% for employee in active_employees %}
+                  <div class="col-sm-6 col-lg-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, set()) %}checked{% endif %}> <span class="form-check-label">{{ employee.name }}</span></label></div>
+                  {% endfor %}
+                </div>
+                <button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Guardar accesos</button>
+              </form>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="small text-muted mt-3 mb-0">El acceso se valida en el servidor. Desactivar una sucursal conserva sus ventas, movimientos e historial.</p>
+      {% endif %}
     </div>
   </div>
   {% elif panel == 'general' %}

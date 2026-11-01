@@ -23,6 +23,7 @@ COMMERCIAL_FEATURE_LABELS = {
     "pricing_controller": "Controlador global de precios",
     "promotions": "Promociones comerciales",
     "wholesale_pricing": "Precios mayoristas",
+    "multi_branch": "Gestión multisucursal",
 }
 
 AI_FEATURE_LABELS = {

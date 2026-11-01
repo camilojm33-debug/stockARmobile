@@ -8,7 +8,7 @@ from .discount_service import DiscountService
 
 class InventoryService:
     @staticmethod
-    def calculate_lines(*, items, current_user, fetch_products_func, discount_overrides=None):
+    def calculate_lines(*, items, current_user, fetch_products_func, discount_overrides=None, branch_id=None):
         lines = []
         product_ids = sorted(int(prod_id) for prod_id in items.keys())
         products = fetch_products_func(product_ids)
@@ -22,8 +22,12 @@ class InventoryService:
             qty = safe_float(qty)
             if qty <= 0:
                 raise ValueError("La cantidad debe ser mayor a cero.")
-            if float(product.stock or 0) < qty:
-                raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g} {product.unit_measure or ''}.")
+            available = float(product.stock or 0)
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import available_stock
+                available = available_stock(product, branch_id)
+            if available < qty:
+                raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 
             quantity_dec = safe_decimal(qty)
             unit_price = safe_decimal(product.price)
@@ -38,18 +42,28 @@ class InventoryService:
         return lines
 
     @staticmethod
-    def reverse_stock(*, sale_items, resolve_product_func):
+    def reverse_stock(*, sale_items, resolve_product_func, branch_id=None, source_id=None, user_id=None):
         for item in sale_items:
             product = resolve_product_func(item)
             if product is not None:
-                product.stock = float(product.stock or 0) + float(item.quantity or 0)
+                if branch_id is not None:
+                    from stockarmobile.branch_inventory import adjust_branch_stock
+                    adjust_branch_stock(product, branch_id, item.quantity or 0, movement_type="sale_reversal",
+                                        source_type="sale", source_id=source_id, user_id=user_id)
+                else:
+                    product.stock = float(product.stock or 0) + float(item.quantity or 0)
 
     @staticmethod
-    def apply_stock(*, lines):
+    def apply_stock(*, lines, branch_id=None, source_type="sale", source_id=None, user_id=None):
         for line in lines:
             product = line["product"]
             quantity = line["quantity"]
-            product.stock = float(product.stock or 0) - float(quantity)
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import adjust_branch_stock
+                adjust_branch_stock(product, branch_id, -quantity, movement_type="sale",
+                                    source_type=source_type, source_id=source_id, user_id=user_id)
+            else:
+                product.stock = float(product.stock or 0) - float(quantity)
 
     @staticmethod
     def build_edit_lines(
@@ -62,6 +76,7 @@ class InventoryService:
         products_by_id,
         to_decimal,
         is_truthy,
+        branch_id=None,
     ):
         new_lines = []
         row_count = max(len(product_ids), len(quantities), len(prices), len(discounts), len(row_deletes))
@@ -95,8 +110,12 @@ class InventoryService:
             gross = price * quantity
             if line_discount > gross:
                 line_discount = gross
-            if float(product.stock or 0) < float(quantity):
-                raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g} {product.unit_measure or ''}.")
+            available = float(product.stock or 0)
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import available_stock
+                available = available_stock(product, branch_id)
+            if available < float(quantity):
+                raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 
             new_lines.append({"product": product, "quantity": quantity, "price": price, "discount": line_discount})
         return new_lines

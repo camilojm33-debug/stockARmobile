@@ -665,7 +665,8 @@ def _quote_from_form(*, quote=None):
         seller_id = requested_seller_id
     else:
         seller_id = getattr(current_user, "id", None)
-    branch_id = payload.get("branch_id") or None
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
     expires_at = _parse_date(payload.get("expires_at") or payload.get("fecha_vencimiento"))
     if expires_at is None:
         expires_at = (utcnow() + timedelta(days=5)).replace(hour=23, minute=59, second=59, microsecond=0)

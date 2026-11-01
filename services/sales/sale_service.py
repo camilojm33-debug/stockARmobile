@@ -157,7 +157,16 @@ class SaleService:
             if parsed_client_id and client is None:
                 raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
 
-            lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
+            from stockarmobile.branch_context import get_active_branch_id
+            active_branch_id = get_active_branch_id()
+            if quote_snapshot is not None and active_branch_id is not None and quote_snapshot.branch_id and int(quote_snapshot.branch_id) != int(active_branch_id):
+                raise ValueError("El presupuesto pertenece a otra sucursal. Cambiá la sucursal activa para convertirlo.")
+            operation_branch_id = int(quote_snapshot.branch_id) if quote_snapshot is not None and active_branch_id is not None and quote_snapshot.branch_id else active_branch_id
+            lines = self._calculate_lines(
+                items, lock_for_update=True,
+                discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}),
+                branch_id=operation_branch_id,
+            )
             if trusted_line_snapshots is not None:
                 from services.wholesale_pricing_service import apply_price_snapshot
                 lines = apply_price_snapshot(lines, trusted_line_snapshots)
@@ -309,6 +318,7 @@ class SaleService:
                 client_id=client.id if client else None,
                 seller_id=current_user.id,
                 company_id=company_id,
+                branch_id=(getattr(cash_session, "branch_id", None) or operation_branch_id),
                 cash_session_id=cash_session.id,
                 date=utcnow(),
             )
@@ -331,7 +341,7 @@ class SaleService:
                     )
                 )
 
-            InventoryService.apply_stock(lines=lines)
+            InventoryService.apply_stock(lines=lines, branch_id=sale.branch_id, source_type="sale", source_id=sale.id, user_id=current_user.id)
             for idx, line in enumerate(lines):
                 product = line["product"]
                 calculated_line = sale_totals["lines"][idx]
@@ -422,7 +432,7 @@ class SaleService:
         def _resolve_product_for_sale_item(item):
             return item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
 
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item)
+        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item, branch_id=getattr(sale, "branch_id", None), source_id=sale.id, user_id=current_user.id)
 
         product_ids = form.getlist("product_id")
         quantities = form.getlist("quantity")
@@ -462,10 +472,11 @@ class SaleService:
             products_by_id=products_by_id,
             to_decimal=self._to_decimal,
             is_truthy=ValidationService.is_truthy,
+            branch_id=getattr(sale, "branch_id", None),
         )
         ValidationService.validate_edit_lines(new_lines)
 
-        InventoryService.apply_stock(lines=new_lines)
+        InventoryService.apply_stock(lines=new_lines, branch_id=getattr(sale, "branch_id", None), source_type="sale_edit", source_id=sale.id, user_id=current_user.id)
 
         sale_totals = TotalsService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
