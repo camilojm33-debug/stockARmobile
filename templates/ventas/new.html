@@ -55,8 +55,8 @@
                                 </td>
                                 <td class="py-3" data-label="Precio">${{ '%.2f' | format(product.price) }}</td>
                                 <td class="py-3" data-label="Stock">
-                                    {% if product.stock > 0 %}
-                                    <span class="badge bg-success">{{ product.stock }}</span>
+                                    {% if (product.branch_stock_display if product.branch_stock_display is defined else product.stock) > 0 %}
+                                    <span class="badge bg-success">{{ (product.branch_stock_display if product.branch_stock_display is defined else product.stock) }}</span>
                                     {% else %}
                                     <span class="badge bg-danger">Sin stock</span>
                                     {% endif %}
@@ -73,8 +73,8 @@
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="qty" value="1">
                                         <button type="submit" 
-                                            class="btn btn-sm btn-primary w-100 w-md-auto {% if product.stock == 0 %}disabled{% endif %}"
-                                                {% if product.stock == 0 %}disabled{% endif %}>
+                                            class="btn btn-sm btn-primary w-100 w-md-auto {% if (product.branch_stock_display if product.branch_stock_display is defined else product.stock) == 0 %}disabled{% endif %}"
+                                                {% if (product.branch_stock_display if product.branch_stock_display is defined else product.stock) == 0 %}disabled{% endif %}>
                                             <i class="bi bi-cart-plus me-1"></i> Agregar
                                         </button>
                                     </form>
