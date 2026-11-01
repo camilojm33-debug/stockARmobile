@@ -333,6 +333,7 @@ class SaleService:
                         session_id=cash_session.id,
                         user_id=current_user.id,
                         company_id=company_id,
+                        branch_id=sale.branch_id,
                         sale_id=sale.id,
                         movement_type="ingreso",
                         category="venta",
