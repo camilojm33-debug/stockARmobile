@@ -480,6 +480,19 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                     product_name=product.name,
                 )
                 product.stock = updated_stock
+                if purchase.branch_id is not None:
+                    from stockarmobile.branch_inventory import adjust_branch_stock
+                    adjust_branch_stock(
+                        product,
+                        purchase.branch_id,
+                        new_qty - old_qty,
+                        movement_type="purchase_edit",
+                        source_type="purchase",
+                        source_id=purchase.id,
+                        user_id=current_user.id,
+                        update_company_total=False,
+                        note="Ajuste por edición de compra",
+                    )
                 product.cost_price = updated_cost
                 product.margin = float(product.price or 0) - float(product.cost_price or 0)
                 product.profit_percent = product.margin / float(product.cost_price) * 100 if float(product.cost_price or 0) else 0
@@ -551,11 +564,13 @@ def import_supplier_purchases(supplier_id):
             totals[product.id][2] += quantity * unit_cost
         if not valid_lines: raise ValueError("No se encontraron filas válidas para importar.")
         subtotal = sum(quantity * unit_cost for _, quantity, unit_cost in valid_lines)
-        order = PurchaseOrder(supplier_id=supplier.id, company_id=company_id, date=utcnow(), status="recibida", subtotal=subtotal, total_amount=subtotal, note="Importada desde Excel")
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
+        order = PurchaseOrder(supplier_id=supplier.id, company_id=company_id, branch_id=branch_id, date=utcnow(), status="recibida", subtotal=subtotal, total_amount=subtotal, note="Importada desde Excel")
         db.session.add(order); db.session.flush()
         for product, quantity, unit_cost in valid_lines:
             db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=quantity, unit_cost=unit_cost))
-        _apply_product_purchase_totals(totals)
+        _apply_product_purchase_totals(totals, branch_id=branch_id)
         record_audit(action="purchase_import_excel", entity="supplier", entity_id=supplier.id, detail=f"Compra importada desde Excel id={order.id} productos={len(valid_lines)} total={subtotal:.2f}")
         db.session.commit(); flash(f"Se importó la compra #{order.id} con {len(valid_lines)} producto(s).", "success")
     except ValueError as exc:
