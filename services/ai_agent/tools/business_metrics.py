@@ -11,6 +11,28 @@ from app import Client, Product, Sale, SaleItem
 from services.ai_agent.tools.base import AgentTool
 
 
+def _apply_sale_branch_scope(query, company_id):
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+
+    restricted, branch_id = employee_branch_scope(company_id)
+    return query.filter(Sale.branch_id == branch_id) if restricted else query
+
+
+def _stock_context(product, company_id):
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+
+    restricted, branch_id = employee_branch_scope(company_id)
+    if not restricted:
+        return float(product.stock or 0), float(product.min_stock or 0)
+    from app import BranchStock
+    row = BranchStock.query.filter_by(
+        company_id=int(company_id), branch_id=branch_id, product_id=product.id
+    ).first()
+    if row is None:
+        return 0.0, float(product.min_stock or 0)
+    return float(row.stock or 0), float(row.min_stock or product.min_stock or 0)
+
+
 def _safe_days(value: Any, default: int = 30, maximum: int = 365) -> int:
     try:
         return max(1, min(int(value or default), maximum))
@@ -30,11 +52,11 @@ class ResumenVentasTool(AgentTool):
     def execute(self, *, days=1, **kwargs: Any) -> Dict[str, Any]:
         days = _safe_days(days, 1)
         since = datetime.utcnow() - timedelta(days=days)
-        query = Sale.query.filter(
+        query = _apply_sale_branch_scope(Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        )
+        ), self.company_id)
         count, total = query.with_entities(
             func.count(Sale.id),
             func.coalesce(func.sum(Sale.total_amount), 0),
@@ -42,19 +64,21 @@ class ResumenVentasTool(AgentTool):
         count = int(count or 0)
         total = float(total or 0)
 
-        units = SaleItem.query.join(Sale).filter(
+        units_query = SaleItem.query.join(Sale).filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        ).with_entities(func.coalesce(func.sum(SaleItem.quantity), 0)).scalar()
+        )
+        units_query = _apply_sale_branch_scope(units_query, self.company_id)
+        units = units_query.with_entities(func.coalesce(func.sum(SaleItem.quantity), 0)).scalar()
 
         previous_start = since - timedelta(days=days)
-        previous_query = Sale.query.filter(
+        previous_query = _apply_sale_branch_scope(Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.date >= previous_start,
             Sale.date < since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        )
+        ), self.company_id)
         previous_count, previous_total = previous_query.with_entities(
             func.count(Sale.id),
             func.coalesce(func.sum(Sale.total_amount), 0),
@@ -63,12 +87,14 @@ class ResumenVentasTool(AgentTool):
         previous_total = float(previous_total or 0)
         variation = None if previous_total == 0 else round(((total - previous_total) / previous_total) * 100, 2)
 
-        categories = SaleItem.query.join(Sale).join(Product).filter(
+        category_query = SaleItem.query.join(Sale).join(Product).filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
             Product.company_id == self.company_id,
-        ).with_entities(
+        )
+        category_query = _apply_sale_branch_scope(category_query, self.company_id)
+        categories = category_query.with_entities(
             Product.category,
             func.coalesce(func.sum(SaleItem.quantity), 0).label("units"),
             func.coalesce(func.sum(SaleItem.quantity * SaleItem.price), 0).label("revenue"),
@@ -156,7 +182,7 @@ class ProductosMasVendidosTool(AgentTool):
         except (TypeError, ValueError):
             return {"success": False, "error": "limit debe ser un entero"}
         since = datetime.utcnow() - timedelta(days=days)
-        rows = (
+        product_sales_query = (
             SaleItem.query.join(Sale).join(Product)
             .filter(
                 Sale.company_id == self.company_id,
@@ -165,7 +191,9 @@ class ProductosMasVendidosTool(AgentTool):
                 Product.company_id == self.company_id,
                 Product.active.is_(True),
             )
-            .with_entities(
+        )
+        product_sales_query = _apply_sale_branch_scope(product_sales_query, self.company_id)
+        rows = product_sales_query.with_entities(
                 Product.id,
                 Product.name,
                 Product.category,
