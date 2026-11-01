@@ -348,7 +348,7 @@ class BusinessBillingService:
 
     @staticmethod
     def issue_sale_document(db_session, *, company, sale, config, emitted_by_user_id=None, metadata=None):
-        from app import BusinessDocument, BusinessDocumentSequence, utcnow
+        from app import Branch, BusinessDocument, BusinessDocumentSequence, utcnow
 
         existing = (
             db_session.query(BusinessDocument)
@@ -392,8 +392,10 @@ class BusinessBillingService:
             status_key = "emitido"
 
         payload = metadata if isinstance(metadata, dict) else {}
+        branch = Branch.query.filter_by(id=getattr(sale, "branch_id", None), company_id=company.id).first() if getattr(sale, "branch_id", None) else None
         document = BusinessDocument(
             company_id=company.id,
+            branch_id=branch.id if branch is not None else None,
             source_type="sale",
             source_id=sale.id,
             doc_type=doc_type,
@@ -404,7 +406,7 @@ class BusinessBillingService:
             client_name=(getattr(sale, "customer", None) or "Consumidor final")[:200],
             total_amount=(sale.total_amount or Decimal("0.00")),
             currency=((config.get("emission") or {}).get("currency") or "ARS"),
-            branch_label=str(getattr(sale, "branch_id", None) or (BusinessBillingService.active_pos_row(config) or {}).get("branch") or "Casa central")[:120],
+            branch_label=str(branch.name if branch is not None else ((BusinessBillingService.active_pos_row(config) or {}).get("branch") or "Casa central"))[:120],
             emitted_by_user_id=emitted_by_user_id,
             metadata_json=json.dumps(payload, ensure_ascii=False) if payload else None,
             issued_at=utcnow(),
