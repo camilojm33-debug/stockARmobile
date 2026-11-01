@@ -166,7 +166,7 @@
             <td>{{ "%.2f"|format(producto.profit_percent or 0) }}%</td>
             <td>${{ "%.2f"|format(producto.margin or 0) }}</td>
             <td class="fw-semibold">${{ "%.2f"|format(producto.price) }}</td>
-            <td><span class="badge {{ 'bg-danger' if producto.stock <= producto.min_stock else 'bg-success' }}" data-live-stock="{{ producto.id }}">{{ "%.3g"|format(producto.stock) }} {{ producto.unit_measure or '' }}</span></td>
+            <td><span class="badge {{ 'bg-danger' if (producto.branch_stock_display if producto.branch_stock_display is defined else producto.stock) <= producto.min_stock else 'bg-success' }}" data-live-stock="{{ producto.id }}">{{ "%.3g"|format((producto.branch_stock_display if producto.branch_stock_display is defined else producto.stock)) }} {{ producto.unit_measure or '' }}</span></td>
             <td class="text-end">
                 {% if current_user.role == 'admin' %}
                 <a class="btn btn-sm btn-outline-secondary" title="Editar" href="{{ url_for('products.edit', product_id=producto.id) }}"><i class="bi bi-pencil"></i></a>
@@ -217,7 +217,7 @@
             </div>
             <div class="d-flex justify-content-between align-items-end">
               <strong class="fs-5">${{ "%.2f"|format(producto.price) }}</strong>
-              <span class="badge {{ 'text-bg-danger' if producto.stock <= producto.min_stock else 'bg-success' }}" data-live-stock="{{ producto.id }}">{{ "%.3g"|format(producto.stock or 0) }}</span>
+              <span class="badge {{ 'text-bg-danger' if (producto.branch_stock_display if producto.branch_stock_display is defined else producto.stock) <= producto.min_stock else 'bg-success' }}" data-live-stock="{{ producto.id }}">{{ "%.3g"|format((producto.branch_stock_display if producto.branch_stock_display is defined else producto.stock) or 0) }}</span>
             </div>
           </div>
         </div>
