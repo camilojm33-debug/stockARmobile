@@ -54,6 +54,14 @@ def _conversation_was_recovered(conversation_id: int | None, *, company_id: int)
     return any(isinstance(item, dict) and item.get("status") == "sent" for item in (outbox if isinstance(outbox, list) else []))
 
 
+def _active_branch_scope(query, model):
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None and hasattr(model, "branch_id"):
+        query = query.filter(model.branch_id == branch_id)
+    return query
+
+
 def build_business_value_metrics(*, company, can_view_economic_metrics: bool) -> dict:
     """Return dashboard KPIs scoped to the active company."""
     from app import Client, Payment, Product, Quote, Sale, db, scope_query_to_company
@@ -66,7 +74,7 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
     month_start = local_month_start_utc_naive(timezone_name)
     recoverable_cutoff = month_start - timedelta(days=60)
 
-    sales_base = scope_query_to_company(Sale.query.filter(_confirmed(Sale)), Sale)
+    sales_base = _active_branch_scope(scope_query_to_company(Sale.query.filter(_confirmed(Sale)), Sale), Sale)
     month_sales = sales_base.filter(Sale.date >= month_start).all()
     sales_month = sum((to_decimal(getattr(row, "total_amount", 0)) for row in month_sales), Decimal("0.00"))
 
@@ -75,13 +83,31 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
     sales_previous = sum((to_decimal(getattr(row, "total_amount", 0)) for row in previous_sales), Decimal("0.00"))
     sales_change_pct = ((sales_month - sales_previous) / sales_previous * Decimal("100")) if sales_previous else None
 
-    critical_products = scope_query_to_company(
-        Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product
-    ).count()
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        from app import BranchStock
+        critical_products = scope_query_to_company(
+            Product.query.outerjoin(
+                BranchStock,
+                (BranchStock.company_id == Product.company_id)
+                & (BranchStock.product_id == Product.id)
+                & (BranchStock.branch_id == active_branch_id),
+            ).filter(
+                Product.active.is_(True),
+                func.coalesce(BranchStock.stock, 0) <= func.coalesce(BranchStock.min_stock, Product.min_stock),
+            ),
+            Product,
+        ).count()
+    else:
+        critical_products = scope_query_to_company(
+            Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product
+        ).count()
 
     last_purchase = (
         db.session.query(Sale.client_id.label("client_id"), func.max(Sale.date).label("last_purchase"))
         .filter(Sale.company_id == company_id, Sale.client_id.isnot(None), _confirmed(Sale))
+        .filter(Sale.branch_id == active_branch_id if active_branch_id is not None else True)
         .group_by(Sale.client_id)
         .subquery()
     )
@@ -96,7 +122,7 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
     pending_orders = 0
     pending_orders_amount = Decimal("0.00")
     if getattr(Quote, "__tablename__", None):
-        pending_query = scope_query_to_company(Quote.query.filter(Quote.status.in_(PENDING_QUOTE_STATUSES)), Quote)
+        pending_query = _active_branch_scope(scope_query_to_company(Quote.query.filter(Quote.status.in_(PENDING_QUOTE_STATUSES)), Quote), Quote)
         pending_orders = pending_query.count()
         if can_view_economic_metrics:
             pending_orders_amount = to_decimal(pending_query.with_entities(func.coalesce(func.sum(Quote.total_amount), 0)).scalar())
@@ -131,6 +157,7 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
                 Sale.date >= month_start,
                 _confirmed(Sale),
                 Quote.id.in_(list(payment_by_quote.keys())),
+                Sale.branch_id == active_branch_id if active_branch_id is not None else True,
             )
             .all()
         )
