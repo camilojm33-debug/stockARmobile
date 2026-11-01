@@ -1,5 +1,5 @@
 """Premium multi-branch tenant context and access checks."""
-from flask import session
+from flask import abort, session
 from flask_login import current_user
 
 SESSION_KEY = "stockarmobile_active_branch_id"
@@ -22,7 +22,10 @@ def accessible_branches(company_id=None):
         return []
     query = Branch.query.filter_by(company_id=int(company_id), active=True)
     if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
-        query = query.join(UserBranchAccess, UserBranchAccess.branch_id == Branch.id).filter(UserBranchAccess.user_id == int(current_user.id))
+        query = query.join(UserBranchAccess, UserBranchAccess.branch_id == Branch.id).filter(
+            UserBranchAccess.user_id == int(current_user.id),
+            UserBranchAccess.company_id == int(company_id),
+        )
     return query.order_by(Branch.is_default.desc(), Branch.name.asc(), Branch.id.asc()).all()
 
 
@@ -34,6 +37,12 @@ def get_active_branch_id(*, require_feature=True):
         return None
     branches = accessible_branches(company_id)
     if not branches:
+        # A legacy/test schema with no branch records keeps the old single-tenant
+        # behavior. Once a company has branches, missing assignment is deny-by-default.
+        from app import Branch
+        branch_count = Branch.query.filter_by(company_id=int(company_id)).count()
+        if branch_count > 0:
+            abort(403)
         return None
     valid_ids = {int(item.id) for item in branches}
     try:
