@@ -136,8 +136,14 @@ def transfer_stock():
     if source is None or target is None or product is None or source.id == target.id or not quantity.is_finite() or quantity <= 0:
         flash("Revisá origen, destino, producto y cantidad de la transferencia.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="branches"))
+    if quantity != quantity.quantize(Decimal("0.001")):
+        flash("La cantidad debe tener como máximo tres decimales.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
     try:
         from stockarmobile.branch_inventory import adjust_branch_stock, get_branch_stock
+        # Lock both stock rows in a stable order to prevent transfer deadlocks.
+        for locked_branch_id in sorted((source.id, target.id)):
+            get_branch_stock(product, locked_branch_id, lock=True, create=True)
         source_stock = get_branch_stock(product, source.id, lock=True, create=True)
         if Decimal(str(source_stock.stock or 0)) < quantity:
             raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {source_stock.stock}.")
