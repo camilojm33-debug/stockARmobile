@@ -449,7 +449,12 @@ def edit_supplier_purchase(supplier_id, purchase_id):
     from app import Product, PurchaseItem, PurchaseOrder, Supplier, db, record_audit
     _purchase_access_guard(); company_id = _resolve_company_id(required=True); _require_company_context_or_forbid(company_id)
     supplier = _company_scope(db.session.query(Supplier), Supplier, company_id).filter(Supplier.id == supplier_id).first_or_404()
-    purchase = _company_scope(db.session.query(PurchaseOrder), PurchaseOrder, company_id).filter(PurchaseOrder.id == purchase_id, PurchaseOrder.supplier_id == supplier.id).first_or_404()
+    purchase_query = _company_scope(db.session.query(PurchaseOrder), PurchaseOrder, company_id).filter(PurchaseOrder.id == purchase_id, PurchaseOrder.supplier_id == supplier.id)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        purchase_query = purchase_query.filter(PurchaseOrder.branch_id == active_branch_id)
+    purchase = purchase_query.first_or_404()
     products = _company_scope(Product.query.filter_by(active=True), Product, company_id).order_by(Product.name).all()
     if request.method == "POST":
         try:
