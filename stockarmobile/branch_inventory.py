@@ -1,10 +1,13 @@
 """Branch-aware stock primitives."""
 from decimal import Decimal
 
-from app import BranchStock, BranchStockMovement, db
+from app import Branch, BranchStock, BranchStockMovement, db
 
 
 def get_branch_stock(product, branch_id, *, lock=False, create=False):
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(product.company_id), active=True).first()
+    if branch is None:
+        raise ValueError("La sucursal no pertenece a la empresa del producto o está inactiva.")
     query = BranchStock.query.filter_by(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id))
     if lock:
         query = query.with_for_update()
