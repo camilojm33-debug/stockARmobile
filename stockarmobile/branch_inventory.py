@@ -29,6 +29,8 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     row = get_branch_stock(product, branch_id, lock=True, create=True)
     old = Decimal(str(row.stock or 0))
     new = Decimal(str(quantity or 0))
+    if not new.is_finite() or new < 0:
+        raise ValueError("El stock de sucursal debe ser un número finito no negativo.")
     row.stock = new
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if new != old:
@@ -39,8 +41,21 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
 
 def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type=None, source_id=None,
                         user_id=None, note=None, update_company_total=True):
-    row = get_branch_stock(product, branch_id, lock=True, create=True)
     delta = Decimal(str(delta))
+    if not delta.is_finite():
+        raise ValueError("El movimiento de stock debe ser un número finito.")
+    # All aggregate-changing writes lock Product before BranchStock. This
+    # serializes sales in different branches and prevents lost aggregate updates.
+    if update_company_total:
+        from app import Product
+        locked_product = (
+            Product.query.filter_by(id=int(product.id), company_id=int(product.company_id))
+            .with_for_update().populate_existing().first()
+        )
+        if locked_product is None:
+            raise ValueError("El producto no pertenece a la empresa activa.")
+        product = locked_product
+    row = get_branch_stock(product, branch_id, lock=True, create=True)
     current = Decimal(str(row.stock or 0))
     updated = current + delta
     if updated < 0:
