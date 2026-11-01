@@ -11,6 +11,18 @@ from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_month_
 from services.business_value_dashboard_service import build_business_value_metrics
 
 
+def _active_branch_id():
+    from stockarmobile.branch_context import get_active_branch_id
+    return get_active_branch_id()
+
+
+def _apply_active_branch(query, model):
+    branch_id = _active_branch_id()
+    if branch_id is not None and hasattr(model, "branch_id"):
+        query = query.filter(model.branch_id == branch_id)
+    return query
+
+
 def build_dashboard_context():
     from app import CashSession, Client, Expense, Product, Quote, Sale, SaleItem, db, model_table_exists, scope_query_to_company
     from services.ai_agent.usage_service import can_use_ai_feature
@@ -25,15 +37,44 @@ def build_dashboard_context():
     month_start = local_month_start_utc_naive(company_tz)
 
     total_products = scope_query_to_company(Product.query.filter_by(active=True), Product).count()
-    low_stock_count = scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product).count()
-    out_stock_count = scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= 0), Product).count()
+    active_branch_id = _active_branch_id()
+    low_stock_products = []
+    if active_branch_id is not None:
+        from app import BranchStock
+        branch_join = (
+            (BranchStock.company_id == Product.company_id)
+            & (BranchStock.product_id == Product.id)
+            & (BranchStock.branch_id == active_branch_id)
+        )
+        stock_value = func.coalesce(BranchStock.stock, 0)
+        minimum_value = func.coalesce(BranchStock.min_stock, Product.min_stock)
+        branch_products = scope_query_to_company(
+            Product.query.outerjoin(BranchStock, branch_join).filter(Product.active.is_(True)),
+            Product,
+        )
+        low_stock_count = branch_products.filter(stock_value <= minimum_value).count()
+        out_stock_count = branch_products.filter(stock_value <= 0).count()
+        low_stock_rows = branch_products.filter(stock_value <= minimum_value).add_columns(
+            stock_value.label("branch_stock_display"),
+            minimum_value.label("branch_min_stock_display"),
+        ).order_by(stock_value.asc(), Product.name.asc()).limit(5).all()
+        for product, branch_stock, branch_minimum in low_stock_rows:
+            product.branch_stock_display = float(branch_stock or 0)
+            product.branch_min_stock_display = float(branch_minimum or 0)
+            low_stock_products.append(product)
+    else:
+        low_stock_count = scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product).count()
+        out_stock_count = scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= 0), Product).count()
+        low_stock_products = scope_query_to_company(
+            Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product
+        ).order_by(Product.stock.asc()).limit(5).all()
     total_clients = scope_query_to_company(Client.query.filter_by(active=True), Client).count()
     new_clients_month = scope_query_to_company(Client.query.filter(Client.active.is_(True), Client.created_at >= month_start), Client).count()
 
     can_view_economic_metrics = _can_view_economic_metrics()
     business_value = build_business_value_metrics(company=company, can_view_economic_metrics=can_view_economic_metrics)
 
-    confirmed_sales_base = _confirmed_sales_query(scope_query_to_company(Sale.query, Sale), Sale)
+    confirmed_sales_base = _confirmed_sales_query(_apply_active_branch(scope_query_to_company(Sale.query, Sale), Sale), Sale)
     total_sales_amount = _sum(Sale.total_amount, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else Decimal("0.00")
     sales_today = confirmed_sales_base.filter(Sale.date >= today_start, Sale.date < tomorrow_start).count()
     sales_week = confirmed_sales_base.filter(Sale.date >= week_start).count()
@@ -61,25 +102,33 @@ def build_dashboard_context():
             )
         top_products = scope_query_to_company(
             top_products_query.join(SaleItem, Product.id == SaleItem.product_id).join(Sale, SaleItem.sale_id == Sale.id)
-            .filter(_confirmed_sale_status_expression(Sale)).group_by(Product.id, Product.name).order_by(db.desc("sales_count")), Product,
+            .filter(_confirmed_sale_status_expression(Sale))
+            .filter(Sale.branch_id == active_branch_id if active_branch_id is not None else True)
+            .group_by(Product.id, Product.name).order_by(db.desc("sales_count")), Product,
         ).limit(10).all()
     least_products_query = db.session.query(Product.id.label("prod_id"), Product.name.label("name"), db.func.coalesce(db.func.sum(SaleItem.quantity), 0).label("sales_count"))
     least_products = scope_query_to_company(
         least_products_query.outerjoin(SaleItem, Product.id == SaleItem.product_id).outerjoin(Sale, SaleItem.sale_id == Sale.id)
-        .filter(or_(Sale.id.is_(None), _confirmed_sale_status_expression(Sale))).filter(Product.active.is_(True))
+        .filter(or_(Sale.id.is_(None), _confirmed_sale_status_expression(Sale)))
+        .filter(or_(Sale.id.is_(None), Sale.branch_id == active_branch_id) if active_branch_id is not None else True)
+        .filter(Product.active.is_(True))
         .group_by(Product.id, Product.name).order_by(db.asc("sales_count")), Product,
     ).limit(5).all()
     ranking_clients = []
     if can_view_economic_metrics:
         ranking_clients_query = db.session.query(Client.id.label("id"), Client.name.label("nombre"), db.func.coalesce(db.func.sum(Sale.total_amount), 0).label("total_compras"))
         ranking_clients = scope_query_to_company(
-            ranking_clients_query.join(Sale, Client.id == Sale.client_id).filter(_confirmed_sale_status_expression(Sale))
+            ranking_clients_query.join(Sale, Client.id == Sale.client_id)
+            .filter(_confirmed_sale_status_expression(Sale))
+            .filter(Sale.branch_id == active_branch_id if active_branch_id is not None else True)
             .group_by(Client.id, Client.name).order_by(db.desc("total_compras")), Client,
         ).limit(5).all()
     ranking_categories_query = db.session.query(Product.category.label("category"), db.func.coalesce(db.func.sum(SaleItem.quantity), 0).label("sold"))
     ranking_categories = scope_query_to_company(
         ranking_categories_query.join(SaleItem, Product.id == SaleItem.product_id).join(Sale, SaleItem.sale_id == Sale.id)
-        .filter(_confirmed_sale_status_expression(Sale)).group_by(Product.category).order_by(db.desc("sold")), Product,
+        .filter(_confirmed_sale_status_expression(Sale))
+        .filter(Sale.branch_id == active_branch_id if active_branch_id is not None else True)
+        .group_by(Product.category).order_by(db.desc("sold")), Product,
     ).limit(8).all()
 
     quotes_created = quotes_pending = quotes_sent = quotes_approved = quotes_rejected = quotes_expired = quotes_converted = 0
@@ -87,7 +136,7 @@ def build_dashboard_context():
     quotes_conversion_rate = 0.0
     recent_quotes = []
     if model_table_exists(Quote):
-        quotes_base = scope_query_to_company(Quote.query, Quote)
+        quotes_base = _apply_active_branch(scope_query_to_company(Quote.query, Quote), Quote)
         quotes_created = quotes_base.count()
         quotes_pending = quotes_base.filter(Quote.status.in_(["BORRADOR", "ENVIADO"])).count()
         quotes_sent = quotes_base.filter(Quote.status == "ENVIADO").count()
@@ -102,18 +151,18 @@ def build_dashboard_context():
 
     cash_stats = {"open_sessions": 0, "closed_today": 0, "sold_cash_today": Decimal("0.00"), "sold_mp_today": Decimal("0.00"), "sold_total_today": Decimal("0.00"), "difference_today": Decimal("0.00"), "last_closings": []}
     if can_view_economic_metrics:
-        cash_stats["open_sessions"] = scope_query_to_company(CashSession.query.filter(CashSession.status == "abierta"), CashSession).count()
-        cash_stats["closed_today"] = scope_query_to_company(CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start, CashSession.closed_at < tomorrow_start), CashSession).count()
-        today_sales = _confirmed_sales_query(scope_query_to_company(Sale.query.filter(Sale.date >= today_start, Sale.date < tomorrow_start), Sale), Sale).all()
+        cash_stats["open_sessions"] = _apply_active_branch(scope_query_to_company(CashSession.query.filter(CashSession.status == "abierta"), CashSession), CashSession).count()
+        cash_stats["closed_today"] = _apply_active_branch(scope_query_to_company(CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start, CashSession.closed_at < tomorrow_start), CashSession), CashSession).count()
+        today_sales = _confirmed_sales_query(_apply_active_branch(scope_query_to_company(Sale.query.filter(Sale.date >= today_start, Sale.date < tomorrow_start), Sale), Sale), Sale).all()
         for sale in today_sales:
             breakdown = sale_payment_breakdown(sale)
             cash_stats["sold_cash_today"] += breakdown["efectivo"]
             cash_stats["sold_mp_today"] += breakdown["mercado_pago"]
             cash_stats["sold_total_today"] += to_decimal(getattr(sale, "total_amount", 0))
-        closed_sessions_today = scope_query_to_company(CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start, CashSession.closed_at < tomorrow_start), CashSession).all()
+        closed_sessions_today = _apply_active_branch(scope_query_to_company(CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start, CashSession.closed_at < tomorrow_start), CashSession), CashSession).all()
         for cash_session in closed_sessions_today:
             cash_stats["difference_today"] += to_decimal(getattr(cash_session, "difference_amount", 0))
-        cash_stats["last_closings"] = scope_query_to_company(CashSession.query.filter(CashSession.status == "cerrada"), CashSession).order_by(CashSession.closed_at.desc()).limit(3).all()
+        cash_stats["last_closings"] = _apply_active_branch(scope_query_to_company(CashSession.query.filter(CashSession.status == "cerrada"), CashSession), CashSession).order_by(CashSession.closed_at.desc()).limit(3).all()
 
     return {
         "can_view_economic_metrics": can_view_economic_metrics, "productos_total": total_products, "total_products": total_products,
@@ -123,7 +172,7 @@ def build_dashboard_context():
         "ingresos_hoy": income_today, "ingresos_semana": income_week, "ingresos_mes": income_month, "ganancia_hoy": profit_today, "ganancia_mes": profit_month,
         "rentabilidad": (((profit_month / income_month) * Decimal("100")) if income_month else Decimal("0.00")) if can_view_economic_metrics else None,
         "ticket_promedio": average_ticket, "productos_vendidos": sold_units, "ventas_recientes": recent_sales, "recent_sales": recent_sales,
-        "low_stock": scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product).order_by(Product.stock.asc()).limit(5).all(),
+        "low_stock": low_stock_products,
         "productos_mas_vendidos": top_products, "productos_menos_vendidos": least_products, "productos_sin_movimiento": [item for item in least_products if not item.sales_count],
         "clientes_recentes": ranking_clients, "ranking_clientes": ranking_clients, "ranking_categorias": ranking_categories,
         "chart_labels": _last_days_labels(7), "chart_sales": _sales_by_day(7) if can_view_economic_metrics else [],
@@ -155,6 +204,7 @@ def _sum(column, *filters, model, base_query=None):
         total = db.session.query(db.func.coalesce(db.func.sum(subquery.c.value), 0)).scalar()
         return to_decimal(total)
     query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(column), 0)), model)
+    query = _apply_active_branch(query, model)
     for condition in filters: query = query.filter(condition)
     return to_decimal(query.scalar())
 
