@@ -360,10 +360,32 @@ class BusinessBillingService:
             return existing
 
         doc_type = ((getattr(sale, "tipo_comprobante", None) or "factura_b") or "factura_b").strip().lower()
-        active_pos = BusinessBillingService._normalize_pos_number(config.get("active_pos") or "00001")
-        seed_value, width = BusinessBillingService._split_counter_from_number(
-            (config.get("numbering") or {}).get(doc_type)
+        branch = Branch.query.filter_by(
+            id=getattr(sale, "branch_id", None), company_id=company.id, active=True
+        ).first() if getattr(sale, "branch_id", None) else None
+        points = config.get("points_of_sale") or []
+        matching_points = [
+            row for row in points
+            if branch is not None
+            and str(row.get("branch") or "").strip().casefold() == branch.name.strip().casefold()
+        ]
+        if matching_points:
+            selected_pos = next((row for row in matching_points if row.get("active")), matching_points[0])
+        else:
+            active_branch_count = Branch.query.filter_by(company_id=company.id, active=True).count()
+            if branch is not None and active_branch_count > 1:
+                raise ValueError(
+                    f"No hay un punto de venta fiscal asignado a {branch.name}. "
+                    "Configurá un punto de venta con el nombre de esa sucursal antes de emitir comprobantes."
+                )
+            selected_pos = BusinessBillingService.active_pos_row(config) or {}
+        active_pos = BusinessBillingService._normalize_pos_number(
+            (selected_pos or {}).get("number") or config.get("active_pos") or "00001"
         )
+        numbering_value = (config.get("numbering") or {}).get(doc_type)
+        seed_value, width = BusinessBillingService._split_counter_from_number(numbering_value)
+        if not str(numbering_value or "").strip().startswith(f"{active_pos}-"):
+            seed_value, width = 1, 8
 
         sequence = (
             db_session.query(BusinessDocumentSequence)
@@ -392,7 +414,6 @@ class BusinessBillingService:
             status_key = "emitido"
 
         payload = metadata if isinstance(metadata, dict) else {}
-        branch = Branch.query.filter_by(id=getattr(sale, "branch_id", None), company_id=company.id).first() if getattr(sale, "branch_id", None) else None
         document = BusinessDocument(
             company_id=company.id,
             branch_id=branch.id if branch is not None else None,
@@ -406,7 +427,7 @@ class BusinessBillingService:
             client_name=(getattr(sale, "customer", None) or "Consumidor final")[:200],
             total_amount=(sale.total_amount or Decimal("0.00")),
             currency=((config.get("emission") or {}).get("currency") or "ARS"),
-            branch_label=str(branch.name if branch is not None else ((BusinessBillingService.active_pos_row(config) or {}).get("branch") or "Casa central"))[:120],
+            branch_label=str(branch.name if branch is not None else ((selected_pos or {}).get("branch") or "Casa central"))[:120],
             emitted_by_user_id=emitted_by_user_id,
             metadata_json=json.dumps(payload, ensure_ascii=False) if payload else None,
             issued_at=utcnow(),
