@@ -10,12 +10,12 @@ from __future__ import annotations
 import os
 from sqlalchemy import inspect, text
 
-from app import Plan, app, db
+from app import Company, Plan, Product, User, app, db
 from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261028_02_pickup"
+HEAD_REVISION = "20261101_01_multibranch"
 
 
 def main() -> None:
@@ -42,16 +42,41 @@ def main() -> None:
             max_users=8,
             max_products=12000,
             max_clients=12000,
+            max_branches=1,
             features_json="inventario,ventas,clientes,compras,caja,reportes,excel,kardex,pricing_controller,promotions",
             state="active",
             active=True,
         ))
+        db.session.add(Plan(
+            code="premium", name="Premium", price=54999, currency="ARS",
+            duration_days=30, max_users=50, max_products=100000,
+            max_clients=100000, max_branches=5, features_json="all",
+            state="active", active=True,
+        ))
+        company = Company(name="Empresa migración", address="Calle 123", city="Resistencia", province="Chaco", phone="123")
+        db.session.add(company)
+        db.session.flush()
+        user = User(username="migration-admin", email="migration-admin@example.test",
+                    password_hash="test-hash", role="admin", company_id=company.id)
+        product = Product(barcode="MIG-001", name="Producto migración", stock=17, min_stock=3,
+                          active=True, company_id=company.id)
+        db.session.add_all([user, product])
         db.session.commit()
+        expected_company_id = company.id
+        expected_user_id = user.id
+        expected_product_id = product.id
 
         with db.engine.begin() as connection:
             connection.execute(text("DROP TABLE IF EXISTS price_list_discount_rules CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
+            # Remove tables/columns introduced by multisucursal so the revision must
+            # create them as it would on an existing production tenant.
+            for table_name in ("branch_stock_movements", "branch_stock", "user_branch_access", "branches"):
+                connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
+            for table_name in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents"):
+                connection.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
+            connection.execute(text('ALTER TABLE "plans" DROP COLUMN IF EXISTS "max_branches" CASCADE'))
             for table_name, columns in (
                 ("clients", ("customer_type", "price_list_id")),
                 ("sale_items", ("price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price")),
@@ -75,6 +100,13 @@ def main() -> None:
             "quote_items": {"price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price"},
             "price_list_items": {"discount_percent"},
             "quote_deliveries": {"pickup_status", "picked_up_at", "picked_up_by_user_id"},
+            "sales": {"branch_id"},
+            "purchase_orders": {"branch_id"},
+            "cash_sessions": {"branch_id"},
+            "cash_movements": {"branch_id"},
+            "expenses": {"branch_id"},
+            "business_documents": {"branch_id"},
+            "plans": {"max_branches"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -82,7 +114,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")
@@ -101,6 +133,26 @@ def main() -> None:
         version = db.session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         if version != HEAD_REVISION:
             raise AssertionError(f"Unexpected Alembic revision after upgrade: {version}")
+
+        migrated_branch = db.session.execute(
+            text("SELECT id FROM branches WHERE company_id = :company_id AND is_default = TRUE"),
+            {"company_id": expected_company_id},
+        ).scalar_one()
+        migrated_access = db.session.execute(
+            text("SELECT count(*) FROM user_branch_access WHERE company_id = :company_id AND user_id = :user_id AND branch_id = :branch_id"),
+            {"company_id": expected_company_id, "user_id": expected_user_id, "branch_id": migrated_branch},
+        ).scalar_one()
+        migrated_stock = db.session.execute(
+            text("SELECT stock FROM branch_stock WHERE company_id = :company_id AND branch_id = :branch_id AND product_id = :product_id"),
+            {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
+        ).scalar_one()
+        if int(migrated_access) != 1 or float(migrated_stock) != 17.0:
+            raise AssertionError("Existing employee access or product stock was not migrated to Casa central.")
+        premium_limit = db.session.execute(
+            text("SELECT max_branches FROM plans WHERE code = 'premium'")
+        ).scalar_one()
+        if int(premium_limit) != 5:
+            raise AssertionError(f"Premium max_branches should be 5, got {premium_limit}")
 
         business_features = db.session.execute(
             text("SELECT features_json FROM plans WHERE code = :code"),
@@ -121,9 +173,10 @@ def main() -> None:
         if any(status == "picked_up" for status in pickup_statuses):
             raise AssertionError("Legacy quote deliveries were incorrectly classified as picked up.")
 
-        print("PASS: wholesale-pricing and pickup-tracking migrations upgraded the pre-feature PostgreSQL schema.")
+        print("PASS: wholesale, pickup-tracking and multisucursal migrations upgraded the pre-feature PostgreSQL schema.")
         print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.")
-        print("PASS: existing Negocio plan gains wholesale_pricing while preserving other commercial features.")
+        print("PASS: existing Negocio plan gains wholesale_pricing; Premium keeps a configurable limit of five branches.")
+        print("PASS: existing tenants, users and product stock are migrated to Casa central.")
 
 
 if __name__ == "__main__":
