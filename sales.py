@@ -603,6 +603,8 @@ def new_sale():
         like = f"%{search}%"
         products_query = products_query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.category.ilike(like)))
     products = products_query.order_by(Product.name).all()
+    for product in products:
+        product.branch_stock_display = _branch_available_stock(product)
     cart = _get_cart()
     cart_items = []
     product_ids = [int(prod_id) for prod_id in cart["items"].keys()]
@@ -612,6 +614,7 @@ def new_sale():
     for prod_id, qty in cart["items"].items():
         product = products_by_id.get(int(prod_id))
         if product:
+            product.branch_stock_display = _branch_available_stock(product)
             cart_items.append({"product": product, "qty": qty})
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
     return render_template(
