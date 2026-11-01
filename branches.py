@@ -95,6 +95,60 @@ def update_branch(branch_id):
     flash("Sucursal actualizada.", "success")
     return redirect(url_for("company_billing.company_settings", panel="branches"))
 
+@bp.route("/transferir-stock", methods=["POST"])
+@company_admin_required
+def transfer_stock():
+    from decimal import Decimal, InvalidOperation
+    from app import BranchStockTransfer, Product
+    company_id = _company_id()
+    company = Company.query.filter_by(id=company_id, active=True).first_or_404()
+    blocked = _require_feature(company)
+    if blocked:
+        return blocked
+    source_id = request.form.get("source_branch_id", type=int)
+    target_id = request.form.get("target_branch_id", type=int)
+    product_id = request.form.get("product_id", type=int)
+    try:
+        quantity = Decimal((request.form.get("quantity") or "0").replace(",", "."))
+    except (InvalidOperation, AttributeError):
+        quantity = Decimal("0")
+    source = Branch.query.filter_by(id=source_id, company_id=company_id, active=True).first()
+    target = Branch.query.filter_by(id=target_id, company_id=company_id, active=True).first()
+    product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
+    if source is None or target is None or product is None or source.id == target.id or not quantity.is_finite() or quantity <= 0:
+        flash("Revisá origen, destino, producto y cantidad de la transferencia.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+    try:
+        from stockarmobile.branch_inventory import adjust_branch_stock, get_branch_stock
+        source_stock = get_branch_stock(product, source.id, lock=True, create=True)
+        if Decimal(str(source_stock.stock or 0)) < quantity:
+            raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {source_stock.stock}.")
+        transfer = BranchStockTransfer(
+            company_id=company_id, source_branch_id=source.id, target_branch_id=target.id,
+            product_id=product.id, quantity=quantity,
+            note=(request.form.get("note") or "").strip()[:255] or None,
+            created_by_user_id=current_user.id,
+        )
+        db.session.add(transfer)
+        db.session.flush()
+        adjust_branch_stock(product, source.id, -quantity, movement_type="transfer_out",
+            source_type="branch_transfer", source_id=transfer.id, user_id=current_user.id,
+            update_company_total=False, note=f"Transferencia hacia {target.name}")
+        adjust_branch_stock(product, target.id, quantity, movement_type="transfer_in",
+            source_type="branch_transfer", source_id=transfer.id, user_id=current_user.id,
+            update_company_total=False, note=f"Transferencia desde {source.name}")
+        db.session.commit()
+        flash(f"Transferencia #{transfer.id}: {quantity} {product.unit_measure or 'u'} de {source.name} a {target.name}.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Branch stock transfer failed company_id=%s", company_id)
+        flash("No se pudo transferir el stock. No se guardaron cambios.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="branches"))
+
+
 @bp.route("/<int:branch_id>/usuarios", methods=["POST"])
 @company_admin_required
 def assign_users(branch_id):
