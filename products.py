@@ -159,7 +159,7 @@ def product_image(filename):
 @bp.route("/")
 @tenant_required
 def index():
-    from app import Product, ProductForm, scope_query_to_company
+    from app import BranchStock, Product, ProductForm, scope_query_to_company
 
     query = scope_query_to_company(Product.query.filter_by(active=True), Product)
     search = request.args.get("q") or request.args.get("search")
@@ -170,7 +170,16 @@ def index():
         query = query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.category.ilike(like)))
     if category:
         query = query.filter(Product.category == category)
-    if low_stock:
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if low_stock and branch_id is not None:
+        query = query.join(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == branch_id),
+        ).filter(BranchStock.stock <= BranchStock.min_stock)
+    elif low_stock:
         query = query.filter(Product.stock <= Product.min_stock)
 
     productos = query.order_by(Product.name).all()
@@ -800,6 +809,9 @@ def import_excel():
         price_changes = 0
         stock_changes = 0
 
+        from stockarmobile.branch_context import get_active_branch_id
+        from stockarmobile.branch_inventory import get_branch_stock, set_branch_stock
+        branch_id = get_active_branch_id()
         try:
             for data in records:
                 product = scope_query_to_company(
@@ -825,6 +837,8 @@ def import_excel():
                 old_price = float(product.price or 0)
                 old_cost = float(product.cost_price or 0)
                 old_stock = float(product.stock or 0)
+                branch_stock_row = get_branch_stock(product, branch_id, lock=True, create=True) if branch_id is not None else None
+                old_branch_stock = float(branch_stock_row.stock or 0) if branch_stock_row is not None else None
 
                 product.name = data["name"]
                 product.active = True
@@ -839,7 +853,12 @@ def import_excel():
                 if data["price"] is not None:
                     product.price = data["price"]
                 if data["stock"] is not None:
-                    product.stock = data["stock"]
+                    if branch_id is not None:
+                        product.stock = old_stock + float(data["stock"]) - float(old_branch_stock or 0)
+                        set_branch_stock(product, branch_id, data["stock"], movement_type="excel_import",
+                                         user_id=current_user.id, note="Stock actualizado desde Excel")
+                    else:
+                        product.stock = data["stock"]
                 if data["min_stock"] is not None:
                     product.min_stock = data["min_stock"]
                 if data["sale_type"]:
