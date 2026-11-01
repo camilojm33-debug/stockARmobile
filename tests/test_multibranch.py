@@ -139,3 +139,70 @@ def test_branch_stock_cannot_become_negative(app):
         assert available_stock(product, branch.id) == 1.0
         assert float(product.stock) == 1.0
         db.session.rollback()
+
+
+def test_business_documents_use_the_pos_assigned_to_the_sale_branch(app):
+    from types import SimpleNamespace
+    from services.business_billing_service import BusinessBillingService
+
+    with app.app_context():
+        company = _company("Empresa fiscal multisucursal")
+        _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        db.session.flush()
+        sale = SimpleNamespace(
+            id=9001,
+            branch_id=north.id,
+            tipo_comprobante="factura_b",
+            customer="Cliente de Norte",
+            total_amount=Decimal("12500.00"),
+            comprobante_emitido=False,
+        )
+        config = {
+            "active_pos": "00001",
+            "points_of_sale": [
+                {"number": "00001", "description": "Casa central", "branch": "Casa central", "active": True},
+                {"number": "00002", "description": "Sucursal Norte", "branch": "Sucursal Norte", "active": False},
+            ],
+            "numbering": {"factura_b": "00001-00000124"},
+            "emission": {"currency": "ARS"},
+        }
+        document = BusinessBillingService.issue_sale_document(
+            db.session, company=company, sale=sale, config=config
+        )
+        assert document.pos_number == "00002"
+        assert document.document_number == "00002-00000001"
+        assert document.branch_id == north.id
+        assert document.branch_label == "Sucursal Norte"
+        db.session.rollback()
+
+
+def test_business_documents_refuse_unmapped_branch_pos(app):
+    from types import SimpleNamespace
+    from services.business_billing_service import BusinessBillingService
+
+    with app.app_context():
+        company = _company("Empresa fiscal sin punto asignado")
+        _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        sale = SimpleNamespace(
+            id=9002,
+            branch_id=north.id,
+            tipo_comprobante="factura_b",
+            customer="Cliente",
+            total_amount=Decimal("100.00"),
+            comprobante_emitido=False,
+        )
+        config = {
+            "active_pos": "00001",
+            "points_of_sale": [
+                {"number": "00001", "description": "Casa central", "branch": "Casa central", "active": True},
+            ],
+            "numbering": {"factura_b": "00001-00000001"},
+            "emission": {"currency": "ARS"},
+        }
+        with pytest.raises(ValueError, match="punto de venta fiscal"):
+            BusinessBillingService.issue_sale_document(
+                db.session, company=company, sale=sale, config=config
+            )
+        db.session.rollback()
