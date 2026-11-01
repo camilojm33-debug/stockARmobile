@@ -4,7 +4,7 @@ import json
 from decimal import Decimal
 from datetime import datetime, timedelta, time
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import selectinload
 from services.sales_calculation_service import sale_payment_breakdown, to_decimal
 from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_month_start_utc_naive, local_today
@@ -107,10 +107,13 @@ def build_dashboard_context():
             .group_by(Product.id, Product.name).order_by(db.desc("sales_count")), Product,
         ).limit(10).all()
     least_products_query = db.session.query(Product.id.label("prod_id"), Product.name.label("name"), db.func.coalesce(db.func.sum(SaleItem.quantity), 0).label("sales_count"))
+    sale_item_join = Product.id == SaleItem.product_id
+    sale_join = SaleItem.sale_id == Sale.id
+    if active_branch_id is not None:
+        sale_join = and_(sale_join, Sale.branch_id == active_branch_id)
     least_products = scope_query_to_company(
-        least_products_query.outerjoin(SaleItem, Product.id == SaleItem.product_id).outerjoin(Sale, SaleItem.sale_id == Sale.id)
+        least_products_query.outerjoin(SaleItem, sale_item_join).outerjoin(Sale, sale_join)
         .filter(or_(Sale.id.is_(None), _confirmed_sale_status_expression(Sale)))
-        .filter(or_(Sale.id.is_(None), Sale.branch_id == active_branch_id) if active_branch_id is not None else True)
         .filter(Product.active.is_(True))
         .group_by(Product.id, Product.name).order_by(db.asc("sales_count")), Product,
     ).limit(5).all()
@@ -232,7 +235,7 @@ def _confirmed_status_values():
 
 
 def _confirmed_sales_query(query, sale_model):
-    return query.filter(_confirmed_sale_status_expression(sale_model))
+    return _apply_active_branch(query, sale_model).filter(_confirmed_sale_status_expression(sale_model))
 
 
 def _to_decimal(value): return to_decimal(value)
