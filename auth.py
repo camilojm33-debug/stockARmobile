@@ -12,6 +12,43 @@ from stockarmobile.helpers.strings import is_safe_relative_redirect
 bp = Blueprint("auth", __name__, template_folder="templates")
 
 
+def _ensure_company_default_branch(company, owner_user):
+    """Create Casa central for newly registered tenants and seed their existing stock."""
+    from app import Branch, BranchStock, Product, UserBranchAccess, db
+
+    branch = Branch.query.filter_by(company_id=company.id, is_default=True).first()
+    if branch is None:
+        branch = Branch(
+            company_id=company.id,
+            name="Casa central",
+            code="CASA-CENTRAL",
+            address=getattr(company, "address", None),
+            city=getattr(company, "city", None),
+            province=getattr(company, "province", None),
+            phone=getattr(company, "phone", None),
+            whatsapp=getattr(company, "whatsapp", None),
+            active=True,
+            is_default=True,
+        )
+        db.session.add(branch)
+        db.session.flush()
+    if owner_user is not None and UserBranchAccess.query.filter_by(
+        company_id=company.id, user_id=owner_user.id, branch_id=branch.id
+    ).first() is None:
+        db.session.add(UserBranchAccess(company_id=company.id, user_id=owner_user.id, branch_id=branch.id))
+    products = Product.query.filter_by(company_id=company.id).all()
+    existing_rows = {
+        row.product_id for row in BranchStock.query.filter_by(company_id=company.id, branch_id=branch.id).all()
+    }
+    for product in products:
+        if product.id not in existing_rows:
+            db.session.add(BranchStock(
+                company_id=company.id, branch_id=branch.id, product_id=product.id,
+                stock=product.stock or 0, min_stock=product.min_stock or 0, reserved_stock=0,
+            ))
+    return branch
+
+
 def _login_user_and_bind_company(user, remember=False):
     preserved_session = {}
     for key in (SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID,):
@@ -467,6 +504,7 @@ def register():
                                 referral_code=referral_code,
                             )
 
+                        _ensure_company_default_branch(company, existing_user)
                         record_audit(action="register_existing_user_company_success", entity="user", entity_id=existing_user.id, detail="Usuario existente convertido en propietario de empresa")
                         SaaSOpsService.register_signup(db.session, company=company, user=existing_user)
                         db.session.commit()
@@ -556,6 +594,7 @@ def register():
                         referral_code=referral_code,
                     )
 
+                _ensure_company_default_branch(company, user)
                 record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
                 SaaSOpsService.register_signup(db.session, company=company, user=user)
                 db.session.commit()
