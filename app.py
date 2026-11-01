@@ -1136,6 +1136,25 @@ class BranchStockMovement(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
 
 
+class BranchStockTransfer(db.Model):
+    __tablename__ = "branch_stock_transfers"
+    __table_args__ = (
+        Index("ix_branch_stock_transfers_company_created", "company_id", "created_at"),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
+    quantity = db.Column(db.Numeric(18, 3), nullable=False)
+    note = db.Column(db.Text)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    source_branch = db.relationship("Branch", foreign_keys=[source_branch_id])
+    target_branch = db.relationship("Branch", foreign_keys=[target_branch_id])
+    product = db.relationship("Product")
+
+
 class MercadoPagoConnection(db.Model):
     __tablename__ = "mercadopago_connections"
 
