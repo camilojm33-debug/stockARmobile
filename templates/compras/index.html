@@ -110,7 +110,7 @@
                     <select class="form-select purchase-product" name="product_id[]" required>
                       <option value="">Seleccionar producto...</option>
                       {% for product in products %}
-                      <option value="{{ product.id }}" data-stock="{{ '%.3g'|format(product.stock or 0) }}">{{ product.name }}{% if product.barcode %} · {{ product.barcode }}{% endif %} · stock {{ '%.3g'|format(product.stock or 0) }}</option>
+                      <option value="{{ product.id }}" data-stock="{{ '%.3g'|format((product.branch_stock_display if product.branch_stock_display is defined else product.stock) or 0) }}">{{ product.name }}{% if product.barcode %} · {{ product.barcode }}{% endif %} · stock {{ '%.3g'|format((product.branch_stock_display if product.branch_stock_display is defined else product.stock) or 0) }}</option>
                       {% endfor %}
                     </select>
                     <div class="stock-hint" data-stock-hint>Seleccioná un producto para ver su stock actual.</div>
