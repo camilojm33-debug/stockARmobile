@@ -579,7 +579,7 @@ def api_pos_hints():
             "brand": product.brand or "",
             "category": product.category or "",
             "price": float(product.price or 0),
-            "stock": float(product.stock or 0),
+            "stock": _branch_available_stock(product),
             "min_stock": float(product.min_stock or 0),
             "favorite": bool(product.favorite),
             "discount": float(product.discount or 0),
