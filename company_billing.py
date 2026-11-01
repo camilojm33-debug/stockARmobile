@@ -5019,6 +5019,7 @@ def company_settings():
         if settings_panel == "branches" and multi_branch_access else []
     )
     branch_limit = max(1, int(getattr(PlanUsageService._active_plan_for_company(company.id)[1], "max_branches", 1) or 1))
+    active_branch_count = sum(1 for branch in company_branches if branch.active)
 
     pin_verified = _is_pin_verified(company.id)
     date_from_raw = request.args.get("from") or ""
