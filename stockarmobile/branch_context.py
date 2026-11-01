@@ -33,9 +33,17 @@ def get_active_branch_id(*, require_feature=True):
     if not getattr(current_user, "is_authenticated", False):
         return None
     company_id = getattr(current_user, "company_id", None)
-    if not company_id or (require_feature and not multibranch_enabled()):
+    if not company_id:
         return None
     branches = accessible_branches(company_id)
+    # Every tenant operates its existing single Casa central through the same
+    # branch-aware stock ledger, even on non-Premium plans. Premium only unlocks
+    # selection and creation of additional locations.
+    if not multibranch_enabled():
+        from app import Branch
+        default_branch = Branch.query.filter_by(company_id=int(company_id), is_default=True, active=True).first()
+        if default_branch is not None:
+            branches = [item for item in branches if int(item.id) == int(default_branch.id)]
     if not branches:
         # A legacy/test schema with no branch records keeps the old single-tenant
         # behavior. Once a company has branches, missing assignment is deny-by-default.
