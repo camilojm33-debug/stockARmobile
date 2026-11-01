@@ -19,6 +19,13 @@ ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
 
+def _product_stock_for_context(product):
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    return available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
+
+
 def _product_to_dict(product):
     return {
         "id": product.id,
@@ -46,7 +53,7 @@ def _product_to_dict(product):
         "profit_percent": float(product.profit_percent or 0),
         "tax": float(product.tax or 0),
         "iva": float(product.tax or 0),
-        "stock": product.stock or 0,
+        "stock": _product_stock_for_context(product),
         "min_stock": product.min_stock or 0,
         "discount": float(product.discount or 0),
         "favorite": bool(product.favorite),
@@ -167,6 +174,8 @@ def index():
         query = query.filter(Product.stock <= Product.min_stock)
 
     productos = query.order_by(Product.name).all()
+    for product in productos:
+        product.branch_stock_display = _product_stock_for_context(product)
     categorias = [c[0] for c in scope_query_to_company(Product.query.with_entities(Product.category), Product).distinct().all() if c[0]]
     return render_template(
         "productos/index.html",
@@ -256,6 +265,11 @@ def edit(product_id=None, id=None):
         return redirect(url_for("products.index"))
 
     form = ProductForm(obj=product)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None and request.method == "GET":
+        from stockarmobile.branch_inventory import available_stock
+        form.stock.data = available_stock(product, active_branch_id)
     if form.validate_on_submit():
         barcode = (form.barcode.data or product.barcode or "").strip()
         duplicate = (
