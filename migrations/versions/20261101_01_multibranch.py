@@ -86,6 +86,16 @@ def upgrade():
         op.create_index("ix_branch_stock_transfers_product_id", "branch_stock_transfers", ["product_id"])
     for table in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents"):
         _add_branch_column(bind, table)
+    if _has_table(bind, "quotes") and "branch_id" in _columns(bind, "quotes"):
+        quote_fks = {fk.get("name") for fk in sa.inspect(bind).get_foreign_keys("quotes")}
+        if "fk_quotes_branch_id_branches" not in quote_fks:
+            op.create_foreign_key(
+                "fk_quotes_branch_id_branches", "quotes", "branches",
+                ["branch_id"], ["id"], ondelete="SET NULL",
+            )
+        quote_indexes = {idx.get("name") for idx in sa.inspect(bind).get_indexes("quotes")}
+        if "ix_quotes_branch_id" not in quote_indexes:
+            op.create_index("ix_quotes_branch_id", "quotes", ["branch_id"])
     if "max_branches" not in _columns(bind, "plans"):
         op.add_column("plans", sa.Column("max_branches", sa.Integer(), nullable=False, server_default="1"))
         bind.execute(sa.text("UPDATE plans SET max_branches = CASE WHEN lower(code) = 'premium' THEN 5 ELSE 1 END"))
