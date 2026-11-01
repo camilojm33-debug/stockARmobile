@@ -42,8 +42,7 @@ def get_active_branch_id(*, require_feature=True):
     if not multibranch_enabled():
         from app import Branch
         default_branch = Branch.query.filter_by(company_id=int(company_id), is_default=True, active=True).first()
-        if default_branch is not None:
-            branches = [item for item in branches if int(item.id) == int(default_branch.id)]
+        branches = [item for item in branches if default_branch is not None and int(item.id) == int(default_branch.id)]
     if not branches:
         # A legacy/test schema with no branch records keeps the old single-tenant
         # behavior. Once a company has branches, missing assignment is deny-by-default.
