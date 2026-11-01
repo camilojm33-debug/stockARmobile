@@ -549,6 +549,7 @@ class SaleService:
                 cash_movement.session_id = sale.cash_session_id or cash_movement.session_id
                 cash_movement.user_id = current_user.id
                 cash_movement.company_id = sale.company_id
+                cash_movement.branch_id = sale.branch_id
                 cash_movement.description = f"Venta #{sale.id} editada"
             else:
                 db.session.delete(cash_movement)
@@ -560,6 +561,7 @@ class SaleService:
                     session_id=sale.cash_session_id or (open_cash_session.id if open_cash_session else None),
                     user_id=current_user.id,
                     company_id=sale.company_id,
+                    branch_id=sale.branch_id,
                     sale_id=sale.id,
                     movement_type="ingreso",
                     category="venta",
@@ -650,7 +652,13 @@ class SaleService:
             comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
         )
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
+        InventoryService.reverse_stock(
+            sale_items=sale.items,
+            resolve_product_func=resolve_product_for_item,
+            branch_id=getattr(sale, "branch_id", None),
+            source_id=sale.id,
+            user_id=current_user.id,
+        )
         sale.status = "anulada"
         self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(
@@ -670,7 +678,13 @@ class SaleService:
                 "Las ventas confirmadas no se eliminan físicamente. Deben anularse para conservar el historial."
             )
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
+        InventoryService.reverse_stock(
+            sale_items=sale.items,
+            resolve_product_func=resolve_product_for_item,
+            branch_id=getattr(sale, "branch_id", None),
+            source_id=sale.id,
+            user_id=current_user.id,
+        )
         AuditService.record_delete(record_audit, sale_id=sale.id, total_amount=sale.total_amount)
         db.session.delete(sale)
         db.session.commit()
