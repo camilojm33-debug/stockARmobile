@@ -81,6 +81,11 @@ def index():
         flash("Gasto registrado.", "success")
         return redirect(url_for("expenses.index"))
 
-    expenses = scope_query_to_company(Expense.query, Expense).order_by(Expense.date.desc()).limit(50).all()
+    expense_query = scope_query_to_company(Expense.query, Expense)
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        expense_query = expense_query.filter(Expense.branch_id == branch_id)
+    expenses = expense_query.order_by(Expense.date.desc()).limit(50).all()
     total = sum(float(item.amount or 0) for item in expenses)
     return render_template("gastos/index.html", expenses=expenses, total=total)
