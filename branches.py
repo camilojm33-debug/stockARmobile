@@ -78,6 +78,10 @@ def create_branch():
 @company_admin_required
 def update_branch(branch_id):
     company_id = _company_id()
+    company = Company.query.filter_by(id=company_id, active=True).first_or_404()
+    blocked = _require_feature(company)
+    if blocked:
+        return blocked
     branch = Branch.query.filter_by(id=branch_id, company_id=company_id).first_or_404()
     name = (request.form.get("name") or "").strip()[:120]
     if len(name) < 2:
@@ -153,6 +157,10 @@ def transfer_stock():
 @company_admin_required
 def assign_users(branch_id):
     company_id = _company_id()
+    company = Company.query.filter_by(id=company_id, active=True).first_or_404()
+    blocked = _require_feature(company)
+    if blocked:
+        return blocked
     branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first_or_404()
     selected_ids = {int(value) for value in request.form.getlist("user_ids") if str(value).isdigit()}
     users = User.query.filter(User.company_id == company_id, User.role != "superadmin", User.id.in_(selected_ids)).all() if selected_ids else []
