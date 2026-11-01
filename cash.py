@@ -177,12 +177,12 @@ def _get_session_or_404(session_id):
     # Lock the cash-session row during write operations so two computers cannot
     # close/reopen/void the same session concurrently. PostgreSQL enforces the
     # row lock until this request's transaction finishes.
-    session = (
-        scope_query_to_company(CashSession.query, CashSession)
-        .filter(CashSession.id == session_id)
-        .with_for_update()
-        .first_or_404()
-    )
+    session_query = scope_query_to_company(CashSession.query, CashSession).filter(CashSession.id == session_id)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        session_query = session_query.filter(CashSession.branch_id == active_branch_id)
+    session = session_query.with_for_update().first_or_404()
     if not _is_admin() and session.user_id != current_user.id:
         abort(403)
     return session
