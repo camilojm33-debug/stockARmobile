@@ -4339,7 +4339,7 @@ def company_settings_user_delete(user_id):
 @bp.route("/company-settings/users/create", methods=["POST"])
 @company_admin_required
 def company_settings_user_create():
-    from app import User, db, record_audit
+    from app import Branch, User, UserBranchAccess, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4377,6 +4377,9 @@ def company_settings_user_create():
     user.must_change_password = True
     db.session.add(user)
     db.session.flush()
+    default_branch = Branch.query.filter_by(company_id=company.id, is_default=True, active=True).first()
+    if default_branch is not None:
+        db.session.add(UserBranchAccess(company_id=company.id, user_id=user.id, branch_id=default_branch.id))
     record_audit(action="company_user_create", entity="user", entity_id=user.id, detail=f"Alta de usuario {user.username}")
     db.session.commit()
     flash(f"Empleado creado correctamente. Contrasena temporal: {temp_password}", "success")
