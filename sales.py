@@ -334,6 +334,9 @@ def _branch_available_stock(product):
 
 
 def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None, branch_id=None):
+    if branch_id is None:
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
     from app import Product, db, scope_query_to_company
 
     product_ids = sorted(int(prod_id) for prod_id in items.keys())
