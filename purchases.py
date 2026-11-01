@@ -257,7 +257,16 @@ def index():
         return redirect(url_for("purchases.index", company_id=company_id))
     suppliers = _company_scope(Supplier.query.filter_by(active=True), Supplier, company_id).order_by(Supplier.name).all()
     products = _company_scope(Product.query.filter_by(active=True), Product, company_id).order_by(Product.name).all()
-    purchases = _company_scope(PurchaseOrder.query, PurchaseOrder, company_id).order_by(PurchaseOrder.date.desc()).limit(20).all()
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        from stockarmobile.branch_inventory import available_stock
+        for product in products:
+            product.branch_stock_display = available_stock(product, branch_id)
+    purchases_query = _company_scope(PurchaseOrder.query, PurchaseOrder, company_id)
+    if branch_id is not None:
+        purchases_query = purchases_query.filter(PurchaseOrder.branch_id == branch_id)
+    purchases = purchases_query.order_by(PurchaseOrder.date.desc()).limit(20).all()
     return render_template("compras/index.html", suppliers=suppliers, products=products, purchases=purchases, selected_company_id=company_id, companies=_superadmin_companies() if getattr(current_user, "role", None) == "superadmin" else [], search="", status_filter="active", supplier_stats={}, company_required=False)
 
 
@@ -403,6 +412,10 @@ def supplier_purchases_pdf(supplier_id):
 
 def _supplier_purchases_query(PurchaseOrder, supplier, company_id, db):
     query = _company_scope(PurchaseOrder.query, PurchaseOrder, company_id).filter(PurchaseOrder.supplier_id == supplier.id)
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        query = query.filter(PurchaseOrder.branch_id == branch_id)
     search = (request.args.get("q") or "").strip(); status = (request.args.get("status") or "").strip().lower()
     if search:
         from app import Product, PurchaseItem
