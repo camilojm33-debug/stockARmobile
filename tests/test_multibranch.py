@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Subscription, db
+from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Subscription, User, db
 from stockarmobile.branch_inventory import adjust_branch_stock, available_stock, get_branch_stock, set_branch_stock
 from services.ai_agent.usage_service import can_use_commercial_feature
 
@@ -205,4 +205,80 @@ def test_business_documents_refuse_unmapped_branch_pos(app):
             BusinessBillingService.issue_sale_document(
                 db.session, company=company, sale=sale, config=config
             )
+        db.session.rollback()
+
+
+def test_ai_stock_tools_only_reveal_the_employee_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from services.ai_agent.tools.product_search import BuscarProductoTool
+    from services.ai_agent.tools.stock_query import ConsultarStockTool
+
+    with app.app_context():
+        company = _company("Empresa IA sucursales")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="AI-MS-001", name="Producto IA",
+            stock=19, min_stock=2, active=True,
+        )
+        employee = User(
+            username="ai-branch-employee", email="ai-branch-employee@example.test",
+            password_hash="test-hash", role="user", active=True, company_id=company.id,
+        )
+        db.session.add_all([product, employee])
+        db.session.flush()
+        set_branch_stock(product, central.id, 7)
+        set_branch_stock(product, north.id, 12)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(employee)
+            searched = BuscarProductoTool(company_id=company.id).execute(query="Producto IA")
+            queried = ConsultarStockTool(company_id=company.id).execute(product_id=product.id)
+            assert searched["success"] is True
+            assert searched["items"][0]["stock"] == 7.0
+            assert [item["branch_id"] for item in searched["items"][0]["stock_by_branch"]] == [central.id]
+            assert queried["success"] is True
+            assert queried["product"]["stock"] == 7.0
+            assert [item["branch_id"] for item in queried["product"]["stock_by_branch"]] == [central.id]
+
+
+def test_ai_sales_metrics_only_aggregate_employee_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from services.ai_agent.tools.business_metrics import ResumenVentasTool
+
+    with app.app_context():
+        company = _company("Empresa IA métricas")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="ai-metrics-employee", email="ai-metrics-employee@example.test",
+            password_hash="test-hash", role="user", active=True, company_id=company.id,
+        )
+        db.session.add(employee)
+        db.session.flush()
+        sale_central = __import__("app").Sale(
+            company_id=company.id, branch_id=central.id, customer="Central",
+            subtotal=100, total_amount=100, status="confirmada",
+        )
+        sale_north = __import__("app").Sale(
+            company_id=company.id, branch_id=north.id, customer="Norte",
+            subtotal=900, total_amount=900, status="confirmada",
+        )
+        db.session.add_all([sale_central, sale_north])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(employee)
+            result = ResumenVentasTool(company_id=company.id).execute(days=2)
+            assert result["sales_count"] == 1
+            assert result["sales_total"] == 100.0
         db.session.rollback()
