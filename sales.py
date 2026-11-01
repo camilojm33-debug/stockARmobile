@@ -326,7 +326,7 @@ def _save_cart(cart):
     session.modified = True
 
 
-def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None):
+def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None, branch_id=None):
     from app import Product, db, scope_query_to_company
 
     product_ids = sorted(int(prod_id) for prod_id in items.keys())
@@ -344,6 +344,7 @@ def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None):
         current_user=current_user,
         fetch_products_func=_fetch_products,
         discount_overrides=discount_overrides,
+        branch_id=branch_id,
     )
 
 
