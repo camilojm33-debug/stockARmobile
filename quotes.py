@@ -1275,20 +1275,21 @@ def _quote_pdf_response(quote, *, as_attachment=False):
 
 def _quote_lookup(quote_id):
     from app import Quote, QuoteItem, scope_query_to_company
+    from stockarmobile.branch_context import get_active_branch_id
 
-    return (
-        scope_query_to_company(
-            Quote.query.options(
-                selectinload(Quote.client),
-                selectinload(Quote.seller),
-                selectinload(Quote.items).selectinload(QuoteItem.product),
-                selectinload(Quote.converted_sale),
-            ),
-            Quote,
-        )
-        .filter(Quote.id == quote_id)
-        .first_or_404()
+    query = scope_query_to_company(
+        Quote.query.options(
+            selectinload(Quote.client),
+            selectinload(Quote.seller),
+            selectinload(Quote.items).selectinload(QuoteItem.product),
+            selectinload(Quote.converted_sale),
+        ),
+        Quote,
     )
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(Quote.branch_id == active_branch_id)
+    return query.filter(Quote.id == quote_id).first_or_404()
 
 
 def _expire_quotes(company_id):
@@ -1650,7 +1651,7 @@ def delete_quote(quote_id):
     from app import Quote, db, scope_query_to_company
 
     _require_quote_permission("quotes_delete")
-    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first_or_404()
+    quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     if quote.status == "CONVERTIDO" or quote.converted_sale_id:
         flash("No se puede eliminar un presupuesto convertido.", "warning")
@@ -1848,7 +1849,12 @@ def convert_to_sale(quote_id):
     from app import Product, Quote, db, record_audit, scope_query_to_company
 
     _require_quote_permission("quotes_convert")
-    quote = scope_query_to_company(db.session.query(Quote).options(selectinload(Quote.items)), Quote).filter(Quote.id == quote_id).first_or_404()
+    quote_query = scope_query_to_company(db.session.query(Quote).options(selectinload(Quote.items)), Quote)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        quote_query = quote_query.filter(Quote.branch_id == active_branch_id)
+    quote = quote_query.filter(Quote.id == quote_id).first_or_404()
     _require_owned_or_authorized(quote)
     status = (quote.status or "BORRADOR").strip().upper()
     if status == "CONVERTIDO" and quote.converted_sale_id:
