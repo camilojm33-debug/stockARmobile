@@ -326,6 +326,13 @@ def _save_cart(cart):
     session.modified = True
 
 
+def _branch_available_stock(product):
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    return available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
+
+
 def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None, branch_id=None):
     from app import Product, db, scope_query_to_company
 
@@ -500,7 +507,7 @@ def api_pos_search_products():
             "category": product.category or "",
             "description": product.description or "",
             "price": float(product.price or 0),
-            "stock": float(product.stock or 0),
+            "stock": _branch_available_stock(product),
             "min_stock": float(product.min_stock or 0),
             "favorite": bool(product.favorite),
             "discount": float(product.discount or 0),
@@ -635,12 +642,16 @@ def add_to_cart(product_id):
     if qty <= 0:
         flash("La cantidad debe ser mayor a cero.", "danger")
         return redirect(url_for("sales.new_sale"))
-    if float(product.stock or 0) < qty:
-        flash(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g}.", "danger")
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    available = available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
+    if available < qty:
+        flash(f"Stock insuficiente para {product.name}. Disponible: {available:g}.", "danger")
         return redirect(url_for("sales.new_sale"))
     cart = _get_cart()
     current_qty = _to_float(cart["items"].get(str(product_id), 0))
-    cart["items"][str(product_id)] = min(current_qty + qty, float(product.stock or 0))
+    cart["items"][str(product_id)] = min(current_qty + qty, available)
     _save_cart(cart)
     flash(f"{product.name} agregado al carrito.", "success")
     return redirect(request.referrer or url_for("sales.new_sale"))
