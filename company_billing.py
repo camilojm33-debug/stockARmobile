@@ -290,7 +290,12 @@ def _load_company_billing_config(company, company_preferences):
                 continue
             number = _normalize_pos_number(row.get("number"))
             description = (str(row.get("description") or "").strip() or f"Punto de venta {number}")[:80]
-            points_of_sale.append({"number": number, "description": description, "active": bool(row.get("active", True))})
+            points_of_sale.append({
+                "number": number,
+                "description": description,
+                "branch": (str(row.get("branch") or "Casa central").strip() or "Casa central")[:80],
+                "active": bool(row.get("active", True)),
+            })
     if not points_of_sale:
         points_of_sale = defaults["points_of_sale"]
 
