@@ -1675,7 +1675,12 @@ def annul_quote(quote_id):
     from app import Quote, db, record_audit, scope_query_to_company
 
     _require_quote_permission("quotes_anulate")
-    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first_or_404()
+    quote_query = scope_query_to_company(db.session.query(Quote), Quote)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        quote_query = quote_query.filter(Quote.branch_id == active_branch_id)
+    quote = quote_query.filter(Quote.id == quote_id).first_or_404()
     _require_owned_or_authorized(quote)
     if quote.status == "CONVERTIDO":
         flash("No se puede anular un presupuesto convertido.", "warning")
