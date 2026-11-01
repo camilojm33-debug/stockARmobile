@@ -69,6 +69,21 @@ def upgrade():
             sa.Column("note", sa.Text()), sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))
         op.create_index("ix_branch_stock_movements_company_branch_date", "branch_stock_movements", ["company_id", "branch_id", "created_at"])
         op.create_index("ix_branch_stock_movements_product", "branch_stock_movements", ["product_id"])
+    if not _has_table(bind, "branch_stock_transfers"):
+        op.create_table("branch_stock_transfers",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("company_id", sa.Integer(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("source_branch_id", sa.Integer(), sa.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("target_branch_id", sa.Integer(), sa.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("product_id", sa.Integer(), sa.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("quantity", sa.Numeric(18, 3), nullable=False),
+            sa.Column("note", sa.Text()),
+            sa.Column("created_by_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL")),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))
+        op.create_index("ix_branch_stock_transfers_company_created", "branch_stock_transfers", ["company_id", "created_at"])
+        op.create_index("ix_branch_stock_transfers_source_branch_id", "branch_stock_transfers", ["source_branch_id"])
+        op.create_index("ix_branch_stock_transfers_target_branch_id", "branch_stock_transfers", ["target_branch_id"])
+        op.create_index("ix_branch_stock_transfers_product_id", "branch_stock_transfers", ["product_id"])
     for table in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents"):
         _add_branch_column(bind, table)
     if "max_branches" not in _columns(bind, "plans"):
