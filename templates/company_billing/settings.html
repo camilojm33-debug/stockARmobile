@@ -1172,7 +1172,7 @@
         </div>
         {% else %}
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
-          <div><div class="h5 mb-1">{{ company_branches|length }} de {{ branch_limit }} sucursales activas/permitidas</div><div class="text-muted small">La facturación y el catálogo siguen perteneciendo a la empresa matriz.</div></div>
+          <div><div class="h5 mb-1">{{ active_branch_count }} de {{ branch_limit }} sucursales activas/permitidas</div><div class="text-muted small">La facturación y el catálogo siguen perteneciendo a la empresa matriz.</div></div>
         </div>
         <form method="post" action="{{ url_for('branches.create_branch') }}" class="row g-2 border rounded-3 p-3 mb-4">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -1180,7 +1180,7 @@
           <div class="col-md-2"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="NORTE"></div>
           <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" maxlength="255"></div>
           <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" maxlength="120"></div>
-          <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if company_branches|length >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
+          <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if active_branch_count >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
         </form>
         <div class="row g-3">
           {% for branch in company_branches %}
@@ -1209,7 +1209,7 @@
           </div>
           {% endfor %}
         </div>
-        {% if company_branches|length > 1 %}
+        {% if active_branch_count > 1 %}
         <div class="border rounded-3 p-3 mt-4">
           <h3 class="h6 fw-bold mb-3">Transferir stock entre sucursales</h3>
           <p class="small text-muted">La transferencia descuenta del origen y acredita el destino en una sola operación. El stock consolidado de la empresa no cambia.</p>
