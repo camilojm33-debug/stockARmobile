@@ -234,6 +234,7 @@ def _default_billing_config(company):
             {
                 "number": "00001",
                 "description": "Casa central",
+                "branch": "Casa central",
                 "active": True,
             }
         ],
@@ -4633,7 +4634,8 @@ def company_settings_billing_pos_add():
         flash("Ese punto de venta ya existe.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="billing"))
 
-    points.append({"number": number, "description": description, "active": False})
+    branch_name = (request.form.get("branch") or "Casa central").strip()[:80] or "Casa central"
+    points.append({"number": number, "description": description, "branch": branch_name, "active": False})
     billing["points_of_sale"] = sorted(points, key=lambda item: item.get("number") or "00000")
 
     company_preferences["billing_business"] = billing
