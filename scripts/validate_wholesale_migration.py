@@ -72,7 +72,7 @@ def main() -> None:
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
             # Remove tables/columns introduced by multisucursal so the revision must
             # create them as it would on an existing production tenant.
-            for table_name in ("branch_stock_movements", "branch_stock", "user_branch_access", "branches"):
+            for table_name in ("branch_stock_transfers", "branch_stock_movements", "branch_stock", "user_branch_access", "branches"):
                 connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
             for table_name in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents"):
                 connection.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
@@ -114,7 +114,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")
@@ -134,6 +134,9 @@ def main() -> None:
         if version != HEAD_REVISION:
             raise AssertionError(f"Unexpected Alembic revision after upgrade: {version}")
 
+        transfer_columns = {column["name"] for column in inspector.get_columns("branch_stock_transfers")}
+        if not {"source_branch_id", "target_branch_id", "product_id", "quantity", "created_by_user_id"}.issubset(transfer_columns):
+            raise AssertionError("Branch stock transfer table is missing required fields.")
         migrated_branch = db.session.execute(
             text("SELECT id FROM branches WHERE company_id = :company_id AND is_default = TRUE"),
             {"company_id": expected_company_id},
