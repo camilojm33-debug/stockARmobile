@@ -81,6 +81,14 @@ class BuscarProductoTool(AgentTool):
                     "barcode": product.barcode,
                     "price": float(product.price) if product.price is not None else 0.0,
                     "stock": normalized_stock_quantity(product.stock),
+                    "stock_by_branch": [
+                        {"branch_id": row.branch_id, "branch_name": row.branch.name,
+                         "stock": normalized_stock_quantity(row.stock)}
+                        for row in __import__("app").BranchStock.query
+                        .filter_by(company_id=int(effective_company_id), product_id=product.id)
+                        .join(__import__("app").Branch, __import__("app").Branch.id == __import__("app").BranchStock.branch_id)
+                        .filter(__import__("app").Branch.active.is_(True)).all()
+                    ],
                 }
             )
 
