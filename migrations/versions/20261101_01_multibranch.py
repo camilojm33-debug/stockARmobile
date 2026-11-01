@@ -123,6 +123,10 @@ def upgrade():
     # Reconcile the legacy integer values before adding referential integrity.
     # Some historical values were not real branch IDs and must not block deploy.
     if _has_table(bind, "quotes") and "branch_id" in _columns(bind, "quotes"):
+        bind.execute(sa.text(
+            "UPDATE quotes SET branch_id=NULL WHERE branch_id IS NOT NULL AND "
+            "NOT EXISTS (SELECT 1 FROM branches b WHERE b.id=quotes.branch_id AND b.company_id=quotes.company_id)"
+        ))
         quote_fks = {fk.get("name") for fk in sa.inspect(bind).get_foreign_keys("quotes")}
         if "fk_quotes_branch_id_branches" not in quote_fks:
             op.create_foreign_key(
