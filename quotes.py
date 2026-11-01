@@ -1377,6 +1377,10 @@ def index():
         Quote.query.options(selectinload(Quote.client), selectinload(Quote.seller), selectinload(Quote.items)),
         Quote,
     )
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(Quote.branch_id == active_branch_id)
     if getattr(current_user, "role", None) not in {"admin", "superadmin"} and not _can_view_other_quotes():
         query = query.filter(Quote.seller_id == getattr(current_user, "id", None))
     if search:
@@ -1898,7 +1902,14 @@ def convert_to_sale(quote_id):
         if product is None:
             skipped_lines += 1
             continue
-        max_stock = max(float(product.stock or 0), 0.0)
+        from stockarmobile.branch_context import get_active_branch_id
+        from stockarmobile.branch_inventory import available_stock
+        active_branch_id = get_active_branch_id()
+        target_branch_id = quote.branch_id or active_branch_id
+        if active_branch_id is not None and quote.branch_id is not None and int(quote.branch_id) != int(active_branch_id):
+            flash("El presupuesto pertenece a otra sucursal. Cambiá la sucursal activa para convertirlo.", "warning")
+            return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+        max_stock = max(available_stock(product, target_branch_id) if target_branch_id is not None else float(product.stock or 0), 0.0)
         requested_qty = max(float(row["quantity"] or 0), 0.0)
         if requested_qty > max_stock:
             stock_shortages.append(
