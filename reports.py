@@ -24,7 +24,10 @@ def _company_timezone_name():
 
 
 def _branch_scope_requested():
-    return request.args.get("branch_scope") == "all" and getattr(current_user, "role", None) in {"admin", "superadmin"}
+    if request.args.get("branch_scope") != "all" or getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+        return False
+    from stockarmobile.branch_context import multibranch_enabled
+    return bool(multibranch_enabled())
 
 
 def _apply_branch_scope(query, model):
