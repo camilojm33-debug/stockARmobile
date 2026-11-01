@@ -124,6 +124,7 @@ def main() -> None:
             "sale_items": "fk_sale_items_price_list_id_price_lists",
             "quote_items": "fk_quote_items_price_list_id_price_lists",
             "quote_deliveries": "fk_quote_deliveries_picked_up_by_user_id_users",
+            "quotes": "fk_quotes_branch_id_branches",
         }
         for table_name, fk_name in expected_foreign_keys.items():
             present = {item.get("name") for item in inspector.get_foreign_keys(table_name)}
