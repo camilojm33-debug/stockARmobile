@@ -75,17 +75,11 @@ def index():
     def _apply_date(q, col):
         return q.filter(col >= start_utc, col < end_utc)
 
-    sales_total = _apply_date(
-        scope_query_to_company(
-            db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale
-        _apply_branch_scope(
-            scope_query_to_company(
-                db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale
-            ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)),
-            Sale,
-        ),
-        Sale.date,
-    ).scalar() or 0
+    sales_query = scope_query_to_company(
+        db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale
+    ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES))
+    sales_query = _apply_branch_scope(sales_query, Sale)
+    sales_total = _apply_date(sales_query, Sale.date).scalar() or 0
     purchases_total = _apply_date(_apply_branch_scope(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(PurchaseOrder.total_amount), 0)), PurchaseOrder), PurchaseOrder), PurchaseOrder.date).scalar() or 0
     expenses_total = _apply_date(_apply_branch_scope(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)), Expense), Expense), Expense.date).scalar() or 0
     return render_template(
