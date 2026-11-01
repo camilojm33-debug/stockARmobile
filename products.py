@@ -159,7 +159,7 @@ def product_image(filename):
 @bp.route("/")
 @tenant_required
 def index():
-    from app import BranchStock, Product, ProductForm, scope_query_to_company
+    from app import BranchStock, Product, ProductForm, db, scope_query_to_company
 
     query = scope_query_to_company(Product.query.filter_by(active=True), Product)
     search = request.args.get("q") or request.args.get("search")
@@ -173,12 +173,15 @@ def index():
     from stockarmobile.branch_context import get_active_branch_id
     branch_id = get_active_branch_id()
     if low_stock and branch_id is not None:
-        query = query.join(
+        query = query.outerjoin(
             BranchStock,
             (BranchStock.product_id == Product.id)
             & (BranchStock.company_id == Product.company_id)
             & (BranchStock.branch_id == branch_id),
-        ).filter(BranchStock.stock <= BranchStock.min_stock)
+        ).filter(
+            db.func.coalesce(BranchStock.stock, 0)
+            <= db.func.coalesce(BranchStock.min_stock, Product.min_stock)
+        )
     elif low_stock:
         query = query.filter(Product.stock <= Product.min_stock)
 
