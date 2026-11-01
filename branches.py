@@ -10,6 +10,11 @@ bp = Blueprint("branches", __name__, url_prefix="/sucursales")
 def _company_id():
     return int(getattr(current_user, "company_id", 0) or 0)
 
+def _require_company_pin(company):
+    from company_billing import _pin_guard
+    return _pin_guard(company)
+
+
 def _require_feature(company):
     from services.ai_agent.usage_service import can_use_commercial_feature
     result = can_use_commercial_feature(company, "multi_branch")
@@ -43,6 +48,9 @@ def create_branch():
     blocked = _require_feature(company)
     if blocked:
         return blocked
+    pin_blocked = _require_company_pin(company)
+    if pin_blocked:
+        return pin_blocked
     from services.plan_usage_service import PlanUsageService
     _subscription, plan = PlanUsageService._active_plan_for_company(company.id)
     limit = max(1, int(getattr(plan, "max_branches", 1) or 1))
@@ -82,6 +90,9 @@ def update_branch(branch_id):
     blocked = _require_feature(company)
     if blocked:
         return blocked
+    pin_blocked = _require_company_pin(company)
+    if pin_blocked:
+        return pin_blocked
     branch = Branch.query.filter_by(id=branch_id, company_id=company_id).first_or_404()
     name = (request.form.get("name") or "").strip()[:120]
     if len(name) < 2:
@@ -109,6 +120,9 @@ def transfer_stock():
     blocked = _require_feature(company)
     if blocked:
         return blocked
+    pin_blocked = _require_company_pin(company)
+    if pin_blocked:
+        return pin_blocked
     source_id = request.form.get("source_branch_id", type=int)
     target_id = request.form.get("target_branch_id", type=int)
     product_id = request.form.get("product_id", type=int)
@@ -161,6 +175,9 @@ def assign_users(branch_id):
     blocked = _require_feature(company)
     if blocked:
         return blocked
+    pin_blocked = _require_company_pin(company)
+    if pin_blocked:
+        return pin_blocked
     branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first_or_404()
     selected_ids = {int(value) for value in request.form.getlist("user_ids") if str(value).isdigit()}
     users = User.query.filter(User.company_id == company_id, User.role != "superadmin", User.id.in_(selected_ids)).all() if selected_ids else []
