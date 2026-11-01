@@ -985,6 +985,7 @@ def index():
             "max_users": int(request.form.get("max_users") or 1),
             "max_products": int(request.form.get("max_products") or 1000),
             "max_clients": int(request.form.get("max_clients") or 1000),
+            "max_branches": int(request.form.get("max_branches") or 1),
             "features_json": (request.form.get("features_json") or "").strip() or None,
             "state": (request.form.get("state") or "active").strip().lower(),
             "active": (request.form.get("active") or "1") == "1",
@@ -5750,6 +5751,34 @@ def password_recovery_reset(request_id):
     session["password_recovery_temp_password_user"] = user.username
     flash("Contrasena temporal generada. Se mostrara una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")
+
+
+@bp.route("/plans/<int:plan_id>/branch-limit", methods=["POST"])
+@superadmin_required
+def update_plan_branch_limit(plan_id):
+    from app import Plan, db, record_audit
+
+    _require_superadmin()
+    plan = Plan.query.filter_by(id=plan_id).first_or_404()
+    try:
+        limit = int(request.form.get("max_branches") or 1)
+    except (TypeError, ValueError):
+        flash("Ingresá un límite válido de sucursales.", "danger")
+        return redirect(url_for("saas.plans_panel"))
+    if limit < 1 or limit > 500:
+        flash("El límite de sucursales debe estar entre 1 y 500.", "danger")
+        return redirect(url_for("saas.plans_panel"))
+    previous = int(getattr(plan, "max_branches", 1) or 1)
+    plan.max_branches = limit
+    record_audit(
+        action="saas_plan_branch_limit_update",
+        entity="plan",
+        entity_id=plan.id,
+        detail=f"Límite de sucursales actualizado de {previous} a {limit}.",
+    )
+    db.session.commit()
+    flash(f"El plan {plan.name} ahora permite hasta {limit} sucursales activas.", "success")
+    return redirect(url_for("saas.plans_panel"))
 
 
 @bp.route("/plans")
