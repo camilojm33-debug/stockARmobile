@@ -39,6 +39,7 @@ def _record_cash_expense_movement(*, user, expense):
         session_id=open_session.id,
         user_id=user.id,
         company_id=company_id,
+        branch_id=getattr(open_session, "branch_id", None),
         movement_type="egreso",
         category="gasto",
         amount=expense.amount,
@@ -67,6 +68,7 @@ def index():
             payment_method=request.form.get("payment_method"),
             user_id=current_user.id,
             company_id=getattr(current_user, "company_id", None),
+            branch_id=__import__("stockarmobile.branch_context", fromlist=["get_active_branch_id"]).get_active_branch_id(),
         )
         db.session.add(expense)
         db.session.flush()
