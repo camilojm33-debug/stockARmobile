@@ -102,10 +102,24 @@ def bind_active_company_context(user):
             active=bool(getattr(user, "active", True)),
         )
     if membership is None:
-        # A revoked or invalid company selection falls back only to the user's
-        # original tenant when that membership is still active.
+        # Prefer the original tenant when active; otherwise let the account
+        # continue through another explicitly granted company membership.
         selected_company_id = int(base_company_id)
         membership = get_membership(user.id, selected_company_id, active_only=True)
+    if membership is None and bool(getattr(user, "active", True)):
+        membership = (
+            UserCompanyMembership.query
+            .join(Company, Company.id == UserCompanyMembership.company_id)
+            .filter(
+                UserCompanyMembership.user_id == int(user.id),
+                UserCompanyMembership.active.is_(True),
+                Company.active.is_(True),
+            )
+            .order_by(UserCompanyMembership.company_id.asc())
+            .first()
+        )
+        if membership is not None:
+            selected_company_id = int(membership.company_id)
 
     if membership is None or not bool(getattr(user, "active", True)):
         session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
