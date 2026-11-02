@@ -140,6 +140,23 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     return row
 
 
+def set_branch_stock_and_reconcile(product, branch_id, quantity, *, movement_type="manual_adjustment", user_id=None, note=None):
+    """Set one branch balance and safely rebuild the company aggregate.
+
+    Lock the product before reading or changing branch rows. Refresh only the
+    aggregate column so a caller's other pending product edits are preserved.
+    """
+    with db.session.no_autoflush:
+        lock_product_stock_row(product)
+        db.session.refresh(product, attribute_names=["stock"])
+    row = set_branch_stock(
+        product, branch_id, quantity, movement_type=movement_type,
+        user_id=user_id, note=note,
+    )
+    reconcile_company_stock_total(product)
+    return row
+
+
 def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type=None, source_id=None,
                         user_id=None, note=None, update_company_total=True, allow_legacy_precision=False):
     delta = (
