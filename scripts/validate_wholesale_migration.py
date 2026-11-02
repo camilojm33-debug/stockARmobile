@@ -94,6 +94,10 @@ def main() -> None:
 
         _progress("Rewinding disposable schema to the pre-feature state")
         with db.engine.begin() as connection:
+            # db.create_all() builds the current ORM metadata, including the new
+            # membership table. Remove it here so Alembic must create/backfill it
+            # from the historic baseline exactly as it will on an existing tenant.
+            connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_discount_rules CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
