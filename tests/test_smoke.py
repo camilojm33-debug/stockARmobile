@@ -3698,7 +3698,7 @@ def test_my_company_module_supports_employee_create_and_reset():
         follow_redirects=True,
     )
     assert reset_password.status_code == 200
-    assert "Contrasena restablecida" in reset_password.data.decode("utf-8")
+    assert "Contraseña restablecida" in reset_password.data.decode("utf-8")
 
     custom_password = client.post(
         f"/admin/company-settings/users/{created_id}/reset-password",
@@ -3709,7 +3709,7 @@ def test_my_company_module_supports_employee_create_and_reset():
         follow_redirects=True,
     )
     assert custom_password.status_code == 200
-    assert "Contrasena actualizada correctamente" in custom_password.data.decode("utf-8")
+    assert "Contraseña actualizada correctamente" in custom_password.data.decode("utf-8")
 
     with stock_app.app.app_context():
         created = User.query.filter_by(username="cajero_nuevo").first()
@@ -3739,6 +3739,7 @@ def test_my_company_module_employee_permissions_delete_and_billing_pdf():
         assert company is not None
         assert admin_user is not None
         assert target_user is not None
+        company_id = int(company.id)
 
         CompanySecurityService.set_pin(company, "1234")
 
@@ -3809,7 +3810,7 @@ def test_my_company_module_employee_permissions_delete_and_billing_pdf():
         deleted_user = db.session.get(User, deletable_id)
         deleted_membership = CompanyMembership.query.filter_by(
             user_id=deletable_id,
-            company_id=company.id,
+            company_id=company_id,
         ).first()
         assert target_user is not None
         assert target_user.permissions_json is not None
@@ -3817,7 +3818,7 @@ def test_my_company_module_employee_permissions_delete_and_billing_pdf():
         assert "clients" in target_user.permissions_json
         assert deleted_user is not None
         assert deleted_user.active is True
-        assert deleted_user.company_id == company.id
+        assert deleted_user.company_id == company_id
         assert deleted_membership is not None
         assert deleted_membership.active is False
         assert deleted_membership.status == "revoked"
