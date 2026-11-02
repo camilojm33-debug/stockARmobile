@@ -261,6 +261,7 @@ def _hard_delete_company(company):
         CashMovement,
         CashSession,
         Client,
+        CompanyMembership,
         Expense,
         Invoice,
         MercadoPagoConnection,
@@ -325,7 +326,22 @@ def _hard_delete_company(company):
             return
         db.session.query(model).filter(getattr(model, column_name).in_(values)).delete(synchronize_session=False)
 
-    user_ids = _safe_ids_by_company(User)
+    primary_user_ids = _safe_ids_by_company(User)
+    membership_user_ids = [
+        int(row[0]) for row in db.session.query(CompanyMembership.user_id)
+        .filter(CompanyMembership.company_id == company_id).all()
+    ]
+    user_ids = sorted(set(primary_user_ids) | set(membership_user_ids))
+    other_memberships = (
+        CompanyMembership.query.filter(
+            CompanyMembership.user_id.in_(user_ids),
+            CompanyMembership.company_id != company_id,
+        ).all()
+        if user_ids else []
+    )
+    shared_user_ids = {int(row.user_id) for row in other_memberships}
+    user_ids_to_delete = [user_id for user_id in primary_user_ids if user_id not in shared_user_ids]
+
     product_ids = _safe_ids_by_company(Product)
     client_ids = _safe_ids_by_company(Client)
     supplier_ids = _safe_ids_by_company(Supplier)
@@ -380,9 +396,44 @@ def _hard_delete_company(company):
     _safe_delete_company_rows(Client)
     _safe_delete_company_rows(Supplier)
 
-    _safe_delete_in(NotificationReadState, "user_id", user_ids)
-    _safe_delete_in(PasswordResetToken, "user_id", user_ids)
-    _safe_delete_in(User, "id", user_ids)
+    # Remove only this tenant's membership. A global account with another
+    # company's membership must survive the tenant purge.
+    db.session.query(CompanyMembership).filter_by(company_id=company_id).delete(synchronize_session=False)
+    for shared_user_id in sorted(shared_user_ids):
+        shared_user = db.session.get(User, shared_user_id)
+        if shared_user is None or shared_user.company_id != company_id:
+            continue
+        next_membership = (
+            CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+            .filter(
+                CompanyMembership.user_id == shared_user_id,
+                CompanyMembership.company_id != company_id,
+                CompanyMembership.active.is_(True),
+                CompanyMembership.status == "active",
+                Company.active.is_(True),
+            )
+            .order_by(Company.name.asc(), Company.id.asc())
+            .first()
+        )
+        if next_membership is None:
+            next_membership = (
+                CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+                .filter(
+                    CompanyMembership.user_id == shared_user_id,
+                    CompanyMembership.company_id != company_id,
+                    Company.active.is_(True),
+                )
+                .order_by(Company.name.asc(), Company.id.asc())
+                .first()
+            )
+        if next_membership is not None:
+            shared_user.company_id = next_membership.company_id
+            shared_user.role = next_membership.role or "user"
+            shared_user.permissions_json = next_membership.permissions_json or "[]"
+
+    _safe_delete_in(NotificationReadState, "user_id", user_ids_to_delete)
+    _safe_delete_in(PasswordResetToken, "user_id", user_ids_to_delete)
+    _safe_delete_in(User, "id", user_ids_to_delete)
 
     reflected_tables = {}
 
@@ -432,7 +483,6 @@ def _hard_delete_company(company):
         "products",
         "clients",
         "suppliers",
-        "users",
     ]:
         _raw_delete_company_rows(table_name)
 
@@ -447,7 +497,7 @@ def _hard_delete_company(company):
 
     # Final defensive pass for legacy/optional tables that may reference tenant entities without company_id.
     fk_value_sets = {
-        "users": set(user_ids),
+        "users": set(user_ids_to_delete),
         "products": set(product_ids),
         "clients": set(client_ids),
         "suppliers": set(supplier_ids),
