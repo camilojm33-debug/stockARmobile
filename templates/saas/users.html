@@ -73,6 +73,8 @@
           {% if user.can_manage_membership %}
           {% if user.invitation_pending %}
           <span class="badge text-bg-warning">Invitación pendiente</span>
+          {% elif user.invitation_expired %}
+          <span class="badge text-bg-secondary">Invitación vencida</span>
           {% else %}
           <span class="badge {{ 'text-bg-success' if user.membership_active else 'text-bg-secondary' }}">{{ 'Habilitado' if user.membership_active else 'Revocado' }}</span>
           {% endif %}
@@ -100,14 +102,14 @@
               <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
             </form>
-            <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Cancelar esta invitación?' if user.invitation_pending else ('¿Desactivar el acceso a esta empresa?' if user.membership_active else '¿Habilitar el acceso a esta empresa?') }}')">
+            <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Cancelar esta invitación?' if user.invitation_pending or user.invitation_expired else ('¿Desactivar el acceso a esta empresa?' if user.membership_active else '¿Habilitar el acceso a esta empresa?') }}')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
               <input type="hidden" name="company_id" value="{{ user.company_id }}">
-              <input type="hidden" name="active" value="{{ '0' if user.invitation_pending or user.membership_active else '1' }}">
+              <input type="hidden" name="active" value="{{ '0' if user.invitation_pending or user.invitation_expired or user.membership_active else '1' }}">
               <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
-              <button class="btn btn-sm {{ 'btn-outline-warning' if user.invitation_pending else ('btn-outline-danger' if user.membership_active else 'btn-outline-success') }}" type="submit" {% if not user.membership_active and not user.account_active %}disabled title="La cuenta global está desactivada"{% endif %}>
-                {{ 'Cancelar invitación' if user.invitation_pending else ('Quitar acceso' if user.membership_active else 'Habilitar acceso') }}
+              <button class="btn btn-sm {{ 'btn-outline-warning' if user.invitation_pending or user.invitation_expired else ('btn-outline-danger' if user.membership_active else 'btn-outline-success') }}" type="submit" {% if not user.membership_active and not user.account_active %}disabled title="La cuenta global está desactivada"{% endif %}>
+                {{ 'Cancelar invitación' if user.invitation_pending or user.invitation_expired else ('Quitar acceso' if user.membership_active else 'Habilitar acceso') }}
               </button>
             </form>
           </div>
