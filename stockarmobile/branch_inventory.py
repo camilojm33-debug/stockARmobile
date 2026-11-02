@@ -166,13 +166,9 @@ def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type
     row.stock = updated
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if update_company_total:
-        if allow_legacy_precision:
-            aggregate = reconcile_company_stock_total(product)
-        else:
-            aggregate = Decimal(str(product.stock or 0)) + delta
-            if aggregate < 0:
-                raise ValueError(f"El stock consolidado no puede quedar negativo para {product.name}.")
-            product.stock = float(aggregate)
+        aggregate = reconcile_company_stock_total(product)
+        if aggregate < 0:
+            raise ValueError(f"El stock consolidado no puede quedar negativo para {product.name}.")
     db.session.add(BranchStockMovement(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id),
         movement_type=movement_type, quantity_delta=delta, stock_after=updated,
         source_type=source_type, source_id=source_id, user_id=user_id, note=note))
