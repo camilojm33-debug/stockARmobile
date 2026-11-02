@@ -82,7 +82,7 @@
                   <select name="product_id" class="form-select form-select-sm sale-line-product" required>
                     <option value="">Selecciona un producto</option>
                     {% for product in products %}
-                    <option value="{{ product.id }}" data-unit="{{ product.unit_measure or 'u' }}" data-stock="{{ product.stock or 0 }}" {% if item.product_id == product.id %}selected{% endif %}>
+                    <option value="{{ product.id }}" data-unit="{{ product.unit_measure or 'u' }}" data-stock="{{ product.branch_stock_display if product.branch_stock_display is defined else product.stock or 0 }}" {% if item.product_id == product.id %}selected{% endif %}>
                       {{ product.name }} · {{ product.unit_measure or 'u' }} · stock {{ "%.3g"|format(product.stock or 0) }}
                     </option>
                     {% endfor %}
@@ -105,7 +105,7 @@
               <select name="product_id" class="form-select form-select-sm sale-line-product" required>
                 <option value="">Selecciona un producto</option>
                 {% for product in products %}
-                <option value="{{ product.id }}" data-unit="{{ product.unit_measure or 'u' }}" data-stock="{{ product.stock or 0 }}">
+                <option value="{{ product.id }}" data-unit="{{ product.unit_measure or 'u' }}" data-stock="{{ product.branch_stock_display if product.branch_stock_display is defined else product.stock or 0 }}">
                   {{ product.name }} · {{ product.unit_measure or 'u' }} · stock {{ "%.3g"|format(product.stock or 0) }}
                 </option>
                 {% endfor %}
