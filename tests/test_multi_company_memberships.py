@@ -81,9 +81,10 @@ def test_one_login_can_switch_between_company_memberships_with_independent_roles
             assert persisted.role == "admin"
             assert persisted.permissions_json == '["sales"]'
 
-        assert UserCompanyMembership.query.filter_by(
-            user_id=user_id
-        ).count() == 2
+        with app.app_context():
+            assert UserCompanyMembership.query.filter_by(
+                user_id=user_id
+            ).count() == 2
 
 
 def test_revoked_primary_company_is_not_reactivated_and_other_membership_is_selected(app):
