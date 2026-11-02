@@ -177,6 +177,39 @@ def test_business_documents_use_the_pos_assigned_to_the_sale_branch(app):
         db.session.rollback()
 
 
+def test_casa_central_keeps_legacy_pos_after_adding_second_branch(app):
+    from types import SimpleNamespace
+    from services.business_billing_service import BusinessBillingService
+
+    with app.app_context():
+        company = _company("Empresa POS legado")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        _branch(company, "Sucursal Norte", "NORTE")
+        sale = SimpleNamespace(
+            id=9003,
+            branch_id=central.id,
+            tipo_comprobante="factura_b",
+            customer="Cliente central",
+            total_amount=Decimal("250.00"),
+            comprobante_emitido=False,
+        )
+        # A legacy company may have a working active POS without a branch mapping.
+        config = {
+            "active_pos": "00007",
+            "points_of_sale": [
+                {"number": "00007", "description": "Punto de venta histórico", "active": True},
+            ],
+            "numbering": {"factura_b": "00007-00000124"},
+            "emission": {"currency": "ARS"},
+        }
+        document = BusinessBillingService.issue_sale_document(
+            db.session, company=company, sale=sale, config=config
+        )
+        assert document.pos_number == "00007"
+        assert document.branch_id == central.id
+        db.session.rollback()
+
+
 def test_business_documents_refuse_unmapped_branch_pos(app):
     from types import SimpleNamespace
     from services.business_billing_service import BusinessBillingService
