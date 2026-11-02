@@ -469,6 +469,8 @@ class BackupService:
     def _payload_for_company(company_id: int):
         from app import (
             BranchStock,
+            BranchStockMovement,
+            BranchStockTransfer,
             CashMovement,
             CashSession,
             Client,
@@ -497,6 +499,12 @@ class BackupService:
         products = Product.query.filter_by(company_id=company_id).order_by(Product.id.asc()).all()
         branch_stock_rows = BranchStock.query.filter_by(company_id=company_id).order_by(
             BranchStock.branch_id.asc(), BranchStock.product_id.asc()
+        ).all()
+        branch_stock_movements = BranchStockMovement.query.filter_by(company_id=company_id).order_by(
+            BranchStockMovement.id.asc()
+        ).all()
+        branch_stock_transfers = BranchStockTransfer.query.filter_by(company_id=company_id).order_by(
+            BranchStockTransfer.id.asc()
         ).all()
         clients = Client.query.filter_by(company_id=company_id).order_by(Client.id.asc()).all()
         suppliers = Supplier.query.filter_by(company_id=company_id).order_by(Supplier.id.asc()).all()
@@ -553,6 +561,8 @@ class BackupService:
             "users": base_payload["users"],
             "products": base_payload["products"],
             "branch_stock": [BackupService._row_to_dict(row) for row in branch_stock_rows],
+            "branch_stock_movements": [BackupService._row_to_dict(row) for row in branch_stock_movements],
+            "branch_stock_transfers": [BackupService._row_to_dict(row) for row in branch_stock_transfers],
             "categories": categories,
             "clients": [BackupService._row_to_dict(row) for row in clients],
             "suppliers": [BackupService._row_to_dict(row) for row in suppliers],
@@ -612,6 +622,8 @@ class BackupService:
             "cash_movements",
             "expenses",
             "branch_stock",
+            "branch_stock_movements",
+            "branch_stock_transfers",
         )
         row_sections = tenant_sections + ("sale_items", "purchase_items")
         for section in row_sections:
@@ -900,7 +912,7 @@ class BackupService:
         other branches are set to zero rather than silently duplicating inventory.
         """
         from decimal import Decimal, InvalidOperation
-        from app import Branch, BranchStock, Product, db
+        from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Product, User, db
 
         company_id = int(company_id)
         product_id_map = {int(key): int(value) for key, value in (product_id_map or {}).items()}
@@ -1000,6 +1012,91 @@ class BackupService:
         total_by_product = {int(product_id): Decimal(str(total or 0)) for product_id, total in totals}
         for product in products.values():
             product.stock = float(total_by_product.get(int(product.id), Decimal("0.000")))
+
+        # Replace the movement/transfer ledger along with the restored balances.
+        # Backups created before multisucursal omit these collections and leave
+        # the existing ledger untouched for backwards compatibility.
+        has_history_snapshot = (
+            isinstance(payload, dict)
+            and "branch_stock_movements" in payload
+            and "branch_stock_transfers" in payload
+        )
+        if has_history_snapshot:
+            raw_movements = payload.get("branch_stock_movements") or []
+            raw_transfers = payload.get("branch_stock_transfers") or []
+            if not isinstance(raw_movements, list) or not isinstance(raw_transfers, list):
+                raise ValueError("El respaldo contiene historiales de sucursal inválidos.")
+
+            BranchStockMovement.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            BranchStockTransfer.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            db.session.flush()
+
+            transfer_id_map = {}
+            for raw in raw_transfers:
+                if not isinstance(raw, dict):
+                    raise ValueError("El respaldo contiene una transferencia inválida.")
+                try:
+                    row_company = int(raw.get("company_id") or company_id)
+                    source_branch_id = int(raw.get("source_branch_id"))
+                    target_branch_id = int(raw.get("target_branch_id"))
+                    source_product_id = int(raw.get("product_id"))
+                    product_id = product_id_map.get(source_product_id, source_product_id)
+                    quantity = Decimal(str(raw.get("quantity") or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene datos de transferencia inválidos.") from None
+                if row_company != company_id or source_branch_id not in branches or target_branch_id not in branches:
+                    raise ValueError("La transferencia pertenece a otra empresa o sucursal.")
+                if source_branch_id == target_branch_id or product_id not in products or not quantity.is_finite() or quantity <= 0:
+                    raise ValueError("El respaldo contiene una transferencia inconsistente.")
+                candidate = BackupService._deserialize_rows(BranchStockTransfer, [raw])[0]
+                incoming_id = candidate.get("id")
+                if incoming_id is not None and db.session.get(BranchStockTransfer, int(incoming_id)) is not None:
+                    candidate.pop("id", None)
+                candidate["company_id"] = company_id
+                candidate["source_branch_id"] = source_branch_id
+                candidate["target_branch_id"] = target_branch_id
+                candidate["product_id"] = product_id
+                candidate["quantity"] = quantity
+                created_by = candidate.get("created_by_user_id")
+                if created_by is not None and User.query.filter_by(id=int(created_by), company_id=company_id).first() is None:
+                    candidate["created_by_user_id"] = None
+                transfer = BranchStockTransfer(**candidate)
+                db.session.add(transfer)
+                db.session.flush()
+                if incoming_id is not None:
+                    transfer_id_map[int(incoming_id)] = int(transfer.id)
+
+            for raw in raw_movements:
+                if not isinstance(raw, dict):
+                    raise ValueError("El respaldo contiene un movimiento inválido.")
+                try:
+                    row_company = int(raw.get("company_id") or company_id)
+                    branch_id = int(raw.get("branch_id"))
+                    source_product_id = int(raw.get("product_id"))
+                    product_id = product_id_map.get(source_product_id, source_product_id)
+                    delta = Decimal(str(raw.get("quantity_delta") or 0))
+                    stock_after = Decimal(str(raw.get("stock_after") or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene un movimiento de inventario inválido.") from None
+                if row_company != company_id or branch_id not in branches or product_id not in products:
+                    raise ValueError("El movimiento pertenece a otra empresa, sucursal o producto.")
+                if not delta.is_finite() or not stock_after.is_finite() or stock_after < 0:
+                    raise ValueError("El respaldo contiene cantidades de movimiento inconsistentes.")
+                candidate = BackupService._deserialize_rows(BranchStockMovement, [raw])[0]
+                incoming_id = candidate.get("id")
+                if incoming_id is not None and db.session.get(BranchStockMovement, int(incoming_id)) is not None:
+                    candidate.pop("id", None)
+                candidate["company_id"] = company_id
+                candidate["branch_id"] = branch_id
+                candidate["product_id"] = product_id
+                candidate["quantity_delta"] = delta
+                candidate["stock_after"] = stock_after
+                if str(candidate.get("source_type") or "") == "branch_transfer" and candidate.get("source_id") is not None:
+                    candidate["source_id"] = transfer_id_map.get(int(candidate["source_id"]))
+                actor_id = candidate.get("user_id")
+                if actor_id is not None and User.query.filter_by(id=int(actor_id), company_id=company_id).first() is None:
+                    candidate["user_id"] = None
+                db.session.add(BranchStockMovement(**candidate))
 
     @staticmethod
     def _restore_employee_rows(db_session, *, company_id: int, rows):
