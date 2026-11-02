@@ -148,15 +148,15 @@ class ProductRecommendationsTool(AgentTool):
             stock_expr = Product.stock
         if category:
             query = query.filter(Product.category.ilike(f"%{str(category).strip()}%"))
-        if restricted:
-            for product in query.all():
-                from stockarmobile.branch_inventory import available_stock
-                product.branch_stock_display = available_stock(product, branch_id)
         if product_query:
             like = f"%{str(product_query).strip()}%"
             candidates = query.filter(Product.name.ilike(like)).order_by(stock_expr.desc(), Product.name.asc()).limit(limit).all()
         else:
             candidates = query.order_by(stock_expr.desc(), Product.name.asc()).limit(limit).all()
+        if restricted:
+            from stockarmobile.branch_inventory import available_stock
+            for product in candidates:
+                product.branch_stock_display = available_stock(product, branch_id)
         return {
             "success": True,
             "items": [
