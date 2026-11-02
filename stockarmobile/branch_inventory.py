@@ -137,7 +137,6 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     if new != old:
         db.session.add(BranchStockMovement(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id),
             movement_type=movement_type, quantity_delta=new-old, stock_after=new, user_id=user_id, note=note))
-    reconcile_company_stock_total(product)
     return row
 
 
