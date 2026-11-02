@@ -5693,6 +5693,15 @@ def users_update_status(user_id):
             flash("No se puede desactivar al único administrador activo de esa empresa.", "warning")
             return _redirect_back("saas.users_panel")
 
+    if new_active:
+        from services.plan_usage_service import PlanUsageService
+        allowed, limit_message = PlanUsageService.can_create(
+            company_id, PlanUsageService.RESOURCE_USERS
+        )
+        if not allowed:
+            flash(limit_message, "warning")
+            return _redirect_back("saas.users_panel")
+
     previous = bool(membership.active)
     membership.active = new_active
     if new_active and membership.accepted_at is not None:
@@ -5725,7 +5734,7 @@ def users_update_status(user_id):
 @bp.route("/users/<int:user_id>/account-status", methods=["POST"])
 @superadmin_required
 def users_update_account_status(user_id):
-    from app import AuditLog, User, UserCompanyMembership, db
+    from app import AuditLog, Company, User, UserCompanyMembership, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5745,6 +5754,23 @@ def users_update_account_status(user_id):
     if user.active == new_active:
         flash("La cuenta ya tiene ese estado global.", "info")
         return _redirect_back("saas.users_panel")
+
+    if new_active:
+        from services.plan_usage_service import PlanUsageService
+        active_memberships = UserCompanyMembership.query.filter_by(
+            user_id=user.id, active=True
+        ).all()
+        for membership in active_memberships:
+            allowed, limit_message = PlanUsageService.can_create(
+                membership.company_id, PlanUsageService.RESOURCE_USERS
+            )
+            if not allowed:
+                company = db.session.get(Company, membership.company_id)
+                flash(
+                    f"No se puede reactivar la cuenta global: la empresa {company.name if company else membership.company_id} alcanzó su límite. {limit_message}",
+                    "warning",
+                )
+                return _redirect_back("saas.users_panel")
 
     if not new_active:
         admin_memberships = UserCompanyMembership.query.filter(
