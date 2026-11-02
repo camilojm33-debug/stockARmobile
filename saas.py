@@ -991,7 +991,10 @@ def index():
             "active": (request.form.get("active") or "1") == "1",
         }
         if payload["name"]:
-            plan = Plan.query.filter_by(code=payload["code"]).first() if payload["code"] else None
+            if plan is not None and not request.form.get("max_branches"):
+                # Older Superadmin plan forms do not submit this new field;
+                # preserve the configured multisucursal entitlement.
+                payload["max_branches"] = max(1, int(getattr(plan, "max_branches", 1) or 1))
             if plan is None:
                 db.session.add(Plan(**payload))
                 flash("Plan creado.", "success")
