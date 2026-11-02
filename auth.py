@@ -61,6 +61,8 @@ def _login_user_and_bind_company(user, remember=False, preserve_active_company=F
             preserved_session[key] = session.get(key)
     session.clear()
     login_user(user, remember=remember)
+    from stockarmobile.company_memberships import bind_active_company_context
+    bind_active_company_context(user)
     session.update({key: value for key, value in preserved_session.items() if value is not None})
 
 
@@ -442,7 +444,9 @@ def activate_commercial(token):
         checkout.activation_token_encrypted = None
         checkout.updated_at = _utcnow()
         db.session.commit()
-        _login_user_and_bind_company(user, remember=True)
+        from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(checkout.company_id)
+        _login_user_and_bind_company(user, remember=True, preserve_active_company=True)
         flash("Tu empresa fue activada. Bienvenido a StockArMobile.", "success")
         return redirect(url_for("dashboard.index"))
 
