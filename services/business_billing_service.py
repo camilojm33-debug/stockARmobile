@@ -373,7 +373,7 @@ class BusinessBillingService:
             selected_pos = next((row for row in matching_points if row.get("active")), matching_points[0])
         else:
             active_branch_count = Branch.query.filter_by(company_id=company.id, active=True).count()
-            if branch is not None and active_branch_count > 1:
+            if branch is not None and not branch.is_default and active_branch_count > 1:
                 raise ValueError(
                     f"No hay un punto de venta fiscal asignado a {branch.name}. "
                     "Configurá un punto de venta con el nombre de esa sucursal antes de emitir comprobantes."
