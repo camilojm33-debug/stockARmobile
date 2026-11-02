@@ -1209,6 +1209,16 @@ class BackupService:
                 user, membership = user_pair
             else:
                 user = db_session.get(User, int(incoming_id)) if incoming_id is not None else None
+                if user is not None:
+                    # Backup primary keys are tenant-local snapshots, while live
+                    # user IDs are global. Never bind a different person's account
+                    # merely because its numeric ID happens to collide.
+                    same_identity = (
+                        str(user.username or "").strip().lower() == username.lower()
+                        and str(user.email or "").strip().lower() == email
+                    )
+                    if not same_identity:
+                        user = None
                 if user is None:
                     by_username = User.query.filter_by(username=username).first() if username else None
                     by_email = User.query.filter_by(email=email).first() if email else None
@@ -1228,10 +1238,11 @@ class BackupService:
                     if field in row:
                         setattr(user, field, row.get(field))
                 if membership is None:
-                    ensure_membership(
+                    restored_membership = ensure_membership(
                         db_session, user, company_id,
                         role="user", permissions_json="[]", active=False,
                     )
+                    restored_membership.invitation_acceptance_required = True
                 continue
 
             if not username or not email or "@" not in email:
@@ -1260,10 +1271,11 @@ class BackupService:
             restored_user = User.query.filter_by(username=username).first()
             if restored_user is None:
                 raise ValueError("No se pudo recuperar la cuenta del empleado desde el respaldo.")
-            ensure_membership(
+            restored_membership = ensure_membership(
                 db_session, restored_user, company_id,
                 role="user", permissions_json="[]", active=False,
             )
+            restored_membership.invitation_acceptance_required = True
 
     @staticmethod
     def _restore_full_company_dataset(db_session, model, rows):
