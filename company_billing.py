@@ -4295,7 +4295,7 @@ def company_settings_user_update(user_id):
 @bp.route("/company-settings/users/<int:user_id>/role", methods=["POST"])
 @company_admin_required
 def company_settings_user_role_update(user_id):
-    from app import UserBranchAccess, UserCompanyMembership, db, record_audit
+    from app import UserCompanyMembership, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4351,7 +4351,7 @@ def company_settings_user_permissions(user_id):
 @bp.route("/company-settings/users/<int:user_id>/delete", methods=["POST"])
 @company_admin_required
 def company_settings_user_delete(user_id):
-    from app import UserCompanyMembership, db, record_audit
+    from app import UserBranchAccess, UserCompanyMembership, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
