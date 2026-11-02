@@ -92,15 +92,18 @@ def bind_active_company_context(user):
 
     membership = get_membership(user.id, selected_company_id, active_only=True)
     if membership is None and selected_company_id == int(base_company_id):
-        # Compatibility bridge for old/test-created users not yet backfilled.
-        membership = ensure_membership(
-            db.session,
-            user,
-            int(base_company_id),
-            role=getattr(user, "role", None),
-            permissions_json=getattr(user, "permissions_json", None),
-            active=bool(getattr(user, "active", True)),
-        )
+        # Only create the compatibility row when no membership exists at all.
+        # Never reactivate a deliberately revoked membership as a side effect of login.
+        legacy_membership = get_membership(user.id, int(base_company_id), active_only=False)
+        if legacy_membership is None:
+            membership = ensure_membership(
+                db.session,
+                user,
+                int(base_company_id),
+                role=getattr(user, "role", None),
+                permissions_json=getattr(user, "permissions_json", None),
+                active=bool(getattr(user, "active", True)),
+            )
     if membership is None:
         # Prefer the original tenant when active; otherwise let the account
         # continue through another explicitly granted company membership.
@@ -132,9 +135,26 @@ def bind_active_company_context(user):
         return None
 
     company = db.session.get(Company, selected_company_id)
-    if company is None:
-        session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
-        return None
+    if company is None or not bool(getattr(company, "active", False)):
+        membership = (
+            UserCompanyMembership.query
+            .join(Company, Company.id == UserCompanyMembership.company_id)
+            .filter(
+                UserCompanyMembership.user_id == int(user.id),
+                UserCompanyMembership.active.is_(True),
+                Company.active.is_(True),
+            )
+            .order_by(UserCompanyMembership.active.desc(), UserCompanyMembership.company_id.asc())
+            .first()
+        )
+        if membership is None:
+            session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
+            set_committed_value(user, "company_id", None)
+            set_committed_value(user, "role", "user")
+            set_committed_value(user, "permissions_json", "[]")
+            return None
+        selected_company_id = int(membership.company_id)
+        company = db.session.get(Company, selected_company_id)
 
     session[ACTIVE_COMPANY_SESSION_KEY] = selected_company_id
     set_committed_value(user, "company_id", selected_company_id)
