@@ -465,7 +465,7 @@ def test_ai_marketing_tools_use_employee_branch_inventory_and_sales(app):
     from datetime import datetime
     from flask_login import login_user
     from app import BranchStock, Sale, UserBranchAccess
-    from services.ai_agent.business_intelligence import ProductRecommendationTool, InventoryTurnoverTool
+    from services.ai_agent.business_intelligence import ProductRecommendationsTool, InventoryTurnoverTool
     from services.ai_agent.tools.analyst_marketing import _branch_stock_products, _scope_sale_query
 
     with app.app_context():
@@ -494,7 +494,7 @@ def test_ai_marketing_tools_use_employee_branch_inventory_and_sales(app):
 
         with app.test_request_context("/"):
             login_user(employee)
-            recommended = ProductRecommendationTool(company_id=company.id).execute()
+            recommended = ProductRecommendationsTool(company_id=company.id).execute()
             assert recommended["success"] is True
             assert recommended["items"][0]["stock"] == 3.0
             local_rows = _branch_stock_products(company.id, limit=20)
