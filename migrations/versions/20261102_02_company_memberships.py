@@ -38,7 +38,7 @@ def upgrade():
     legacy_users = bind.execute(
         sa.text(
             "SELECT id, company_id, role, permissions_json, active "
-            "FROM users WHERE company_id IS NOT NULL ORDER BY id"
+            "FROM users WHERE company_id IS NOT NULL AND lower(coalesce(role, '')) != 'superadmin' ORDER BY id"
         )
     ).mappings().all()
     for row in legacy_users:
