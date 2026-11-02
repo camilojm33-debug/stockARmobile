@@ -4431,7 +4431,6 @@ def company_settings_user_create():
             flash("Ese nombre de usuario ya existe.", "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-        temp_password = _temporary_password()
         user = User(
             username=username,
             email=email,
@@ -4445,7 +4444,8 @@ def company_settings_user_create():
             parts = full_name.split(" ", 1)
             user.first_name = parts[0][:80]
             user.last_name = (parts[1] if len(parts) > 1 else "")[:80] or None
-        user.set_password(temp_password)
+        # The invitation link will let the person define their own password.
+        user.set_password(secrets.token_urlsafe(32))
         user.must_change_password = True
         db.session.add(user)
         db.session.flush()
@@ -4460,6 +4460,7 @@ def company_settings_user_create():
         company=company,
         role=role,
         permissions_json="[]",
+        password_setup_required=not is_existing_account,
     )
     record_audit(
         action="company_membership_invited",
@@ -4470,13 +4471,9 @@ def company_settings_user_create():
     db.session.commit()
 
     if email_sent:
-        message = f"Invitación enviada a {email}. La persona debe iniciar sesión y aceptarla dentro de 7 días."
-        if not is_existing_account:
-            message += f" Contraseña temporal para el primer ingreso: {temp_password}."
+        message = f"Invitación enviada a {email}. La persona debe aceptarla dentro de 7 días."
     else:
         message = f"No se pudo enviar el correo automáticamente. Compartí este enlace de invitación: {invitation_url}"
-        if not is_existing_account:
-            message += f" Contraseña temporal para el primer ingreso: {temp_password}."
     flash(message, "success" if email_sent else "warning")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
