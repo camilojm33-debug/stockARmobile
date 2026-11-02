@@ -5514,6 +5514,12 @@ def users_panel():
             active=bool(user.active and membership.active),
             membership_active=bool(membership.active),
             account_active=bool(user.active),
+            invitation_pending=bool(
+                membership.invitation_token_hash
+                and membership.invitation_expires_at
+                and membership.invitation_expires_at > utcnow()
+                and not membership.active
+            ),
             can_manage_membership=True,
         ))
 
@@ -5551,6 +5557,7 @@ def users_panel():
                 active=bool(user.active),
                 membership_active=None,
                 account_active=bool(user.active),
+                invitation_pending=False,
                 can_manage_membership=False,
             ))
 
@@ -5627,6 +5634,29 @@ def users_update_status(user_id):
         flash("Estado inválido.", "danger")
         return _redirect_back("saas.users_panel")
     new_active = desired == "1"
+    invitation_pending = bool(
+        membership.invitation_token_hash
+        and membership.invitation_expires_at
+        and membership.invitation_expires_at > utcnow()
+        and not membership.active
+    )
+    if invitation_pending:
+        if new_active:
+            flash("La persona debe aceptar la invitación antes de habilitar su acceso.", "warning")
+            return _redirect_back("saas.users_panel")
+        membership.invitation_token_hash = None
+        membership.invitation_expires_at = None
+        db.session.add(AuditLog(
+            user_id=current_user.id,
+            company_id=company_id,
+            action="superadmin_membership_invitation_cancelled",
+            entity="user",
+            entity_id=user.id,
+            detail="Invitación de empresa cancelada por SuperAdmin.",
+        ))
+        db.session.commit()
+        flash("Invitación cancelada.", "success")
+        return _redirect_back("saas.users_panel")
     if new_active and not user.active:
         flash("La cuenta global está desactivada. Reactivá primero la cuenta para habilitar sus empresas.", "warning")
         return _redirect_back("saas.users_panel")
