@@ -1213,8 +1213,14 @@ class BackupService:
                 if by_username is not None and by_email is not None and by_username.id != by_email.id:
                     raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
                 user = by_username or by_email
-                if user is not None and (getattr(user, "role", None) or "").strip().lower() == "superadmin":
-                    raise ValueError("El backup no puede vincular una cuenta SuperAdmin.")
+                if user is not None:
+                    if (user.username or "").strip() != username or (user.email or "").strip().lower() != email:
+                        raise ValueError(
+                            "El backup identifica una cuenta existente, pero su usuario/email no coincide. "
+                            "No se vinculó una identidad diferente."
+                        )
+                    if (getattr(user, "role", None) or "").strip().lower() == "superadmin":
+                        raise ValueError("El backup no puede vincular una cuenta SuperAdmin.")
 
             if user is not None:
                 # The same global identity can be shared by tenants. Restore only
