@@ -32,6 +32,7 @@ def apply_membership_context(user, membership):
     user.company_membership_active = bool(membership.active and membership.status == "active")
     user.company_membership_role = membership.role or "user"
     user.company_membership_id = int(membership.id)
+    user.company_membership_missing = False
     return user
 
 
