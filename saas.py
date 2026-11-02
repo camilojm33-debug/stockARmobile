@@ -5719,7 +5719,7 @@ def users_update_status(user_id):
 
     previous = bool(membership.active)
     membership.active = new_active
-    if new_active and membership.accepted_at is not None:
+    if new_active and not membership.invitation_acceptance_required:
         default_branch = Branch.query.filter_by(
             company_id=company_id, is_default=True, active=True
         ).first()
