@@ -4407,16 +4407,24 @@ def company_settings_user_create():
     user.must_change_password = True
     db.session.add(user)
     db.session.flush()
-    membership = CompanyMembership(
-        user_id=user.id,
-        company_id=company.id,
-        role=role,
-        permissions_json="[]",
-        active=True,
-        status="active",
-        accepted_at=utcnow(),
-    )
-    db.session.add(membership)
+    membership = CompanyMembership.query.filter_by(user_id=user.id, company_id=company.id).first()
+    if membership is None:
+        membership = CompanyMembership(
+            user_id=user.id,
+            company_id=company.id,
+            role=role,
+            permissions_json="[]",
+            active=True,
+            status="active",
+            accepted_at=utcnow(),
+        )
+        db.session.add(membership)
+    else:
+        membership.role = role
+        membership.permissions_json = "[]"
+        membership.active = True
+        membership.status = "active"
+        membership.accepted_at = utcnow()
     default_branch = Branch.query.filter_by(company_id=company.id, is_default=True, active=True).first()
     if default_branch is not None:
         db.session.add(UserBranchAccess(company_id=company.id, user_id=user.id, branch_id=default_branch.id))
