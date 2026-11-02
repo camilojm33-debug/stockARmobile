@@ -77,9 +77,13 @@ jobs:
   postgres-backup-restore:
     name: PostgreSQL backup/restore regression tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       PYTHONPATH: .
       DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/stockarmobile_test
+      # Bound lock waits and long SQL statements in this disposable CI database.
+      PGOPTIONS: "-c lock_timeout=30000 -c statement_timeout=300000"
+      PGCONNECT_TIMEOUT: "10"
     services:
       postgres:
         image: postgres:18

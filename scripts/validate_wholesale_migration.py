@@ -7,7 +7,9 @@ equivalent to the pre-wholesale state, stamps that revision, and runs the new mi
 
 from __future__ import annotations
 
+import faulthandler
 import os
+import time
 from sqlalchemy import inspect, text
 
 from app import Company, Plan, Product, User, app, db
@@ -18,18 +20,32 @@ BASE_REVISION = "20261024_01_release_readiness"
 HEAD_REVISION = "20261101_01_multibranch"
 
 
+_VALIDATION_STARTED_AT = time.monotonic()
+
+
+def _progress(message: str) -> None:
+    elapsed = time.monotonic() - _VALIDATION_STARTED_AT
+    print(f"[postgres-validation +{elapsed:0.1f}s] {message}", flush=True)
+
+
 def main() -> None:
     if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
         raise SystemExit("This destructive schema-validation script is restricted to an isolated GitHub Actions database.")
 
+    _progress("BEGIN: isolated PostgreSQL migration validation")
     with app.app_context():
+        _progress("Connected to the disposable PostgreSQL database")
         # CI supplies a disposable PostgreSQL service container. Start from an empty
         # schema, create the current model shape, then remove only fields introduced
         # by wholesale pricing to simulate the schema immediately before the migration.
+        _progress("Resetting disposable schema: dropping Alembic version table")
         with db.engine.begin() as connection:
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
+        _progress("Dropping ORM tables")
         db.drop_all()
+        _progress("Creating current ORM schema")
         db.create_all()
+        _progress("Current ORM schema created")
 
         # Emulate an existing Negocio plan so the data migration is validated,
         # not merely the schema revision.
@@ -62,10 +78,12 @@ def main() -> None:
                           active=True, company_id=company.id)
         db.session.add_all([user, product])
         db.session.commit()
+        _progress("Seeded representative company, Premium/Negocio plans, user and product")
         expected_company_id = company.id
         expected_user_id = user.id
         expected_product_id = product.id
 
+        _progress("Rewinding disposable schema to the pre-feature state")
         with db.engine.begin() as connection:
             connection.execute(text("DROP TABLE IF EXISTS price_list_discount_rules CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
@@ -88,11 +106,18 @@ def main() -> None:
                     )
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
 
+            connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
+        _progress("Schema rewind complete")
+
         db.session.remove()
+        _progress(f"Stamping baseline revision {BASE_REVISION}")
         stamp(directory="migrations", revision=BASE_REVISION)
+        _progress(f"Baseline stamped; applying migrations through {HEAD_REVISION}")
         upgrade(directory="migrations", revision="head")
+        _progress("Alembic upgrade returned successfully")
         db.session.remove()
 
+        _progress("Inspecting migrated schema, columns, tables and constraints")
         inspector = inspect(db.engine)
         expected_columns = {
             "clients": {"customer_type", "price_list_id"},
@@ -177,11 +202,19 @@ def main() -> None:
         if any(status == "picked_up" for status in pickup_statuses):
             raise AssertionError("Legacy quote deliveries were incorrectly classified as picked up.")
 
-        print("PASS: wholesale, pickup-tracking and multisucursal migrations upgraded the pre-feature PostgreSQL schema.")
-        print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.")
-        print("PASS: existing Negocio plan gains wholesale_pricing; Premium keeps a configurable limit of five branches.")
-        print("PASS: existing tenants, users and product stock are migrated to Casa central.")
+        _progress("All schema and data assertions passed")
+        print("PASS: wholesale, pickup-tracking and multisucursal migrations upgraded the pre-feature PostgreSQL schema.", flush=True)
+        print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.", flush=True)
+        print("PASS: existing Negocio plan gains wholesale_pricing; Premium keeps a configurable limit of five branches.", flush=True)
+        print("PASS: existing tenants, users and product stock are migrated to Casa central.", flush=True)
+        _progress("END: PostgreSQL migration validation passed")
 
 
 if __name__ == "__main__":
-    main()
+    # Periodically emit Python stacks if a PostgreSQL operation stalls.
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(90, repeat=True)
+    try:
+        main()
+    finally:
+        faulthandler.cancel_dump_traceback_later()
