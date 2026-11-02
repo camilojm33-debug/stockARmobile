@@ -738,7 +738,7 @@ def switch_company():
 def accept_company_invitation(token):
     """Accept a one-time invitation after authenticating with the invited email."""
     import hashlib
-    from app import Branch, Company, CompanyMembership, UserBranchAccess, db, record_audit, utcnow
+    from app import Branch, Company, CompanyMembership, User, UserBranchAccess, db, record_audit, utcnow
     from stockarmobile.branch_context import SESSION_KEY as ACTIVE_BRANCH_SESSION_KEY
     from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
 
