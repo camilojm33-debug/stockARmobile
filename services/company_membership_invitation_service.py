@@ -58,6 +58,7 @@ class CompanyMembershipInvitationService:
             company_name=company.name,
             role=role,
             invitation_url=invitation_url,
+            password_setup_required=password_setup_required,
         )
         if current_app.testing:
             current_app.config["_LAST_COMPANY_INVITATION_TOKEN"] = raw_token
@@ -77,7 +78,10 @@ class CompanyMembershipInvitationService:
         )
 
     @staticmethod
-    def send_invitation_email(*, to_email: str, company_name: str, role: str, invitation_url: str):
+    def send_invitation_email(
+        *, to_email: str, company_name: str, role: str,
+        invitation_url: str, password_setup_required: bool = False,
+    ):
         recipient = str(to_email or "").strip().lower()
         if not recipient:
             return False
@@ -86,12 +90,21 @@ class CompanyMembershipInvitationService:
         message["Subject"] = f"Invitación para acceder a {company_name} - StockArMobile"
         message["From"] = current_app.config.get("SMTP_FROM_EMAIL") or "no-reply@stockarmobile.com"
         message["To"] = recipient
+        if password_setup_required:
+            access_instructions = (
+                "Esta invitación crea tu cuenta nueva. Abrí el enlace para establecer tu contraseña "
+                "y activar el acceso a la empresa.\n\n"
+            )
+        else:
+            access_instructions = (
+                "Iniciá sesión con tu cuenta de StockArMobile y abrí el enlace para aceptar "
+                "el acceso a esta empresa.\n\n"
+            )
         message.set_content(
             (
                 f"Te invitaron a trabajar en {company_name} desde StockArMobile.\n\n"
                 f"Rol asignado: {'Administrador' if role == 'admin' else 'Empleado'}.\n\n"
-                "Para aceptar la invitación, iniciá sesión con tu cuenta de StockArMobile "
-                "y abrí el siguiente enlace:\n"
+                f"{access_instructions}"
                 f"{invitation_url}\n\n"
                 "El enlace vence en 7 días. Si no esperabas esta invitación, podés ignorar este correo."
             )
