@@ -291,6 +291,7 @@ def _hard_delete_company(company):
         Supplier,
         SupportTicket,
         User,
+        UserCompanyMembership,
         db,
     )
 
@@ -325,7 +326,34 @@ def _hard_delete_company(company):
             return
         db.session.query(model).filter(getattr(model, column_name).in_(values)).delete(synchronize_session=False)
 
-    user_ids = _safe_ids_by_company(User)
+    legacy_user_ids = set(_safe_ids_by_company(User))
+    membership_user_ids = set(
+        row[0] for row in db.session.query(UserCompanyMembership.user_id)
+        .filter(UserCompanyMembership.company_id == company_id).all()
+    )
+    company_user_ids = legacy_user_ids | membership_user_ids
+
+    # Keep a shared login identity alive when another company membership remains.
+    remaining_memberships = (
+        UserCompanyMembership.query
+        .filter(
+            UserCompanyMembership.user_id.in_(company_user_ids or {-1}),
+            UserCompanyMembership.company_id != company_id,
+            UserCompanyMembership.active.is_(True),
+        )
+        .order_by(UserCompanyMembership.company_id.asc())
+        .all()
+    )
+    remaining_by_user = {}
+    for membership in remaining_memberships:
+        remaining_by_user.setdefault(int(membership.user_id), membership)
+    for user_id, membership in remaining_by_user.items():
+        shared_user = db.session.get(User, user_id)
+        if shared_user is not None and shared_user.company_id == company_id:
+            shared_user.company_id = membership.company_id
+            shared_user.role = membership.role or "user"
+            shared_user.permissions_json = membership.permissions_json or "[]"
+    user_ids = sorted(company_user_ids - set(remaining_by_user))
     product_ids = _safe_ids_by_company(Product)
     client_ids = _safe_ids_by_company(Client)
     supplier_ids = _safe_ids_by_company(Supplier)
@@ -4331,7 +4359,8 @@ def company_delete(company_id):
             )
         )
         # Defensive final pass for primary tenant entities in case of ORM/session edge cases.
-        db.session.query(User).filter(User.company_id == company_id).delete(synchronize_session=False)
+        # _hard_delete_company already removes orphan account identities while
+        # retaining any account that still has another company membership.
         db.session.query(Product).filter(Product.company_id == company_id).delete(synchronize_session=False)
         db.session.query(Client).filter(Client.company_id == company_id).delete(synchronize_session=False)
         db.session.commit()
