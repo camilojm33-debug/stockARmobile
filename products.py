@@ -377,52 +377,36 @@ def delete(product_id=None, id=None):
 
 
 def _get_kardex_movements(product_id):
-    from app import Product, ProductModification, PurchaseItem, PurchaseOrder, Sale, SaleItem, db, scope_query_to_company
+    from app import BranchStockMovement, Product, ProductModification, db, scope_query_to_company
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == product_id).first()
     if product is None:
         return None, []
 
     movements = []
-    sale_rows = (
-        scope_query_to_company(
-            db.session.query(Sale, SaleItem).join(SaleItem, Sale.id == SaleItem.sale_id),
-            Sale,
-        )
-        .filter(SaleItem.product_id == product.id)
-        .order_by(Sale.date.desc(), Sale.id.desc())
-        .all()
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    branch_query = BranchStockMovement.query.filter(
+        BranchStockMovement.company_id == product.company_id,
+        BranchStockMovement.product_id == product.id,
     )
-    for sale, item in sale_rows:
-        movements.append(
-            {
-                "date": sale.date,
-                "type": "Venta",
-                "detail": "Venta #{} - {}".format(sale.id, sale.customer or "Consumidor final"),
-                "quantity": -float(item.quantity or 0),
-                "unit_value": float(item.price or 0),
-            }
-        )
-
-    purchase_rows = (
-        scope_query_to_company(
-            db.session.query(PurchaseOrder, PurchaseItem).join(PurchaseItem, PurchaseOrder.id == PurchaseItem.purchase_order_id),
-            PurchaseOrder,
-        )
-        .filter(PurchaseItem.product_id == product.id)
-        .order_by(PurchaseOrder.date.desc(), PurchaseOrder.id.desc())
-        .all()
-    )
-    for purchase, item in purchase_rows:
-        movements.append(
-            {
-                "date": purchase.date,
-                "type": "Compra",
-                "detail": "Compra #{}".format(purchase.id),
-                "quantity": float(item.quantity or 0),
-                "unit_value": float(item.unit_cost or 0),
-            }
-        )
+    if branch_id is not None:
+        branch_query = branch_query.filter(BranchStockMovement.branch_id == branch_id)
+    branch_movements = branch_query.order_by(
+        BranchStockMovement.created_at.desc(), BranchStockMovement.id.desc()
+    ).limit(500).all()
+    for movement in branch_movements:
+        branch = movement.branch
+        movements.append({
+            "date": movement.created_at,
+            "type": (movement.movement_type or "Movimiento").replace("_", " ").capitalize(),
+            "detail": (
+                f"{branch.name if branch else 'Sucursal'} · "
+                f"{movement.note or (str(movement.source_type or '') + ' #' + str(movement.source_id or ''))}"
+            ),
+            "quantity": float(movement.quantity_delta or 0),
+            "unit_value": None,
+        })
 
     modifications = (
         scope_query_to_company(ProductModification.query.filter_by(product_id=product.id), ProductModification)
