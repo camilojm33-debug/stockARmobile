@@ -1024,6 +1024,43 @@ class BackupService:
                 row.min_stock = legacy_minimum
                 row.reserved_stock = Decimal("0.000")
 
+        if has_branch_snapshot:
+            # Product.stock remains the company-wide aggregate for compatibility.
+            # Some legacy imports and older code paths update that aggregate without
+            # writing BranchStock. On restore, preserve the balances of secondary
+            # branches and reconcile only Casa central to the restored aggregate.
+            for product in products.values():
+                product_id = int(product.id)
+                try:
+                    aggregate_stock = Decimal(str(product.stock or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene stock agregado inválido.") from None
+                if not aggregate_stock.is_finite() or aggregate_stock < 0:
+                    raise ValueError("El respaldo contiene stock agregado inválido.")
+
+                secondary_stock = sum(
+                    (row.stock or Decimal("0.000"))
+                    for (branch_id, row_product_id), row in rows_by_key.items()
+                    if row_product_id == product_id and branch_id != int(default_branch.id)
+                )
+                central_key = (int(default_branch.id), product_id)
+                central_row = rows_by_key.get(central_key)
+                if central_row is None:
+                    central_row = BranchStock(
+                        company_id=company_id,
+                        branch_id=int(default_branch.id),
+                        product_id=product_id,
+                        stock=Decimal("0.000"),
+                        min_stock=Decimal("0.000"),
+                        reserved_stock=Decimal("0.000"),
+                    )
+                    db.session.add(central_row)
+                    rows_by_key[central_key] = central_row
+
+                central_target = max(Decimal("0.000"), aggregate_stock - secondary_stock)
+                # Never restore a central balance below an already reserved amount.
+                central_row.stock = max(central_target, central_row.reserved_stock or Decimal("0.000"))
+
         # Keep the legacy aggregate as the sum of all physical locations.
         totals = db.session.query(
             BranchStock.product_id,
