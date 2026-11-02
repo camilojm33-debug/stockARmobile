@@ -86,6 +86,8 @@
           <span class="badge text-bg-warning">Invitación pendiente</span>
           {% elif user.invitation_expired %}
           <span class="badge text-bg-secondary">Invitación vencida</span>
+          {% elif user.invitation_cancelled %}
+          <span class="badge text-bg-secondary">Invitación cancelada</span>
           {% else %}
           <span class="badge {{ 'text-bg-success' if user.membership_active else 'text-bg-secondary' }}">{{ 'Habilitado' if user.membership_active else 'Revocado' }}</span>
           {% endif %}
@@ -113,6 +115,9 @@
               <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
             </form>
+            {% if user.invitation_cancelled %}
+            <span class="small text-muted">Reenviá la invitación desde Mi Empresa.</span>
+            {% else %}
             <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Cancelar esta invitación?' if user.invitation_pending or user.invitation_expired else ('¿Desactivar el acceso a esta empresa?' if user.membership_active else '¿Habilitar el acceso a esta empresa?') }}')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
@@ -123,6 +128,7 @@
                 {{ 'Cancelar invitación' if user.invitation_pending or user.invitation_expired else ('Quitar acceso' if user.membership_active else 'Habilitar acceso') }}
               </button>
             </form>
+            {% endif %}
           </div>
           {% else %}
           <span class="text-muted small">Sin cambios</span>
