@@ -1,7 +1,48 @@
 """Branch-aware stock primitives."""
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
+from sqlalchemy import func
 
 from app import Branch, BranchStock, BranchStockMovement, db
+
+
+STOCK_QUANTUM = Decimal("0.001")
+
+
+def validate_stock_quantity(quantity, *, label="La cantidad"):
+    """Return a finite stock quantity with at most three meaningful decimals."""
+    try:
+        amount = Decimal(str(quantity))
+        normalized = amount.quantize(STOCK_QUANTUM, rounding=ROUND_HALF_UP)
+    except (TypeError, ValueError, InvalidOperation):
+        raise ValueError(f"{label} no es válida.") from None
+    if not amount.is_finite():
+        raise ValueError(f"{label} debe ser un número finito.")
+    if amount != normalized:
+        raise ValueError(f"{label} debe tener como máximo tres decimales.")
+    return normalized
+
+
+def _normalize_legacy_stock_quantity(quantity, *, label="El movimiento de stock"):
+    """Normalize historical values written before the three-decimal rule existed."""
+    try:
+        amount = Decimal(str(quantity))
+        if not amount.is_finite():
+            raise InvalidOperation
+        return amount.quantize(STOCK_QUANTUM, rounding=ROUND_HALF_UP)
+    except (TypeError, ValueError, InvalidOperation):
+        raise ValueError(f"{label} no es válida.") from None
+
+
+def reconcile_company_stock_total(product):
+    """Rebuild Product.stock from the persisted per-branch balances."""
+    total = (
+        db.session.query(func.coalesce(func.sum(BranchStock.stock), 0))
+        .filter_by(company_id=int(product.company_id), product_id=int(product.id))
+        .scalar()
+    )
+    product.stock = float(total or 0)
+    return Decimal(str(total or 0))
 
 
 def lock_product_stock_row(product):
@@ -41,19 +82,9 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     from decimal import Decimal, InvalidOperation
     from app import Branch, BranchStockTransfer, db
 
-    try:
-        amount = Decimal(str(quantity))
-    except (TypeError, ValueError, InvalidOperation):
-        raise ValueError("La cantidad de transferencia no es válida.") from None
-    if not amount.is_finite() or amount <= 0:
+    amount = validate_stock_quantity(quantity, label="La cantidad de transferencia")
+    if amount <= 0:
         raise ValueError("La cantidad de transferencia debe ser mayor que cero.")
-    try:
-        normalized_amount = amount.quantize(Decimal("0.001"))
-    except InvalidOperation:
-        raise ValueError("La cantidad de transferencia es demasiado grande.") from None
-    if amount != normalized_amount:
-        raise ValueError("La cantidad debe tener como máximo tres decimales.")
-    amount = normalized_amount
 
     company_id = int(getattr(product, "company_id", 0) or 0)
     lock_product_stock_row(product)
@@ -98,8 +129,8 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     lock_product_stock_row(product)
     row = get_branch_stock(product, branch_id, lock=True, create=True)
     old = Decimal(str(row.stock or 0))
-    new = Decimal(str(quantity or 0))
-    if not new.is_finite() or new < 0:
+    new = validate_stock_quantity(quantity or 0, label="El stock de sucursal")
+    if new < 0:
         raise ValueError("El stock de sucursal debe ser un número finito no negativo.")
     row.stock = new
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
@@ -110,10 +141,12 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
 
 
 def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type=None, source_id=None,
-                        user_id=None, note=None, update_company_total=True):
-    delta = Decimal(str(delta))
-    if not delta.is_finite():
-        raise ValueError("El movimiento de stock debe ser un número finito.")
+                        user_id=None, note=None, update_company_total=True, allow_legacy_precision=False):
+    delta = (
+        _normalize_legacy_stock_quantity(delta)
+        if allow_legacy_precision
+        else validate_stock_quantity(delta, label="El movimiento de stock")
+    )
     # All aggregate-changing writes lock Product before BranchStock. This
     # serializes sales in different branches and prevents lost aggregate updates.
     if update_company_total:
@@ -133,10 +166,13 @@ def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type
     row.stock = updated
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if update_company_total:
-        aggregate = Decimal(str(product.stock or 0)) + delta
-        if aggregate < 0:
-            raise ValueError(f"El stock consolidado no puede quedar negativo para {product.name}.")
-        product.stock = float(aggregate)
+        if allow_legacy_precision:
+            aggregate = reconcile_company_stock_total(product)
+        else:
+            aggregate = Decimal(str(product.stock or 0)) + delta
+            if aggregate < 0:
+                raise ValueError(f"El stock consolidado no puede quedar negativo para {product.name}.")
+            product.stock = float(aggregate)
     db.session.add(BranchStockMovement(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id),
         movement_type=movement_type, quantity_delta=delta, stock_after=updated,
         source_type=source_type, source_id=source_id, user_id=user_id, note=note))
