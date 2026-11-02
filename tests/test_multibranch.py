@@ -705,3 +705,98 @@ def test_business_billing_refuses_inactive_pos_instead_of_using_another_branch(a
                 db.session, company=company, sale=sale, config=config
             )
         db.session.rollback()
+
+
+def test_manual_branch_stock_adjustment_reconciles_company_total_and_checks_precision(app):
+    from stockarmobile.branch_inventory import set_branch_stock_and_reconcile
+
+    with app.app_context():
+        company = _company("Empresa ajuste manual consolidado")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="ADJ-001", name="Ajuste consolidado",
+            stock=12, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        set_branch_stock(product, north.id, Decimal("5"))
+
+        set_branch_stock_and_reconcile(
+            product, central.id, Decimal("4.125"),
+            movement_type="manual_adjustment", note="Prueba ajuste",
+        )
+
+        assert available_stock(product, central.id) == 4.125
+        assert available_stock(product, north.id) == 5.0
+        assert Decimal(str(product.stock)) == Decimal("9.125")
+
+        with pytest.raises(ValueError, match="tres decimales"):
+            set_branch_stock_and_reconcile(product, north.id, Decimal("5.0001"))
+        assert available_stock(product, north.id) == 5.0
+        assert Decimal(str(product.stock)) == Decimal("9.125")
+        db.session.rollback()
+
+
+def test_ai_invoice_purchase_and_ai_sale_reject_excess_branch_precision(app):
+    from app import PurchaseOrder, Supplier
+    from services.invoice_purchase_service import InvoicePurchaseService
+    from services.sales.inventory_service import InventoryService
+
+    with app.app_context():
+        company = _company("Empresa precision IA")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = User(
+            username="precision-ai-admin",
+            email="precision-ai-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            company_id=company.id,
+        )
+        supplier = Supplier(name="Proveedor IA", company_id=company.id, active=True)
+        product = Product(
+            company_id=company.id, barcode="AI-PREC-001", name="Producto IA",
+            stock=10, cost_price=2, price=5, active=True,
+        )
+        db.session.add_all([user, supplier, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, Decimal("10"))
+
+        invoice = {
+            "status": "LISTA_PARA_CONFIRMAR",
+            "currency": "ARS",
+            "subtotal": "6.1725",
+            "tax": "0",
+            "total": "6.1725",
+            "supplier_match": {"status": "MATCH_EXACTO", "supplier_id": supplier.id},
+            "matches": [{
+                "line_number": 1,
+                "matching_status": "MATCH_EXACTO",
+                "product_id": product.id,
+                "quantity": "1.2345",
+                "unit_cost": "5",
+                "line_total": "6.1725",
+            }],
+        }
+        with pytest.raises(ValueError, match="tres decimales"):
+            InvoicePurchaseService.confirm(
+                company_id=company.id,
+                user_id=user.id,
+                invoice=invoice,
+                conversation=None,
+                branch_id=branch.id,
+            )
+        assert PurchaseOrder.query.filter_by(company_id=company.id).count() == 0
+        assert available_stock(product, branch.id) == 10.0
+        assert float(product.stock) == 10.0
+
+        with pytest.raises(ValueError, match="tres decimales"):
+            InventoryService.apply_stock(
+                lines=[{"product": product, "quantity": Decimal("1.2345")}],
+                branch_id=branch.id,
+                source_type="vendor_ai_order",
+            )
+        assert available_stock(product, branch.id) == 10.0
+        assert float(product.stock) == 10.0
+        db.session.rollback()
