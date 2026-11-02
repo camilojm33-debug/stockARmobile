@@ -4282,9 +4282,24 @@ def company_settings_user_role_update(user_id):
 
     previous_role = membership.role or "user"
     membership.role = role
+    try:
+        membership_permissions = json.loads(membership.permissions_json or "[]")
+    except (TypeError, ValueError):
+        membership_permissions = []
+    if not isinstance(membership_permissions, list):
+        membership_permissions = []
+    membership_permissions = sorted({
+        str(item).strip() for item in membership_permissions if str(item).strip()
+    })
+    if role == "admin":
+        membership_permissions = sorted(set(membership_permissions) | {"economic_stats"})
+    else:
+        membership_permissions = sorted(set(membership_permissions) - {"economic_stats"})
+    membership.permissions_json = json.dumps(membership_permissions)
     primary_company_id = db.session.query(User.company_id).filter(User.id == user.id).scalar()
     if primary_company_id is not None and int(primary_company_id) == int(company.id):
         user.role = role
+        user.permissions_json = membership.permissions_json
     record_audit(action="company_user_role_update", entity="user", entity_id=user.id, company_id=company.id, detail=f"Rol actualizado de {previous_role} a {role} en empresa {company.id}")
     db.session.commit()
     flash("Rol del empleado actualizado para esta empresa.", "success")
