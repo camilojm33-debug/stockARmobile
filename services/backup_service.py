@@ -483,17 +483,20 @@ class BackupService:
             SaleItem,
             Supplier,
             User,
+            CompanyMembership,
         )
         from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
         company = Company.query.filter_by(id=company_id).first_or_404()
 
-        users = (
-            User.query.filter(
-                User.company_id == company_id,
-                User.role != "superadmin",
+        from stockarmobile.company_memberships import get_company_users
+        users = get_company_users(company_id)
+        company_memberships = (
+            CompanyMembership.query.filter(
+                CompanyMembership.company_id == company_id,
+                CompanyMembership.status.in_(["active", "revoked"]),
             )
-            .order_by(User.id.asc())
+            .order_by(CompanyMembership.user_id.asc())
             .all()
         )
         products = Product.query.filter_by(company_id=company_id).order_by(Product.id.asc()).all()
@@ -546,7 +549,10 @@ class BackupService:
         categories = sorted({(product.category or "").strip() for product in products if (product.category or "").strip()})
         base_payload = {
             "company": BackupService._row_to_dict(company, allowed_fields=BackupService.COMPANY_FIELDS),
-            "users": [BackupService._row_to_dict(row) for row in users],
+            "users": [BackupService._row_to_dict(row, allowed_fields=(
+                "id", "username", "email", "first_name", "last_name",
+                "avatar_url", "company_id", "created_at",
+            )) for row in users],
             "products": [BackupService._row_to_dict(row) for row in products],
             "clients": [BackupService._row_to_dict(row) for row in clients],
             "sales": [BackupService._row_to_dict(row) for row in sales],
@@ -559,6 +565,13 @@ class BackupService:
             "company_id": company_id,
             "company": base_payload["company"],
             "users": base_payload["users"],
+            "company_memberships": [
+                BackupService._row_to_dict(row, allowed_fields=(
+                    "user_id", "company_id", "role", "permissions_json",
+                    "active", "status", "accepted_at", "created_at",
+                ))
+                for row in company_memberships
+            ],
             "products": base_payload["products"],
             "branch_stock": [BackupService._row_to_dict(row) for row in branch_stock_rows],
             "branch_stock_movements": [BackupService._row_to_dict(row) for row in branch_stock_movements],
@@ -612,6 +625,7 @@ class BackupService:
 
         tenant_sections = (
             "users",
+            "company_memberships",
             "products",
             "clients",
             "suppliers",
