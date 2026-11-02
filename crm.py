@@ -123,12 +123,13 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
 
 def _opportunity_form_options():
     from app import Client, Quote, Sale, User
+    from stockarmobile.company_memberships import users_for_company_query
 
     return {
         "clients": scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all(),
         "quotes": scope_query_to_company(Quote.query, Quote).order_by(Quote.date.desc(), Quote.id.desc()).limit(250).all(),
         "sales": scope_query_to_company(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).limit(250).all(),
-        "owners": __import__("stockarmobile.company_memberships", fromlist=["users_for_company_query"]).users_for_company_query(current_user.company_id).order_by(User.username).all(),
+        "owners": users_for_company_query(current_user.company_id).order_by(User.username).all(),
     }
 
 
