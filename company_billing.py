@@ -4602,50 +4602,6 @@ def company_settings_user_reset_password(user_id):
     flash(f"Contrasena temporal para {user.username}: {temp_password}", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-@bp.route("/company-settings/users/<int:user_id>/reset-password", methods=["POST"])
-@company_admin_required
-def company_settings_user_reset_password(user_id):
-    from app import User, db, record_audit
-
-    company_id = getattr(current_user, "company_id", None)
-    company = _load_company(company_id)
-    blocked = _pin_guard(company)
-    if blocked is not None:
-        return blocked
-
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
-    new_password = (request.form.get("new_password") or "").strip()
-    confirm_password = (request.form.get("confirm_password") or "").strip()
-    force_change = (request.form.get("force_change") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-    if new_password or confirm_password:
-        if len(new_password) < 6:
-            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
-            return redirect(url_for("company_billing.company_settings", panel="employees"))
-        if new_password != confirm_password:
-            flash("Las contrasenas no coinciden.", "danger")
-            return redirect(url_for("company_billing.company_settings", panel="employees"))
-        user.set_password(new_password)
-        user.must_change_password = force_change
-        record_audit(
-            action="company_user_set_password",
-            entity="user",
-            entity_id=user.id,
-            detail=f"Contrasena configurada manualmente para {user.username}. force_change={force_change}",
-        )
-        db.session.commit()
-        flash(f"Contrasena actualizada correctamente para {user.username}.", "success")
-        return redirect(url_for("company_billing.company_settings", panel="employees"))
-
-    temp_password = _temporary_password()
-    user.set_password(temp_password)
-    user.must_change_password = True
-    record_audit(action="company_user_reset_password", entity="user", entity_id=user.id, detail=f"Contrasena restablecida para {user.username}")
-    db.session.commit()
-    flash(f"Contrasena restablecida. Temporal para {user.username}: {temp_password}", "success")
-    return redirect(url_for("company_billing.company_settings", panel="employees"))
-
-
 @bp.route("/company-settings/password", methods=["POST"])
 @company_member_required
 def company_settings_change_password():
@@ -4895,7 +4851,7 @@ def company_settings_schedules_save():
 @bp.route("/company-settings/schedules/assign", methods=["POST"])
 @company_admin_required
 def company_settings_schedules_assign_add():
-    from app import User, db, record_audit
+    from app import User, UserCompanyMembership, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4909,7 +4865,16 @@ def company_settings_schedules_assign_add():
     end = (request.form.get("end") or "").strip()[:5]
     valid_days = {"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
 
-    user = User.query.filter_by(id=user_id, company_id=company.id, active=True).first()
+    user = (
+        User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .filter(
+            User.id == user_id,
+            UserCompanyMembership.company_id == company.id,
+            UserCompanyMembership.active.is_(True),
+            User.active.is_(True),
+        )
+        .first()
+    )
     if user is None:
         flash("Debes seleccionar un empleado activo válido.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="schedules"))
@@ -5614,7 +5579,7 @@ def _billing_collect_filters():
 @bp.route("/facturacion")
 @business_billing_view_required
 def business_billing_hub():
-    from app import Company, User
+    from app import Company, User, UserCompanyMembership, db
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -5624,11 +5589,23 @@ def business_billing_hub():
     dashboard = BusinessBillingService.build_dashboard(company.id, config)
     reports = BusinessBillingService.report_summary(rows)
 
-    users = (
-        User.query.filter_by(company_id=company.id, active=True)
+    from stockarmobile.company_memberships import apply_membership_to_user, ensure_legacy_company_memberships
+    ensure_legacy_company_memberships(db.session, company.id)
+    user_rows = (
+        db.session.query(User, UserCompanyMembership)
+        .join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .filter(
+            UserCompanyMembership.company_id == company.id,
+            UserCompanyMembership.active.is_(True),
+            User.active.is_(True),
+        )
         .order_by(User.username.asc())
         .all()
     )
+    users = [
+        apply_membership_to_user(user, membership)
+        for user, membership in user_rows
+    ]
     selected_tab = (request.args.get("tab") or "dashboard").strip().lower()
     if selected_tab not in {
         "dashboard",
