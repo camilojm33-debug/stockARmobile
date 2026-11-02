@@ -62,11 +62,7 @@ class PlanUsageService:
 
         membership_user_ids = CompanyMembership.query.with_entities(
             CompanyMembership.user_id
-        ).filter(
-            CompanyMembership.company_id == company_id,
-            CompanyMembership.active.is_(True),
-            CompanyMembership.status == "active",
-        )
+        ).filter(CompanyMembership.company_id == company_id)
         users_count = (
             User.query.join(CompanyMembership, CompanyMembership.user_id == User.id)
             .filter(
