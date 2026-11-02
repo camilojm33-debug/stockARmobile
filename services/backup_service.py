@@ -1177,17 +1177,20 @@ class BackupService:
                 db.session.add(BranchStockMovement(**candidate))
 
     @staticmethod
-    def _restore_employee_rows(db_session, *, company_id: int, rows):
-        """Restore profile data without restoring historical security decisions."""
-        from app import User
+    def _restore_employee_rows(db_session, *, company_id: int, rows, memberships=None):
+        """Restore display profiles and this tenant's membership policy, never global credentials."""
+        import secrets
+        from werkzeug.security import generate_password_hash
+        from app import CompanyMembership, User
+        from stockarmobile.company_memberships import get_company_users
 
         existing_users = {
             int(row.id): row
-            for row in User.query.filter(
-                User.company_id == company_id,
-                User.role != "superadmin",
-            ).all()
+            for row in get_company_users(company_id)
+            if getattr(row, "role", None) != "superadmin"
         }
+        identities_by_backup_id = {}
+
         for raw_row in rows or []:
             if not isinstance(raw_row, dict):
                 raise ValueError("El backup contiene un registro de empleado inválido.")
@@ -1198,51 +1201,128 @@ class BackupService:
             email = str(row.get("email") or "").strip().lower()
 
             if user is None:
-                by_username = (
-                    User.query.filter_by(company_id=company_id, username=username)
-                    .filter(User.role != "superadmin").first()
-                    if username else None
-                )
-                by_email = (
-                    User.query.filter_by(company_id=company_id, email=email)
-                    .filter(User.role != "superadmin").first()
-                    if email else None
-                )
+                by_username = User.query.filter_by(username=username).first() if username else None
+                by_email = User.query.filter(sa.func.lower(User.email) == email).first() if email else None
                 if by_username is not None and by_email is not None and by_username.id != by_email.id:
                     raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
                 user = by_username or by_email
+                if user is not None and (getattr(user, "role", None) or "").strip().lower() == "superadmin":
+                    raise ValueError("El backup no puede vincular una cuenta SuperAdmin.")
 
             if user is not None:
-                # Existing credentials, roles, active state and permissions remain
-                # authoritative. Restore only non-security display fields.
+                # The same global identity can be shared by tenants. Restore only
+                # neutral profile fields; credentials, active account state and
+                # other companies' roles/permissions are never imported here.
                 for field in ("first_name", "last_name", "avatar_url"):
                     if field in row:
                         setattr(user, field, row.get(field))
-                continue
-
-            if not username or not email or "@" not in email:
-                raise ValueError("No se puede restaurar un empleado sin usuario y email válidos.")
-            username_owner = User.query.filter_by(username=username).first()
-            email_owner = User.query.filter_by(email=email).first()
-            if username_owner is not None or email_owner is not None:
-                raise ValueError(
-                    "El backup contiene un empleado cuyo usuario/email ya pertenece a otra cuenta. "
-                    "No se modificó la cuenta existente."
+            else:
+                if not username or not email or "@" not in email:
+                    raise ValueError("No se puede restaurar un empleado sin usuario y email válidos.")
+                if User.query.filter_by(username=username).first() is not None or User.query.filter(
+                    sa.func.lower(User.email) == email
+                ).first() is not None:
+                    raise ValueError(
+                        "El backup contiene un empleado cuyo usuario/email ya pertenece a otra cuenta. "
+                        "No se modificó la cuenta existente."
+                    )
+                user = User(
+                    username=username,
+                    email=email,
+                    first_name=row.get("first_name"),
+                    last_name=row.get("last_name"),
+                    avatar_url=row.get("avatar_url"),
+                    password_hash=generate_password_hash(secrets.token_urlsafe(32)),
+                    role="user",
+                    permissions_json="[]",
+                    active=False,
+                    must_change_password=True,
+                    company_id=company_id,
+                    auth_provider="local",
                 )
+                db_session.add(user)
+                db_session.flush()
 
-            candidate = dict(row)
-            candidate["company_id"] = company_id
-            candidate.update({
-                "role": "user",
-                "active": False,
-                "permissions_json": None,
-                "must_change_password": True,
-                "auth_provider": "local",
-                "google_sub": None,
-            })
-            if incoming_id is not None and db_session.get(User, int(incoming_id)) is not None:
-                candidate.pop("id", None)
-            db_session.execute(User.__table__.insert(), [candidate])
+            if incoming_id is not None:
+                identities_by_backup_id[int(incoming_id)] = int(user.id)
+
+        membership_rows = memberships if isinstance(memberships, list) else []
+        if not membership_rows:
+            # Legacy backups did not store memberships. Create only a primary-company
+            # membership using the historic user row, without importing its password.
+            membership_rows = [
+                {
+                    "user_id": row.get("id"),
+                    "company_id": company_id,
+                    "role": "user",
+                    "permissions_json": "[]",
+                    "active": False,
+                    "status": "revoked",
+                }
+                for row in (rows or [])
+                if isinstance(row, dict)
+            ]
+
+        for raw_membership in membership_rows:
+            if not isinstance(raw_membership, dict):
+                raise ValueError("El backup contiene una membresía de empresa inválida.")
+            try:
+                row_company_id = int(raw_membership.get("company_id") or 0)
+                backup_user_id = int(raw_membership.get("user_id") or 0)
+            except (TypeError, ValueError):
+                raise ValueError("La membresía del backup no identifica una empresa y usuario válidos.") from None
+            if row_company_id != int(company_id):
+                raise ValueError("El backup contiene una membresía de otra empresa.")
+            actual_user_id = identities_by_backup_id.get(backup_user_id)
+            if actual_user_id is None:
+                # A membership row must refer to one of the identity rows in this snapshot.
+                raise ValueError("El backup contiene una membresía sin usuario asociado.")
+            role = str(raw_membership.get("role") or "user").strip().lower()
+            if role not in {"admin", "user"}:
+                raise ValueError("El backup contiene un rol de empresa inválido.")
+            status = str(raw_membership.get("status") or "revoked").strip().lower()
+            if status not in {"active", "revoked"}:
+                raise ValueError("El backup contiene un estado de membresía no restaurable.")
+            raw_permissions = raw_membership.get("permissions_json") or "[]"
+            try:
+                permission_values = json.loads(raw_permissions) if isinstance(raw_permissions, str) else raw_permissions
+            except (TypeError, ValueError, json.JSONDecodeError):
+                permission_values = []
+            if not isinstance(permission_values, list):
+                permission_values = []
+            valid_permissions = {
+                "inventory", "sales", "crm", "quotes_view", "quotes_create", "quotes_edit",
+                "quotes_delete", "quotes_duplicate", "quotes_share_whatsapp", "quotes_email",
+                "quotes_convert", "quotes_print", "quotes_download_pdf", "quotes_view_other_sellers",
+                "quotes_modify_prices", "quotes_apply_discounts", "quotes_anulate", "clients",
+                "reports", "cash", "economic_stats", "ai_access", "billing",
+            }
+            permissions_json = json.dumps(sorted({
+                str(value).strip() for value in permission_values
+                if str(value).strip() in valid_permissions
+            }))
+            if role == "admin":
+                allowed = json.loads(permissions_json)
+                if "economic_stats" not in allowed:
+                    allowed.append("economic_stats")
+                permissions_json = json.dumps(sorted(set(allowed)))
+            membership = CompanyMembership.query.filter_by(
+                user_id=actual_user_id,
+                company_id=company_id,
+            ).first()
+            if membership is None:
+                membership = CompanyMembership(
+                    user_id=actual_user_id,
+                    company_id=company_id,
+                )
+                db_session.add(membership)
+            membership.role = role
+            membership.permissions_json = permissions_json
+            membership.active = bool(raw_membership.get("active")) and status == "active"
+            membership.status = status
+
+        db_session.flush()
+        return identities_by_backup_id
 
     @staticmethod
     def _restore_full_company_dataset(db_session, model, rows):
