@@ -1411,7 +1411,8 @@ def index():
 
     quotes_rows = query.order_by(Quote.date.desc(), Quote.id.desc()).limit(100).all()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
-    sellers = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc()).all()
+    from stockarmobile.company_memberships import users_for_company_query
+    sellers = users_for_company_query(current_user.company_id).order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc()).all()
     return render_template(
         "presupuestos/index.html",
         quotes=quotes_rows,
