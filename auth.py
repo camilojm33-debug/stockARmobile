@@ -228,6 +228,9 @@ def login():
             ).first()
 
             if user and user.active and user.check_password(form.password.data):
+                next_page = (request.form.get("next") or request.args.get("next") or "").strip()
+                if not _is_safe_redirect(next_page):
+                    next_page = None
                 _login_user_and_bind_company(user, remember=form.remember.data)
                 if getattr(user, "role", None) == "superadmin":
                     from saas import _SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY, _SUPERADMIN_STEP_UP_AT_SESSION_KEY, _SUPERADMIN_STEP_UP_USER_SESSION_KEY
@@ -237,11 +240,10 @@ def login():
                 record_audit(action="login_success", entity="user", entity_id=user.id, detail="Inicio de sesion exitoso")
                 db.session.commit()
                 if getattr(user, "must_change_password", False):
+                    if next_page:
+                        session["post_password_change_next"] = next_page
                     flash("Debes cambiar tu contrasena para continuar.", "warning")
                     return redirect(url_for("auth.force_password_change"))
-                next_page = (request.form.get("next") or request.args.get("next") or "").strip()
-                if not _is_safe_redirect(next_page):
-                    next_page = None
                 flash("Inicio de sesion exitoso", "success")
                 onboarding_company_id = session.get(SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID)
                 if onboarding_company_id is not None and onboarding_company_id == getattr(user, "company_id", None):
@@ -396,6 +398,9 @@ def force_password_change():
         )
         db.session.commit()
         flash("Contrasena actualizada correctamente.", "success")
+        next_page = session.pop("post_password_change_next", None)
+        if next_page and _is_safe_redirect(next_page):
+            return redirect(next_page)
         return redirect(_post_login_redirect())
 
     return render_template("auth/force_password_change.html")
