@@ -4,6 +4,17 @@ from decimal import Decimal
 from app import Branch, BranchStock, BranchStockMovement, db
 
 
+def lock_product_stock_row(product):
+    """Acquire the product row lock before any branch stock row lock."""
+    from app import Product
+    product_id = db.session.query(Product.id).filter_by(
+        id=int(product.id), company_id=int(product.company_id)
+    ).with_for_update().scalar()
+    if product_id is None:
+        raise ValueError("El producto no pertenece a la empresa activa.")
+    return product_id
+
+
 def get_branch_stock(product, branch_id, *, lock=False, create=False):
     branch = Branch.query.filter_by(id=int(branch_id), company_id=int(product.company_id), active=True).first()
     if branch is None:
@@ -45,6 +56,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     amount = normalized_amount
 
     company_id = int(getattr(product, "company_id", 0) or 0)
+    lock_product_stock_row(product)
     source = Branch.query.filter_by(id=int(source_branch_id), company_id=company_id, active=True).first()
     target = Branch.query.filter_by(id=int(target_branch_id), company_id=company_id, active=True).first()
     if source is None or target is None or source.id == target.id:
@@ -83,6 +95,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
 
 
 def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", user_id=None, note=None):
+    lock_product_stock_row(product)
     row = get_branch_stock(product, branch_id, lock=True, create=True)
     old = Decimal(str(row.stock or 0))
     new = Decimal(str(quantity or 0))
