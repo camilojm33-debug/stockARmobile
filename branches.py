@@ -102,6 +102,19 @@ def update_branch(branch_id):
     if not active and (branch.is_default or Branch.query.filter_by(company_id=company_id, active=True).count() <= 1):
         flash("La empresa debe conservar activa su Casa central y al menos una sucursal.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="branches"))
+    if active and not branch.active:
+        from services.plan_usage_service import PlanUsageService
+        _subscription, plan = PlanUsageService._active_plan_for_company(company.id)
+        branch_limit = max(1, int(getattr(plan, "max_branches", 1) or 1))
+        active_count = Branch.query.filter_by(company_id=company_id, active=True).count()
+        if active_count >= branch_limit:
+            flash(f"Tu plan permite hasta {branch_limit} sucursales activas.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+    if not active:
+        from app import CashSession
+        if CashSession.query.filter_by(branch_id=branch.id, status="abierta").first() is not None:
+            flash("Cerrá las cajas abiertas de esta sucursal antes de desactivarla.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
     branch.name = name
     branch.address = (request.form.get("address") or "").strip()[:255] or None
     branch.city = (request.form.get("city") or "").strip()[:120] or None
