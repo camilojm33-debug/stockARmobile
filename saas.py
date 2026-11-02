@@ -5718,6 +5718,67 @@ def users_update_status(user_id):
     return _redirect_back("saas.users_panel")
 
 
+@bp.route("/users/<int:user_id>/account-status", methods=["POST"])
+@superadmin_required
+def users_update_account_status(user_id):
+    from app import AuditLog, User, UserCompanyMembership, db
+
+    _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.users_panel")
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+    if user.role == "superadmin":
+        flash("No se puede modificar una cuenta SuperAdmin desde este panel.", "warning")
+        return _redirect_back("saas.users_panel")
+
+    desired = (request.form.get("active") or "").strip().lower()
+    if desired not in {"0", "1"}:
+        flash("Estado global inválido.", "danger")
+        return _redirect_back("saas.users_panel")
+    new_active = desired == "1"
+    if user.active == new_active:
+        flash("La cuenta ya tiene ese estado global.", "info")
+        return _redirect_back("saas.users_panel")
+
+    if not new_active:
+        admin_memberships = UserCompanyMembership.query.filter(
+            UserCompanyMembership.user_id == user.id,
+            UserCompanyMembership.active.is_(True),
+            UserCompanyMembership.role == "admin",
+        ).all()
+        for membership in admin_memberships:
+            remaining_admins = UserCompanyMembership.query.filter(
+                UserCompanyMembership.company_id == membership.company_id,
+                UserCompanyMembership.active.is_(True),
+                UserCompanyMembership.role == "admin",
+                UserCompanyMembership.user_id != user.id,
+            ).join(User, User.id == UserCompanyMembership.user_id).filter(
+                User.active.is_(True)
+            ).count()
+            if remaining_admins == 0:
+                flash(
+                    f"No se puede desactivar la cuenta completa: {user.username} es el último administrador activo de una empresa.",
+                    "warning",
+                )
+                return _redirect_back("saas.users_panel")
+
+    previous = bool(user.active)
+    user.active = new_active
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        company_id=user.company_id,
+        action="superadmin_global_account_status_update",
+        entity="user",
+        entity_id=user.id,
+        detail=f"Estado global de cuenta actualizado de {'activo' if previous else 'inactivo'} a {'activo' if new_active else 'inactivo'} por SuperAdmin.",
+    ))
+    db.session.commit()
+    flash(f"Cuenta global de {user.username} {'activada' if new_active else 'desactivada'}. Sus membresías por empresa se conservaron.", "success")
+    return _redirect_back("saas.users_panel")
+
+
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
