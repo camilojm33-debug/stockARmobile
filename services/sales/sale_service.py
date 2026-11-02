@@ -475,10 +475,18 @@ class SaleService:
             to_decimal=self._to_decimal,
             is_truthy=ValidationService.is_truthy,
             branch_id=getattr(sale, "branch_id", None),
+            allow_inactive=True,
         )
         ValidationService.validate_edit_lines(new_lines)
 
-        InventoryService.apply_stock(lines=new_lines, branch_id=getattr(sale, "branch_id", None), source_type="sale_edit", source_id=sale.id, user_id=getattr(current_user, "id", None))
+        InventoryService.apply_stock(
+            lines=new_lines,
+            branch_id=getattr(sale, "branch_id", None),
+            source_type="sale_edit",
+            source_id=sale.id,
+            user_id=getattr(current_user, "id", None),
+            allow_inactive=True,
+        )
 
         sale_totals = TotalsService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
