@@ -43,6 +43,7 @@ class CompanyMembershipInvitationService:
         membership.invitation_token_hash = cls._hash(raw_token)
         membership.invitation_expires_at = now + timedelta(days=cls.TTL_DAYS)
         membership.invitation_password_setup_required = bool(password_setup_required)
+        membership.invitation_acceptance_required = True
         membership.invited_email = (user.email or "").strip().lower()
         membership.invited_at = now
         membership.accepted_at = None
