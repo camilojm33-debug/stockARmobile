@@ -701,7 +701,7 @@ def switch_company():
     """Switch tenant only when the authenticated identity has an active membership."""
     from app import Company, CompanyMembership, db, record_audit
     from stockarmobile.branch_context import SESSION_KEY as ACTIVE_BRANCH_SESSION_KEY
-    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY, apply_membership_context
 
     try:
         target_company_id = int(request.form.get("company_id") or 0)
@@ -718,6 +718,7 @@ def switch_company():
         abort(403)
 
     previous_company_id = getattr(current_user, "company_id", None)
+    apply_membership_context(current_user, membership)
     session[ACTIVE_COMPANY_SESSION_KEY] = int(target_company_id)
     session.pop(ACTIVE_BRANCH_SESSION_KEY, None)
     session.modified = True
@@ -740,7 +741,7 @@ def accept_company_invitation(token):
     import hashlib
     from app import Branch, Company, CompanyMembership, User, UserBranchAccess, db, record_audit, utcnow
     from stockarmobile.branch_context import SESSION_KEY as ACTIVE_BRANCH_SESSION_KEY
-    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY, apply_membership_context
 
     token_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
     membership = CompanyMembership.query.filter_by(
@@ -766,6 +767,7 @@ def accept_company_invitation(token):
     membership.accepted_at = utcnow()
     membership.invitation_token_hash = None
     membership.invitation_expires_at = None
+    apply_membership_context(invited_user, membership)
 
     default_branch = Branch.query.filter_by(
         company_id=company.id,
