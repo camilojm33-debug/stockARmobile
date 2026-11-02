@@ -143,8 +143,13 @@ def choose_membership_for_login(user, requested_company_id=None):
         selected = next((row for row in memberships if int(row.company_id) == int(primary_id)), None)
         if selected is not None:
             return selected
-        # Compatibility path for accounts created before the membership migration.
+    # A valid non-primary membership always wins over a legacy primary-company
+    # fallback. This supports gradual adoption when an older account is invited
+    # to a second tenant before its primary membership has been backfilled.
+    if memberships:
+        return memberships[0]
+    if primary_id is not None:
         company = db.session.get(Company, int(primary_id))
         if company is not None and company.active:
             return None
-    return memberships[0] if memberships else None
+    return None
