@@ -455,7 +455,7 @@ def export_cash_csv():
         "Cierre fecha",
         "Nota",
     ])
-    for session in scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all():
+    for session in _base_session_query().order_by(CashSession.opened_at.desc()).all():
         summary = _session_summary(session)
         totals["sales_cash"] += summary["sales_cash"]
         totals["sales_transfer"] += summary["sales_transfer"]
@@ -549,7 +549,7 @@ def export_cash_excel():
         "Cierre",
     ])
 
-    sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all()
+    sessions = _base_session_query().order_by(CashSession.opened_at.desc()).all()
     for session in sessions:
         summary = _session_summary(session)
         totals["sales_cash"] += summary["sales_cash"]
@@ -637,7 +637,7 @@ def export_cash_pdf():
         "sales_other": Decimal("0.00"),
     }
 
-    sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).limit(100).all()
+    sessions = _base_session_query().order_by(CashSession.opened_at.desc()).limit(100).all()
     for session in sessions:
         summary = _session_summary(session)
         totals["sales_cash"] += summary["sales_cash"]
