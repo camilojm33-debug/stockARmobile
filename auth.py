@@ -680,6 +680,19 @@ def accept_company_invitation(token):
         )
         if company is None:
             abort(403)
+        user = (
+            User.query.filter_by(id=membership.user_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if user is None or not user.active:
+            abort(403)
+        if (
+            (membership.invited_email or "").strip().lower()
+            != (user.email or "").strip().lower()
+        ):
+            abort(403)
 
         if password_setup_required:
             new_password = str(request.form.get("new_password") or "")
