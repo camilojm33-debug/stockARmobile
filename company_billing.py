@@ -4387,7 +4387,7 @@ def company_settings_user_delete(user_id):
 @bp.route("/company-settings/users/create", methods=["POST"])
 @company_admin_required
 def company_settings_user_create():
-    from app import Branch, CompanyMembership, User, UserBranchAccess, db, record_audit
+    from app import Branch, CompanyMembership, User, UserBranchAccess, db, record_audit, utcnow
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
