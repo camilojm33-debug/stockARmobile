@@ -17,7 +17,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261101_01_multibranch"
+HEAD_REVISION = "20261102_01_multibranch_opening"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -183,7 +183,7 @@ def main() -> None:
             text(
                 "SELECT quantity_delta,stock_after FROM branch_stock_movements "
                 "WHERE company_id=:company_id AND branch_id=:branch_id AND product_id=:product_id "
-                "AND movement_type='opening' AND source_type='multibranch_migration'"
+                "AND movement_type='opening' AND source_type='multibranch_opening_backfill'"
             ),
             {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
         ).one_or_none()
