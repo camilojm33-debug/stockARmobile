@@ -83,7 +83,7 @@ def get_company_users(company_id: int, *, active_only: bool | None = None, inclu
         if membership is None:
             membership = ensure_primary_membership(user, company_id, db_session=db.session)
         if membership is not None:
-            if membership.status != "active" and not (include_pending and membership.status == "invited"):
+            if membership.status == "invited" and not include_pending:
                 continue
             apply_membership_context(user, membership)
             member_active = bool(membership.active and membership.status == "active" and user.active)
