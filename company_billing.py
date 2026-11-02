@@ -5020,11 +5020,6 @@ def company_settings():
         branch.id: {row.user_id for row in UserBranchAccess.query.filter_by(company_id=company.id, branch_id=branch.id).all()}
         for branch in company_branches
     }
-    branch_transfer_products = (
-        Product.query.filter_by(company_id=company.id, active=True)
-        .order_by(Product.name.asc()).limit(250).all()
-        if settings_panel == "branches" and multi_branch_access else []
-    )
     branch_limit = max(1, int(getattr(PlanUsageService._active_plan_for_company(company.id)[1], "max_branches", 1) or 1))
     active_branch_count = sum(1 for branch in company_branches if branch.active)
 
