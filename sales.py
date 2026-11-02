@@ -1548,6 +1548,12 @@ def edit(sale_id):
     sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     products = scope_query_to_company(Product.query.order_by(Product.name), Product).all()
+    from stockarmobile.branch_inventory import available_stock
+    for product in products:
+        product.branch_stock_display = (
+            available_stock(product, sale.branch_id)
+            if sale.branch_id is not None else float(product.stock or 0)
+        )
     existing_line_discount_total = sum(_to_decimal(item.discount or 0) for item in sale.items)
     order_discount_default = max(_to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
     payment_methods = [
