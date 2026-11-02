@@ -185,6 +185,13 @@ def _ensure_demo_account():
             )
             product.stock = float(product.stock or 0) - 1
 
+    branch = _ensure_company_default_branch(company, user)
+    CashSession.query.filter_by(company_id=company.id, status="abierta", branch_id=None).update(
+        {"branch_id": branch.id}, synchronize_session=False
+    )
+    Sale.query.filter_by(company_id=company.id, branch_id=None).update(
+        {"branch_id": branch.id}, synchronize_session=False
+    )
     db.session.commit()
     return user
 
