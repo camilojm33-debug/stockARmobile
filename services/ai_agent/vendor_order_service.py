@@ -95,6 +95,20 @@ SUPERSEDED_QUOTE_IDS_KEY = "vendor_superseded_quote_ids"
 MAX_CART_LINES = 30
 
 
+def _vendor_fulfillment_branch_id(company_id):
+    from stockarmobile.branch_context import get_default_branch_id
+    return get_default_branch_id(company_id)
+
+
+def _vendor_available_stock(product, company_id, branch_id=None):
+    from stockarmobile.branch_inventory import available_stock
+    effective_branch_id = branch_id or _vendor_fulfillment_branch_id(company_id)
+    if effective_branch_id is None:
+        return float(product.stock or 0)
+    return available_stock(product, effective_branch_id)
+
+
+
 def _money(value: Any) -> Decimal:
     try:
         return Decimal(str(value or 0)).quantize(Decimal("0.01"))
@@ -904,7 +918,7 @@ class VendorOrderService:
                     "quantity": float(quantity),
                     "unit_measure": product.unit_measure or "u",
                     "unit_price": float(unit_price),
-                    "stock": normalized_stock_quantity(product.stock),
+                    "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
                     "subtotal": float(subtotal),
                     "promotion_id": None,
                     "promotion_name": None,
@@ -1067,7 +1081,7 @@ class VendorOrderService:
                     "success": False,
                     "error": "precio_no_configurado",
                     "message": (
-                        f"Encontré '{product.name}' con {normalized_stock_quantity(product.stock):g} "
+                        f"Encontré '{product.name}' con {normalized_stock_quantity(_vendor_available_stock(product, company_id)):g} "
                         "unidades disponibles, pero su precio está configurado en $0. "
                         "No corresponde armar un presupuesto hasta que el comercio configure su precio."
                     ),
@@ -1080,7 +1094,7 @@ class VendorOrderService:
                     },
                 }
 
-            available = Decimal(str(product.stock or 0))
+            available = Decimal(str(_vendor_available_stock(product, company_id)))
             existing = Decimal(str(cart.get(str(product.id), 0) or 0))
             replace_quantity = bool(row.get("replace_quantity"))
             requested_total = quantity if replace_quantity else existing + quantity
@@ -1488,6 +1502,7 @@ class VendorOrderService:
                 client.phone = client.phone or phone[:20]
                 client.whatsapp = client.whatsapp or phone[:30]
 
+        fulfillment_branch_id = _vendor_fulfillment_branch_id(company_id)
         product_ids = [int(item["product_id"]) for item in cart["items"]]
         products = {
             product.id: product
@@ -1513,7 +1528,7 @@ class VendorOrderService:
                     "Corregí el precio antes de emitir un presupuesto o enlace de pago."
                 )
             reserved = reservations.get(product.id, Decimal("0"))
-            available_after_reservations = Decimal(str(product.stock or 0)) - reserved
+            available_after_reservations = Decimal(str(_vendor_available_stock(product, company_id))) - reserved
             if quantity <= 0 or available_after_reservations < quantity:
                 if reserved > 0:
                     raise ValueError(
@@ -1611,6 +1626,7 @@ class VendorOrderService:
             created_by_user_id=actor.id,
             seller_id=actor.id,
             company_id=company_id,
+            branch_id=fulfillment_branch_id,
         )
         db.session.add(quote)
         db.session.flush()
@@ -1945,7 +1961,7 @@ class VendorOrderService:
         }
         for item in quote.items:
             product = products.get(int(item.product_id or 0))
-            if product is None or Decimal(str(product.stock or 0)) < Decimal(str(item.quantity or 0)):
+            if product is None or Decimal(str(_vendor_available_stock(product, company_id, branch_id=quote.branch_id))) < Decimal(str(item.quantity or 0)):
                 return {"success": False, "error": "stock_no_disponible", "product": getattr(product, "name", None) or "producto"}
 
         external_reference = _ai_order_external_reference(
@@ -2278,7 +2294,7 @@ class VendorOrderService:
             quantity = Decimal(str(item.quantity or 0))
             if quantity <= 0:
                 raise ValueError("El pedido contiene una cantidad inválida.")
-            if Decimal(str(product.stock or 0)) < quantity:
+            if Decimal(str(_vendor_available_stock(product, company_id, branch_id=quote.branch_id))) < quantity:
                 raise ValueError(f"Stock insuficiente para completar {product.name} después del pago.")
             lines.append({"product": product, "quantity": float(quantity), "price": _money(item.unit_price), "discount": _money(item.discount)})
 
@@ -2310,11 +2326,15 @@ class VendorOrderService:
             client_id=order_client.id if order_client is not None else quote.client_id,
             seller_id=quote.seller_id or quote.created_by_user_id,
             company_id=company_id,
+            branch_id=quote.branch_id,
             cash_session_id=None,
         )
         app_db.session.add(sale)
         app_db.session.flush()
-        InventoryService.apply_stock(lines=lines)
+        InventoryService.apply_stock(
+            lines=lines, branch_id=sale.branch_id, source_type="vendor_ai_order",
+            source_id=quote.id, user_id=quote.seller_id or quote.created_by_user_id,
+        )
 
         for item, line in zip(item_rows, lines):
             app_db.session.add(
