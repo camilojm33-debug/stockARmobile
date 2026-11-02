@@ -15,8 +15,8 @@ from flask import current_app
 
 
 class BackupService:
-    CURRENT_SCHEMA_VERSION = 3
-    SUPPORTED_SCHEMA_VERSIONS = {1, 2, 3}
+    CURRENT_SCHEMA_VERSION = 4
+    SUPPORTED_SCHEMA_VERSIONS = {1, 2, 3, 4}
     DEFAULT_MAX_COMPRESSED_BYTES = 5 * 1024 * 1024
     DEFAULT_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
     PLAN_LIMITS = {
@@ -673,6 +673,7 @@ class BackupService:
         relationships = (
             ("products", "supplier_id", "suppliers"),
             ("sales", "client_id", "clients"),
+            ("company_memberships", "user_id", "users"),
             ("sales", "cash_session_id", "cash_sessions"),
             ("sale_items", "sale_id", "sales"),
             ("sale_items", "product_id", "products"),
@@ -1253,21 +1254,6 @@ class BackupService:
                 identities_by_backup_id[int(incoming_id)] = int(user.id)
 
         membership_rows = memberships if isinstance(memberships, list) else []
-        if not membership_rows:
-            # Legacy backups did not store memberships. Create only a primary-company
-            # membership using the historic user row, without importing its password.
-            membership_rows = [
-                {
-                    "user_id": row.get("id"),
-                    "company_id": company_id,
-                    "role": "user",
-                    "permissions_json": "[]",
-                    "active": False,
-                    "status": "revoked",
-                }
-                for row in (rows or [])
-                if isinstance(row, dict)
-            ]
 
         for raw_membership in membership_rows:
             if not isinstance(raw_membership, dict):
