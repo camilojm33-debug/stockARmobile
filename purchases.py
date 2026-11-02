@@ -74,7 +74,7 @@ def _form_list(name):
     return [value] if value is not None else []
 
 
-def _parse_purchase_lines():
+def _parse_purchase_lines(*, enforce_branch_precision=False):
     product_values = _form_list("product_id")
     quantity_values = _form_list("quantity")
     cost_values = _form_list("unit_cost")
@@ -89,6 +89,9 @@ def _parse_purchase_lines():
         unit_cost = _to_float(raw_cost)
         if not product_id or quantity <= 0 or unit_cost < 0:
             raise ValueError(f"La línea {index} tiene producto, cantidad o costo inválido.")
+        if enforce_branch_precision:
+            from stockarmobile.branch_inventory import validate_stock_quantity
+            quantity = float(validate_stock_quantity(quantity, label=f"La cantidad de la línea {index}"))
         lines.append({"product_id": product_id, "quantity": quantity, "unit_cost": unit_cost})
     if not lines:
         raise ValueError("Agregá al menos un producto a la compra.")
@@ -165,11 +168,15 @@ def _apply_product_purchase_totals(product_totals, *, branch_id=None):
         missing = sorted(set(product_ids) - set(locked_products))
         raise ValueError(f"Productos no encontrados para actualizar stock: {missing}")
 
+    from decimal import Decimal, ROUND_HALF_UP
+
     for product_id, (_, purchase_quantity, purchase_value) in product_totals.items():
         product = locked_products[int(product_id)]
+        purchase_quantity = Decimal(str(purchase_quantity)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+        purchase_quantity_float = float(purchase_quantity)
         previous_stock = float(product.stock or 0)
         previous_cost = float(product.cost_price or 0)
-        new_stock = previous_stock + purchase_quantity
+        new_stock = previous_stock + purchase_quantity_float
         product.stock = new_stock
         if branch_id is not None:
             from stockarmobile.branch_inventory import adjust_branch_stock
@@ -210,7 +217,9 @@ def index():
                 flash("Proveedor no encontrado para esta empresa.", "danger")
                 return redirect(url_for("purchases.index", company_id=company_id))
         try:
-            lines = _parse_purchase_lines()
+            from stockarmobile.branch_context import get_active_branch_id
+            branch_id = get_active_branch_id()
+            lines = _parse_purchase_lines(enforce_branch_precision=branch_id is not None)
             product_totals = {}
             resolved_lines = []
             for line in lines:
@@ -223,8 +232,6 @@ def index():
                 product_totals[product.id][1] += line["quantity"]
                 product_totals[product.id][2] += line["quantity"] * line["unit_cost"]
             subtotal = sum(line["quantity"] * line["unit_cost"] for _, line in resolved_lines)
-            from stockarmobile.branch_context import get_active_branch_id
-            branch_id = get_active_branch_id()
             order = PurchaseOrder(
                 supplier_id=supplier.id if supplier else None,
                 company_id=company_id,
@@ -458,7 +465,7 @@ def edit_supplier_purchase(supplier_id, purchase_id):
     products = _company_scope(Product.query.filter_by(active=True), Product, company_id).order_by(Product.name).all()
     if request.method == "POST":
         try:
-            lines = _parse_purchase_lines()
+            lines = _parse_purchase_lines(enforce_branch_precision=purchase.branch_id is not None)
             resolved_lines = []
             new_totals = {}
             for line in lines:
@@ -500,6 +507,7 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                 product.stock = updated_stock
                 if purchase.branch_id is not None:
                     from stockarmobile.branch_inventory import adjust_branch_stock
+                    from stockarmobile.branch_inventory import reconcile_company_stock_total
                     adjust_branch_stock(
                         product,
                         purchase.branch_id,
@@ -509,8 +517,10 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                         source_id=purchase.id,
                         user_id=current_user.id,
                         update_company_total=False,
+                        allow_legacy_precision=True,
                         note="Ajuste por edición de compra",
                     )
+                    reconcile_company_stock_total(product)
                 product.cost_price = updated_cost
                 product.margin = float(product.price or 0) - float(product.cost_price or 0)
                 product.profit_percent = product.margin / float(product.cost_price) * 100 if float(product.cost_price or 0) else 0
