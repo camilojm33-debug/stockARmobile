@@ -582,6 +582,86 @@ def trace_mp_qr_response(response):
 
 
 @app.before_request
+def refresh_cached_company_membership_context():
+    """Rebind a cached Flask-Login identity when its selected tenant changes.
+
+    Normal requests get a fresh Flask application context, but test clients and
+    embedded request contexts can reuse one. Flask-Login then keeps g._login_user
+    cached across requests. The session's company selection is authoritative only
+    after it is checked against an active membership; never trust the cookie alone.
+    """
+    if not current_user.is_authenticated:
+        return None
+
+    from stockarmobile.company_memberships import (
+        ACTIVE_COMPANY_SESSION_KEY,
+        apply_membership_context,
+        choose_membership_for_login,
+    )
+
+    selected_company_id = session.get(ACTIVE_COMPANY_SESSION_KEY)
+    context_key = (int(current_user.id), str(selected_company_id or ""))
+    if getattr(g, "_stockarmobile_membership_context_key", None) == context_key:
+        return None
+
+    if (getattr(current_user, "role", None) or "").strip().lower() == "superadmin":
+        g._stockarmobile_membership_context_key = context_key
+        return None
+
+    membership = choose_membership_for_login(current_user, selected_company_id)
+    if membership is not None:
+        apply_membership_context(current_user, membership)
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(membership.company_id)
+        context_key = (int(current_user.id), str(int(membership.company_id)))
+        g._stockarmobile_membership_context_key = context_key
+        return None
+
+    # No active membership was selected. Distinguish a truly legacy identity
+    # from a user whose company access was explicitly revoked or is invitation-only.
+    identity = db.session.query(
+        User.company_id,
+        User.role,
+        User.permissions_json,
+        User.active,
+    ).filter(User.id == current_user.id).first()
+    memberships = CompanyMembership.query.filter_by(user_id=current_user.id).all()
+    primary_company_id = identity.company_id if identity is not None else None
+    primary_membership = next(
+        (row for row in memberships if primary_company_id is not None and int(row.company_id) == int(primary_company_id)),
+        None,
+    )
+
+    if primary_membership is not None or memberships:
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(current_user, "company_id", None)
+        set_committed_value(current_user, "role", "user")
+        set_committed_value(current_user, "permissions_json", "[]")
+        current_user.company_membership_active = False
+        current_user.company_membership_missing = True
+        session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
+        context_key = (int(current_user.id), "")
+    elif identity is not None and primary_company_id is not None:
+        # Preserve compatibility for old accounts that have not received a
+        # membership row yet; restore their persisted primary-company attributes.
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(current_user, "company_id", int(primary_company_id))
+        set_committed_value(current_user, "role", identity.role or "user")
+        set_committed_value(current_user, "permissions_json", identity.permissions_json or "[]")
+        current_user.company_membership_active = bool(identity.active)
+        current_user.company_membership_role = identity.role or "user"
+        current_user.company_membership_missing = False
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(primary_company_id)
+        context_key = (int(current_user.id), str(int(primary_company_id)))
+    else:
+        current_user.company_membership_missing = False
+
+    g._stockarmobile_membership_context_key = context_key
+    return None
+
+
+@app.before_request
 def enforce_password_change_if_required():
     if not current_user.is_authenticated:
         return None
