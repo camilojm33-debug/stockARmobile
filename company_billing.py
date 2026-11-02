@@ -1697,7 +1697,7 @@ def _require_company_admin_or_forbid():
 
 def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_text="", role_filter="", status_filter=""):
     from sqlalchemy.orm.attributes import set_committed_value
-    from app import CashMovement, Sale, User, UserCompanyMembership, db
+    from app import CashMovement, Sale, User, UserCompanyMembership, db, utcnow
     from stockarmobile.company_memberships import apply_membership_to_user
 
     normalized_search = (search_text or "").strip().lower()
@@ -1788,6 +1788,12 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
             "saldo": saldo,
             "last_access": access_rows.get(user.id),
             "permissions": _user_permissions(user),
+            "invitation_pending": bool(
+                memberships_by_user_id.get(int(user.id))
+                and memberships_by_user_id[int(user.id)].invitation_token_hash
+                and memberships_by_user_id[int(user.id)].invitation_expires_at
+                and memberships_by_user_id[int(user.id)].invitation_expires_at > utcnow()
+            ),
         })
     result_rows.sort(key=lambda item: (-item["total_sold"], item["user"].created_at or datetime.min, item["user"].id))
     for index, row in enumerate(result_rows, start=1):
@@ -4349,6 +4355,8 @@ def company_settings_user_delete(user_id):
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     membership.active = False
+    membership.invitation_token_hash = None
+    membership.invitation_expires_at = None
     record_audit(
         action="company_user_membership_revoked",
         entity="user",
@@ -4452,7 +4460,7 @@ def company_settings_user_create():
 @bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
 @company_admin_required
 def company_settings_user_toggle(user_id):
-    from app import UserCompanyMembership, db, record_audit
+    from app import User, UserCompanyMembership, db, record_audit, utcnow
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4462,7 +4470,33 @@ def company_settings_user_toggle(user_id):
     membership = UserCompanyMembership.query.filter_by(
         user_id=user_id, company_id=company.id
     ).first_or_404()
+    action = (request.form.get("action") or "").strip().lower()
 
+    pending_invitation = bool(
+        membership.invitation_token_hash
+        and membership.invitation_expires_at
+        and membership.invitation_expires_at > utcnow()
+        and not membership.active
+    )
+    if pending_invitation:
+        if action != "cancel_invitation":
+            flash("La invitación sigue pendiente. La persona debe aceptarla antes de habilitar su acceso.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+        membership.invitation_token_hash = None
+        membership.invitation_expires_at = None
+        record_audit(
+            action="company_user_invitation_cancelled",
+            entity="user",
+            entity_id=user_id,
+            detail=f"Invitación cancelada para company_id={company.id}.",
+        )
+        db.session.commit()
+        flash("Invitación cancelada. La persona todavía no tiene acceso a esta empresa.", "success")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
     if user_id == current_user.id and membership.active:
         flash("No puedes desactivar tu propia membresía administradora.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
@@ -4473,18 +4507,25 @@ def company_settings_user_toggle(user_id):
             UserCompanyMembership.role == "admin",
             UserCompanyMembership.active.is_(True),
             UserCompanyMembership.user_id != user_id,
+        ).join(User, User.id == UserCompanyMembership.user_id).filter(
+            User.active.is_(True)
         ).count()
         if remaining_admins == 0:
             flash("No se puede desactivar al único administrador activo de la empresa.", "warning")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     if not membership.active:
+        if not user.active:
+            flash("La cuenta global está desactivada. No se puede habilitar una membresía.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
         allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
         if not allowed:
             flash(message, "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     membership.active = not membership.active
+    membership.invitation_token_hash = None
+    membership.invitation_expires_at = None
     record_audit(
         action="company_user_membership_toggle",
         entity="user",
@@ -4494,6 +4535,7 @@ def company_settings_user_toggle(user_id):
     db.session.commit()
     flash(f"Acceso a esta empresa {'activado' if membership.active else 'desactivado'} correctamente.", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
+
 
 @bp.route("/company-settings/users/<int:user_id>/reset-password", methods=["POST"])
 @company_admin_required
