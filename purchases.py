@@ -508,6 +508,10 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                 new_qty = new_totals.get(product_id, [None, 0.0, 0.0])[1]
                 new_value = new_totals.get(product_id, [None, 0.0, 0.0])[2]
                 product = (new_totals.get(product_id) or old_totals.get(product_id))[0]
+                if purchase.branch_id is not None:
+                    from stockarmobile.branch_inventory import lock_product_stock_row
+                    lock_product_stock_row(product)
+                    db.session.refresh(product, attribute_names=["stock", "cost_price"])
                 current_stock = float(product.stock or 0)
                 updated_stock, updated_cost = _recalculate_purchase_edit_values(
                     current_stock=current_stock,
