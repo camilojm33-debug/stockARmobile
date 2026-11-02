@@ -396,16 +396,10 @@ def index():
 
     employees = []
     if _is_admin():
-        employees = (
-            User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
-            .filter(
-                UserCompanyMembership.company_id == current_user.company_id,
-                UserCompanyMembership.active.is_(True),
-                User.active.is_(True),
-            )
-            .order_by(User.username.asc(), User.id.asc())
-            .all()
-        )
+        from stockarmobile.company_memberships import users_for_company_query
+        employees = users_for_company_query(current_user.company_id).order_by(
+            User.username.asc(), User.id.asc()
+        ).all()
 
     return render_template(
         "caja/index.html",
