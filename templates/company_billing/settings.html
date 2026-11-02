@@ -189,7 +189,7 @@
                   <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.company_settings_backups_download', backup_id=backup.id) }}">Descargar</a>
                     <a class="btn btn-sm btn-outline-warning" href="{{ url_for('company_billing.company_settings', panel='backups', preview_id=backup.id) }}">Restaurar</a>
-                    <form method="post" action="{{ url_for('company_billing.company_settings_backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="confirm_delete" value="1"><button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button></form>
+                    <form method="post" action="{{ url_for('company_billing.company_settings_backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="confirm_delete" value="1"><button class="btn btn-sm btn-outline-danger" type="submit">Quitar acceso</button></form>
                   </div>
                 </td>
               </tr>
@@ -524,7 +524,13 @@
             <tr>
               <td>{{ user.name }}</td>
               <td>{{ user.email }}</td>
-              <td><span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span></td>
+              <td>
+                {% if row.invitation_pending %}
+                <span class="badge text-bg-warning">Invitación pendiente</span>
+                {% else %}
+                <span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span>
+                {% endif %}
+              </td>
               <td>{{ 'Administrador' if user.role == 'admin' else 'Empleado' }}</td>
               <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
               <td>{{ row.last_access.strftime('%Y-%m-%d %H:%M') if row.last_access else '-' }}</td>
@@ -549,7 +555,12 @@
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_toggle', user_id=user.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar' if user.active else 'Activar' }}</button>
+                    {% if row.invitation_pending %}
+                    <input type="hidden" name="action" value="cancel_invitation">
+                    <button class="btn btn-sm btn-outline-warning" type="submit">Cancelar invitación</button>
+                    {% else %}
+                    <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar acceso' if user.active else 'Reactivar acceso' }}</button>
+                    {% endif %}
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_reset_password', user_id=user.id) }}" class="border rounded-3 p-2 bg-light d-grid gap-2" style="min-width: 320px;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -571,7 +582,7 @@
                     <div class="small text-muted">Si no completás los campos, se genera una contraseña temporal como antes.</div>
                     <button class="btn btn-sm btn-outline-warning" type="submit">Guardar contraseña</button>
                   </form>
-                  <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Eliminar empleado {{ user.name }}? Si tiene historial será desactivado automáticamente.');">
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Quitar a {{ user.name }} de esta empresa? Su cuenta y accesos a otras empresas se conservarán.');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
                   </form>
