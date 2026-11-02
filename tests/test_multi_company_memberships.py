@@ -147,8 +147,10 @@ def test_switch_company_route_only_accepts_an_active_membership(app):
             session_data["_user_id"] = str(user_id)
             session_data["_fresh"] = True
 
+        with app.test_request_context("/"):
+            switch_url = url_for("auth.switch_company")
         response = client.post(
-            url_for("auth.switch_company"),
+            switch_url,
             data={"company_id": str(company_b.id)},
             follow_redirects=False,
         )
@@ -157,7 +159,7 @@ def test_switch_company_route_only_accepts_an_active_membership(app):
             assert session_data[ACTIVE_COMPANY_SESSION_KEY] == company_b.id
 
         rejected = client.post(
-            url_for("auth.switch_company"),
+            switch_url,
             data={"company_id": str(company_c.id)},
             follow_redirects=False,
         )
@@ -167,13 +169,26 @@ def test_switch_company_route_only_accepts_an_active_membership(app):
 
 
 
-def test_company_invitation_remains_pending_until_user_accepts(app):
+def test_company_invitation_remains_pending_until_user_accepts(app, monkeypatch):
     from app import Branch, UserBranchAccess
     from services.company_membership_invitation_service import CompanyMembershipInvitationService
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    monkeypatch.setattr(
+        CompanyMembershipInvitationService,
+        "send_invitation_email",
+        staticmethod(lambda **kwargs: False),
+    )
 
     with app.app_context():
         company_a = _company("Compañía de origen")
         company_b = _company("Compañía invitante")
+        PlanService.ensure_defaults(db.session)
+        trial_plan = PlanService.get_plan(code="trial")
+        SubscriptionService.ensure_company_trial(
+            db.session, company=company_b, trial_plan=trial_plan
+        )
         user = _user(company_a, username="invited-existing-user")
         _membership(user, company_a, role="admin", permissions='["billing"]')
         default_branch = Branch(
@@ -213,7 +228,8 @@ def test_company_invitation_remains_pending_until_user_accepts(app):
             session_data["_user_id"] = str(user.id)
             session_data["_fresh"] = True
 
-        invitation_path = url_for("auth.accept_company_invitation", token=token)
+        with app.test_request_context("/"):
+            invitation_path = url_for("auth.accept_company_invitation", token=token)
         page = client.get(invitation_path)
         assert page.status_code == 200
         assert b"Aceptar invitaci" in page.data
@@ -264,7 +280,8 @@ def test_invitation_cannot_be_accepted_by_a_different_user(app):
             session_data["_user_id"] = str(other.id)
             session_data["_fresh"] = True
 
-        path = url_for("auth.accept_company_invitation", token=token)
+        with app.test_request_context("/"):
+            path = url_for("auth.accept_company_invitation", token=token)
         response = client.get(path)
         assert response.status_code == 403
         pending = UserCompanyMembership.query.filter_by(
