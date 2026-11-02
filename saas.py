@@ -5422,7 +5422,7 @@ def subscriptions_action(subscription_id):
 @bp.route("/users")
 @superadmin_required
 def users_panel():
-    from app import Company, User, db
+    from app import Company, CompanyMembership, User, db
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -5440,23 +5440,46 @@ def users_panel():
                 User.last_name.ilike(like),
             )
         )
-    if role in {"admin", "user", "superadmin"}:
-        query = query.filter(User.role == role)
     if company_id:
-        query = query.filter(User.company_id == company_id)
+        query = query.join(CompanyMembership, CompanyMembership.user_id == User.id).filter(
+            CompanyMembership.company_id == company_id,
+            CompanyMembership.status.in_(["active", "invited"]),
+        )
+        if role in {"admin", "user"}:
+            query = query.filter(CompanyMembership.role == role)
+    elif role in {"admin", "user", "superadmin"}:
+        query = query.filter(User.role == role)
 
     users = query.order_by(User.created_at.desc(), User.id.desc()).limit(300).all()
+    user_ids = [int(item.id) for item in users]
     company_ids = sorted({item.company_id for item in users if item.company_id})
     companies = (
         Company.query.filter(Company.id.in_(company_ids)).order_by(Company.name.asc()).all() if company_ids else []
     )
     companies_by_id = {item.id: item for item in companies}
+    memberships_by_user = {}
+    if user_ids:
+        membership_rows = (
+            CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+            .filter(
+                CompanyMembership.user_id.in_(user_ids),
+                CompanyMembership.active.is_(True),
+                CompanyMembership.status == "active",
+                Company.active.is_(True),
+            )
+            .order_by(Company.name.asc())
+            .all()
+        )
+        for membership in membership_rows:
+            memberships_by_user.setdefault(int(membership.user_id), []).append(membership)
+
     all_companies = Company.query.order_by(Company.name.asc()).all()
 
     return render_template(
         "saas/users.html",
         users=users,
         companies_by_id=companies_by_id,
+        memberships_by_user=memberships_by_user,
         all_companies=all_companies,
         filters={"q": q, "role": role, "company_id": company_id},
     )
