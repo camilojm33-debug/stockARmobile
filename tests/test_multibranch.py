@@ -397,6 +397,25 @@ def test_branch_transfer_moves_stock_without_changing_company_total(app):
         db.session.rollback()
 
 
+def test_branch_transfer_rejects_more_than_three_decimals(app):
+    from stockarmobile.branch_inventory import transfer_branch_stock
+
+    with app.app_context():
+        company = _company("Empresa precisión transferencia")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(company_id=company.id, barcode="TR-003", name="Precisión", stock=2, active=True)
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("2"))
+        set_branch_stock(product, north.id, Decimal("0"))
+        with pytest.raises(ValueError, match="tres decimales"):
+            transfer_branch_stock(product, central.id, north.id, Decimal("0.0001"))
+        assert available_stock(product, central.id) == 2.0
+        assert available_stock(product, north.id) == 0.0
+        db.session.rollback()
+
+
 def test_branch_transfer_rejects_insufficient_source_stock(app):
     from stockarmobile.branch_inventory import transfer_branch_stock
 
