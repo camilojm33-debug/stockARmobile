@@ -35,16 +35,24 @@ def _user(company, *, role="admin", email="multi@example.test"):
 
 
 def _membership(user, company, *, role, permissions="[]"):
-    row = CompanyMembership(
-        user_id=user.id,
-        company_id=company.id,
-        role=role,
-        permissions_json=permissions,
-        active=True,
-        status="active",
-        accepted_at=utcnow(),
-    )
-    db.session.add(row)
+    row = CompanyMembership.query.filter_by(user_id=user.id, company_id=company.id).first()
+    if row is None:
+        row = CompanyMembership(
+            user_id=user.id,
+            company_id=company.id,
+            role=role,
+            permissions_json=permissions,
+            active=True,
+            status="active",
+            accepted_at=utcnow(),
+        )
+        db.session.add(row)
+    else:
+        row.role = role
+        row.permissions_json = permissions
+        row.active = True
+        row.status = "active"
+        row.accepted_at = utcnow()
     db.session.flush()
     return row
 
