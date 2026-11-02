@@ -925,7 +925,7 @@ class BackupService:
         other branches are set to zero rather than silently duplicating inventory.
         """
         from decimal import Decimal, InvalidOperation
-        from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Product, User, db
+        from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Product, User, UserCompanyMembership, db
 
         company_id = int(company_id)
         product_id_map = {int(key): int(value) for key, value in (product_id_map or {}).items()}
