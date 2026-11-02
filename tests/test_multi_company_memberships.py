@@ -164,3 +164,111 @@ def test_switch_company_route_only_accepts_an_active_membership(app):
         assert rejected.status_code == 403
         with client.session_transaction() as session_data:
             assert session_data[ACTIVE_COMPANY_SESSION_KEY] == company_b.id
+
+
+
+def test_company_invitation_remains_pending_until_user_accepts(app):
+    from app import Branch, UserBranchAccess
+    from services.company_membership_invitation_service import CompanyMembershipInvitationService
+
+    with app.app_context():
+        company_a = _company("Compañía de origen")
+        company_b = _company("Compañía invitante")
+        user = _user(company_a, username="invited-existing-user")
+        _membership(user, company_a, role="admin", permissions='["billing"]')
+        default_branch = Branch(
+            company_id=company_b.id,
+            name="Casa central",
+            code="CASA-CENTRAL",
+            active=True,
+            is_default=True,
+        )
+        db.session.add(default_branch)
+        db.session.flush()
+
+        with app.test_request_context("/"):
+            membership, invitation_url, email_sent = CompanyMembershipInvitationService.create_or_refresh(
+                db.session,
+                user=user,
+                company=company_b,
+                role="user",
+                permissions_json='["inventory"]',
+            )
+            token = app.config["_LAST_COMPANY_INVITATION_TOKEN"]
+            assert invitation_url.endswith(token)
+            assert email_sent is False
+
+        db.session.commit()
+        assert membership.active is False
+        assert membership.invitation_token_hash
+        assert membership.invitation_expires_at is not None
+
+        with app.test_request_context("/"):
+            login_user(user)
+            choices = available_company_choices(user)
+            assert company_b.id not in {item["id"] for item in choices}
+
+        client = app.test_client()
+        with client.session_transaction() as session_data:
+            session_data["_user_id"] = str(user.id)
+            session_data["_fresh"] = True
+
+        invitation_path = url_for("auth.accept_company_invitation", token=token)
+        page = client.get(invitation_path)
+        assert page.status_code == 200
+        assert b"Aceptar invitaci" in page.data
+
+        accepted = client.post(invitation_path, data={}, follow_redirects=False)
+        assert accepted.status_code == 302
+        refreshed_membership = UserCompanyMembership.query.filter_by(
+            user_id=user.id, company_id=company_b.id
+        ).first()
+        assert refreshed_membership.active is True
+        assert refreshed_membership.accepted_at is not None
+        assert refreshed_membership.invitation_token_hash is None
+        assert UserBranchAccess.query.filter_by(
+            user_id=user.id, company_id=company_b.id, branch_id=default_branch.id
+        ).first() is not None
+
+        with client.session_transaction() as session_data:
+            assert session_data[ACTIVE_COMPANY_SESSION_KEY] == company_b.id
+
+        replay = client.get(invitation_path)
+        assert replay.status_code == 302
+
+
+def test_invitation_cannot_be_accepted_by_a_different_user(app):
+    from services.company_membership_invitation_service import CompanyMembershipInvitationService
+
+    with app.app_context():
+        company_a = _company("Empresa titular")
+        company_b = _company("Empresa destino")
+        owner = _user(company_a, username="invitation-owner")
+        other = _user(company_a, username="different-login")
+        _membership(owner, company_a, role="admin", permissions='["billing"]')
+        _membership(other, company_a, role="user", permissions='["inventory"]')
+        db.session.flush()
+
+        with app.test_request_context("/"):
+            _membership_row, _url, _sent = CompanyMembershipInvitationService.create_or_refresh(
+                db.session,
+                user=owner,
+                company=company_b,
+                role="user",
+            )
+            token = app.config["_LAST_COMPANY_INVITATION_TOKEN"]
+        db.session.commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session_data:
+            session_data["_user_id"] = str(other.id)
+            session_data["_fresh"] = True
+
+        path = url_for("auth.accept_company_invitation", token=token)
+        response = client.get(path)
+        assert response.status_code == 403
+        pending = UserCompanyMembership.query.filter_by(
+            user_id=owner.id, company_id=company_b.id
+        ).first()
+        assert pending.active is False
+        assert pending.invitation_token_hash is not None
