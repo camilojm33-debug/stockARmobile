@@ -113,6 +113,8 @@ class PlanUsageService:
                 User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
                 .filter(
                     UserCompanyMembership.company_id == company_id,
+                    UserCompanyMembership.active.is_(True),
+                    User.active.is_(True),
                     UserCompanyMembership.role != "superadmin",
                 )
             )
