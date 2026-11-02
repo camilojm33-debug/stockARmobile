@@ -56,8 +56,11 @@ def lock_product_stock_row(product):
     return product_id
 
 
-def get_branch_stock(product, branch_id, *, lock=False, create=False):
-    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(product.company_id), active=True).first()
+def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inactive=False):
+    branch_query = Branch.query.filter_by(id=int(branch_id), company_id=int(product.company_id))
+    if not allow_inactive:
+        branch_query = branch_query.filter_by(active=True)
+    branch = branch_query.first()
     if branch is None:
         raise ValueError("La sucursal no pertenece a la empresa del producto o está inactiva.")
     query = BranchStock.query.filter_by(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id))
@@ -72,8 +75,8 @@ def get_branch_stock(product, branch_id, *, lock=False, create=False):
     return row
 
 
-def available_stock(product, branch_id):
-    row = get_branch_stock(product, branch_id)
+def available_stock(product, branch_id, *, allow_inactive=False):
+    row = get_branch_stock(product, branch_id, allow_inactive=allow_inactive)
     return float(row.stock or 0) if row is not None else 0.0
 
 
@@ -158,7 +161,8 @@ def set_branch_stock_and_reconcile(product, branch_id, quantity, *, movement_typ
 
 
 def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type=None, source_id=None,
-                        user_id=None, note=None, update_company_total=True, allow_legacy_precision=False):
+                        user_id=None, note=None, update_company_total=True, allow_legacy_precision=False,
+                        allow_inactive=False):
     delta = (
         _normalize_legacy_stock_quantity(delta)
         if allow_legacy_precision
@@ -175,7 +179,7 @@ def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type
         if locked_product is None:
             raise ValueError("El producto no pertenece a la empresa activa.")
         product = locked_product
-    row = get_branch_stock(product, branch_id, lock=True, create=True)
+    row = get_branch_stock(product, branch_id, lock=True, create=True, allow_inactive=allow_inactive)
     current = Decimal(str(row.stock or 0))
     updated = current + delta
     if updated < 0:
