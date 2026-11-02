@@ -4295,7 +4295,7 @@ def company_settings_user_update(user_id):
 @bp.route("/company-settings/users/<int:user_id>/role", methods=["POST"])
 @company_admin_required
 def company_settings_user_role_update(user_id):
-    from app import UserCompanyMembership, db, record_audit
+    from app import UserBranchAccess, UserCompanyMembership, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4369,6 +4369,9 @@ def company_settings_user_delete(user_id):
     membership.invitation_token_hash = None
     membership.invitation_expires_at = None
     membership.invited_email = None
+    UserBranchAccess.query.filter_by(
+        company_id=company.id, user_id=user_id
+    ).delete(synchronize_session=False)
     record_audit(
         action="company_user_membership_revoked",
         entity="user",
@@ -4480,7 +4483,7 @@ def company_settings_user_create():
 @bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
 @company_admin_required
 def company_settings_user_toggle(user_id):
-    from app import User, UserCompanyMembership, db, record_audit, utcnow
+    from app import Branch, User, UserBranchAccess, UserCompanyMembership, db, record_audit, utcnow
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4540,6 +4543,20 @@ def company_settings_user_toggle(user_id):
             return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     membership.active = not membership.active
+    if membership.active and membership.accepted_at is not None:
+        default_branch = Branch.query.filter_by(
+            company_id=company.id, is_default=True, active=True
+        ).first()
+        if default_branch is not None and UserBranchAccess.query.filter_by(
+            company_id=company.id, user_id=user_id, branch_id=default_branch.id
+        ).first() is None:
+            db.session.add(UserBranchAccess(
+                company_id=company.id, user_id=user_id, branch_id=default_branch.id
+            ))
+    elif not membership.active:
+        UserBranchAccess.query.filter_by(
+            company_id=company.id, user_id=user_id
+        ).delete(synchronize_session=False)
     membership.invitation_token_hash = None
     membership.invitation_expires_at = None
     membership.invited_email = None
