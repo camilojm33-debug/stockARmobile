@@ -58,13 +58,17 @@ class PlanUsageService:
 
     @staticmethod
     def _resource_counts(company_id: int):
-        from app import Client, Product, User
+        from app import Client, Product, User, UserCompanyMembership
 
-        users_count = User.query.filter(
-            User.company_id == company_id,
-            User.active.is_(True),
-            User.role != "superadmin",
-        ).count()
+        users_count = (
+            User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+            .filter(
+                UserCompanyMembership.company_id == company_id,
+                UserCompanyMembership.active.is_(True),
+                User.active.is_(True),
+                UserCompanyMembership.role != "superadmin",
+            ).count()
+        )
         products_count = Product.query.filter(
             Product.company_id == company_id,
             Product.active.is_(True),
@@ -93,14 +97,20 @@ class PlanUsageService:
 
     @staticmethod
     def _growth_rate_and_days_left(company_id: int, resource_key: str, used: int, limit: int):
-        from app import Client, Product, User, db
+        from app import Client, Product, User, UserCompanyMembership, db
 
         if limit <= 0:
             return None
 
         if resource_key == PlanUsageService.RESOURCE_USERS:
             model = User
-            query = User.query.filter(User.company_id == company_id, User.role != "superadmin")
+            query = (
+                User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+                .filter(
+                    UserCompanyMembership.company_id == company_id,
+                    UserCompanyMembership.role != "superadmin",
+                )
+            )
             created_col = User.created_at
         elif resource_key == PlanUsageService.RESOURCE_PRODUCTS:
             model = Product
