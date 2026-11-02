@@ -36,8 +36,13 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
         raise ValueError("La cantidad de transferencia no es válida.") from None
     if not amount.is_finite() or amount <= 0:
         raise ValueError("La cantidad de transferencia debe ser mayor que cero.")
-    if amount != amount.quantize(Decimal("0.001")):
+    try:
+        normalized_amount = amount.quantize(Decimal("0.001"))
+    except InvalidOperation:
+        raise ValueError("La cantidad de transferencia es demasiado grande.") from None
+    if amount != normalized_amount:
         raise ValueError("La cantidad debe tener como máximo tres decimales.")
+    amount = normalized_amount
 
     company_id = int(getattr(product, "company_id", 0) or 0)
     source = Branch.query.filter_by(id=int(source_branch_id), company_id=company_id, active=True).first()
