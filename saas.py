@@ -545,6 +545,11 @@ def _hard_delete_company(company):
                 continue
             _raw_delete_where_in(table_name, constrained_cols[0], values)
 
+    # Persist any primary-company re-homing before the defensive caller's
+    # final legacy User.company_id purge. Shared identities must no longer point
+    # at the tenant being deleted at that stage.
+    db.session.flush()
+
     # Delete the tenant only after all known dependent rows and FK-referenced
     # entity rows have been removed. Keep this inside the same transaction so
     # any remaining FK causes a full rollback instead of partial deletion.
