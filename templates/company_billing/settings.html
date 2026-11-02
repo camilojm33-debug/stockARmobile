@@ -1208,7 +1208,7 @@
                 <div class="fw-semibold small mb-2">Personal habilitado</div>
                 <div class="row g-2">
                   {% for employee in active_employees %}
-                  <div class="col-sm-6 col-lg-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, set()) %}checked{% endif %}> <span class="form-check-label">{{ employee.name }}</span></label></div>
+                  <div class="col-sm-6 col-lg-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, []) %}checked{% endif %}> <span class="form-check-label">{{ employee.name }}</span></label></div>
                   {% endfor %}
                 </div>
                 <button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Guardar accesos</button>
