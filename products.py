@@ -377,7 +377,7 @@ def delete(product_id=None, id=None):
 
 
 def _get_kardex_movements(product_id):
-    from app import BranchStockMovement, Product, ProductModification, db, scope_query_to_company
+    from app import BranchStockMovement, Product, ProductModification, PurchaseItem, PurchaseOrder, Sale, SaleItem, db, scope_query_to_company
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == product_id).first()
     if product is None:
@@ -392,7 +392,7 @@ def _get_kardex_movements(product_id):
         db.session.query(Sale, SaleItem).join(SaleItem, Sale.id == SaleItem.sale_id), Sale
     ).filter(SaleItem.product_id == product.id)
     purchase_query = scope_query_to_company(
-        db.session.query(PurchaseOrder, PurchaseItem).join(PurchaseItem, PurchaseOrder.id == PurchaseOrder.id), PurchaseOrder
+        db.session.query(PurchaseOrder, PurchaseItem).join(PurchaseItem, PurchaseOrder.id == PurchaseItem.purchase_order_id), PurchaseOrder
     ).filter(PurchaseItem.product_id == product.id)
     if branch_id is not None:
         sale_query = sale_query.filter(Sale.branch_id == branch_id)
