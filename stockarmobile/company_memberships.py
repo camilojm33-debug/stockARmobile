@@ -123,6 +123,12 @@ def bind_active_company_context(user):
 
     if membership is None or not bool(getattr(user, "active", True)):
         session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
+        # Fail closed: legacy routes derive tenant scope from current_user.company_id.
+        # An account without an active company membership must not retain access
+        # through its legacy/default company pointer.
+        set_committed_value(user, "company_id", None)
+        set_committed_value(user, "role", "user")
+        set_committed_value(user, "permissions_json", "[]")
         return None
 
     company = db.session.get(Company, selected_company_id)
