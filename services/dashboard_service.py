@@ -150,7 +150,16 @@ def build_dashboard_context():
         quotes_amount = _sum(Quote.total_amount, model=Quote, base_query=quotes_base)
         quotes_conversion_rate = (float(quotes_converted) / float(quotes_created) * 100.0) if quotes_created else 0.0
         recent_quotes = quotes_base.options(selectinload(Quote.client)).order_by(Quote.date.desc()).limit(5).all()
-    recent_sales = (_confirmed_sales_query(scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale), Sale).order_by(Sale.date.desc()).limit(5).all() if can_view_economic_metrics else [])
+    recent_sales = (
+        _confirmed_sales_query(
+            _apply_active_branch(
+                scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale),
+                Sale,
+            ),
+            Sale,
+        ).order_by(Sale.date.desc()).limit(5).all()
+        if can_view_economic_metrics else []
+    )
 
     cash_stats = {"open_sessions": 0, "closed_today": 0, "sold_cash_today": Decimal("0.00"), "sold_mp_today": Decimal("0.00"), "sold_total_today": Decimal("0.00"), "difference_today": Decimal("0.00"), "last_closings": []}
     if can_view_economic_metrics:
@@ -214,14 +223,32 @@ def _sum(column, *filters, model, base_query=None):
 
 def _sum_item_cost(*filters):
     from app import Sale, SaleItem, db, scope_query_to_company
-    query = _confirmed_sales_query(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity * SaleItem.cost_price), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale), Sale)
+    query = _confirmed_sales_query(
+        _apply_active_branch(
+            scope_query_to_company(
+                db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity * SaleItem.cost_price), 0))
+                .join(Sale, SaleItem.sale_id == Sale.id), Sale
+            ),
+            Sale,
+        ),
+        Sale,
+    )
     for condition in filters: query = query.filter(condition)
     return to_decimal(query.scalar())
 
 
 def _sum_item_quantity(*filters):
     from app import Sale, SaleItem, db, scope_query_to_company
-    query = _confirmed_sales_query(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale), Sale)
+    query = _confirmed_sales_query(
+        _apply_active_branch(
+            scope_query_to_company(
+                db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity), 0))
+                .join(Sale, SaleItem.sale_id == Sale.id), Sale
+            ),
+            Sale,
+        ),
+        Sale,
+    )
     for condition in filters: query = query.filter(condition)
     return query.scalar() or 0
 
@@ -266,9 +293,12 @@ def _sales_by_day(days):
 
     rows = (
         _confirmed_sales_query(
-            scope_query_to_company(
-                db.session.query(Sale.date, Sale.total_amount)
-                .filter(Sale.date >= start_utc, Sale.date < end_utc),
+            _apply_active_branch(
+                scope_query_to_company(
+                    db.session.query(Sale.date, Sale.total_amount)
+                    .filter(Sale.date >= start_utc, Sale.date < end_utc),
+                    Sale,
+                ),
                 Sale,
             ),
             Sale,
