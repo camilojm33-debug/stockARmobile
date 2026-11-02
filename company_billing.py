@@ -4285,6 +4285,7 @@ def company_settings_user_update(user_id):
             membership.invitation_token_hash = None
             membership.invitation_expires_at = None
             membership.invited_email = None
+            membership.invited_email = None
 
     record_audit(action="company_user_update", entity="user", entity_id=user.id, detail=f"Datos de cuenta actualizados desde company_id={company.id}: {user.username}")
     db.session.commit()
@@ -4367,6 +4368,7 @@ def company_settings_user_delete(user_id):
     membership.active = False
     membership.invitation_token_hash = None
     membership.invitation_expires_at = None
+    membership.invited_email = None
     record_audit(
         action="company_user_membership_revoked",
         entity="user",
@@ -4380,7 +4382,7 @@ def company_settings_user_delete(user_id):
 @bp.route("/company-settings/users/create", methods=["POST"])
 @company_admin_required
 def company_settings_user_create():
-    from app import User, UserCompanyMembership, db, record_audit
+    from app import User, UserBranchAccess, UserCompanyMembership, db, record_audit
     from services.company_membership_invitation_service import CompanyMembershipInvitationService
 
     company_id = getattr(current_user, "company_id", None)
@@ -4445,6 +4447,10 @@ def company_settings_user_create():
         db.session.add(user)
         db.session.flush()
 
+    # A re-invited employee must not silently regain old branch permissions.
+    UserBranchAccess.query.filter_by(
+        company_id=company.id, user_id=user.id
+    ).delete(synchronize_session=False)
     membership, invitation_url, email_sent = CompanyMembershipInvitationService.create_or_refresh(
         db.session,
         user=user,
@@ -4493,6 +4499,7 @@ def company_settings_user_toggle(user_id):
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         membership.invitation_token_hash = None
         membership.invitation_expires_at = None
+        membership.invited_email = None
         record_audit(
             action="company_user_invitation_cancelled",
             entity="user",
@@ -4535,6 +4542,7 @@ def company_settings_user_toggle(user_id):
     membership.active = not membership.active
     membership.invitation_token_hash = None
     membership.invitation_expires_at = None
+    membership.invited_email = None
     record_audit(
         action="company_user_membership_toggle",
         entity="user",
