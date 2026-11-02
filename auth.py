@@ -669,8 +669,16 @@ def accept_company_invitation(token):
 
     if request.method == "POST":
         # Recheck the invitation before changing the account or granting access.
-        membership = CompanyMembershipInvitationService.get_valid(token)
+        membership = CompanyMembershipInvitationService.get_valid(token, for_update=True)
         if membership is None or int(membership.user_id) != int(user.id):
+            abort(403)
+        company = (
+            Company.query.filter_by(id=membership.company_id, active=True)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if company is None:
             abort(403)
 
         if password_setup_required:
