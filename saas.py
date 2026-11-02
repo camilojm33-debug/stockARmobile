@@ -5616,6 +5616,21 @@ def users_update_role(user_id):
     ).first()
     if primary_membership is not None:
         primary_membership.role = new_role
+        try:
+            primary_permissions = json.loads(primary_membership.permissions_json or "[]")
+        except (TypeError, ValueError):
+            primary_permissions = []
+        if not isinstance(primary_permissions, list):
+            primary_permissions = []
+        primary_permissions = {
+            str(item).strip() for item in primary_permissions if str(item).strip()
+        }
+        if new_role == "admin":
+            primary_permissions.add("economic_stats")
+        else:
+            primary_permissions.discard("economic_stats")
+        primary_membership.permissions_json = json.dumps(sorted(primary_permissions))
+        user.permissions_json = primary_membership.permissions_json
     db.session.add(
         AuditLog(
             user_id=current_user.id,
