@@ -5838,7 +5838,6 @@ def users_update_account_status(user_id):
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
-    from types import SimpleNamespace
     from app import Company, PasswordRecoveryRequest, User, UserCompanyMembership, db
 
     _require_superadmin()
