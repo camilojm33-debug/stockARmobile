@@ -38,6 +38,7 @@ class CompanyMembershipInvitationService:
         raw_token = secrets.token_urlsafe(48)
         membership.invitation_token_hash = cls._hash(raw_token)
         membership.invitation_expires_at = now + timedelta(days=cls.TTL_DAYS)
+        membership.invited_email = (user.email or "").strip().lower()
         membership.invited_at = now
         membership.accepted_at = None
         membership.active = False
