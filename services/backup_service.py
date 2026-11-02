@@ -484,10 +484,13 @@ class BackupService:
             Supplier,
             User,
             UserCompanyMembership,
+            db,
         )
+        from stockarmobile.company_memberships import ensure_legacy_company_memberships
         from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
         company = Company.query.filter_by(id=company_id).first_or_404()
+        ensure_legacy_company_memberships(db.session, company_id)
 
         membership_rows = (
             db.session.query(User, UserCompanyMembership)
