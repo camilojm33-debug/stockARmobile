@@ -361,3 +361,81 @@ def test_legacy_backup_inventory_restores_into_casa_central(app):
         assert available_stock(product, north.id) == 0.0
         assert float(product.stock) == 9.0
         db.session.rollback()
+
+
+
+def test_branch_transfer_moves_stock_without_changing_company_total(app):
+    from app import BranchStockTransfer
+    from stockarmobile.branch_inventory import transfer_branch_stock
+
+    with app.app_context():
+        company = _company("Empresa transferencias")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="TR-001", name="Producto transferible",
+            stock=10, min_stock=1, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("8"))
+        set_branch_stock(product, north.id, Decimal("2"))
+        transfer = transfer_branch_stock(
+            product, central.id, north.id, Decimal("3.5"), note="Reposición semanal"
+        )
+        db.session.flush()
+        assert available_stock(product, central.id) == 4.5
+        assert available_stock(product, north.id) == 5.5
+        assert float(product.stock) == 10.0
+        assert transfer.company_id == company.id
+        assert transfer.source_branch_id == central.id
+        assert transfer.target_branch_id == north.id
+        movements = BranchStockMovement.query.filter_by(
+            company_id=company.id, source_type="branch_transfer", source_id=transfer.id
+        ).all()
+        assert {row.movement_type for row in movements} == {"transfer_out", "transfer_in"}
+        db.session.rollback()
+
+
+def test_branch_transfer_rejects_insufficient_source_stock(app):
+    from stockarmobile.branch_inventory import transfer_branch_stock
+
+    with app.app_context():
+        company = _company("Empresa transferencia sin stock")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(company_id=company.id, barcode="TR-002", name="Stock corto", stock=1, active=True)
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("1"))
+        set_branch_stock(product, north.id, Decimal("0"))
+        with pytest.raises(ValueError, match="Stock insuficiente"):
+            transfer_branch_stock(product, central.id, north.id, Decimal("2"))
+        assert available_stock(product, central.id) == 1.0
+        assert available_stock(product, north.id) == 0.0
+        assert float(product.stock) == 1.0
+        db.session.rollback()
+
+
+def test_employees_only_see_assigned_active_branches(app):
+    from flask_login import login_user
+    from app import UserBranchAccess
+    from stockarmobile.branch_context import accessible_branches
+
+    with app.app_context():
+        company = _company("Empresa permisos por sede")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="branch-access-user", email="branch-access-user@example.test",
+            password_hash="test-hash", role="user", active=True, company_id=company.id,
+        )
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add(UserBranchAccess(company_id=company.id, user_id=employee.id, branch_id=north.id))
+        db.session.commit()
+        with app.test_request_context("/"):
+            login_user(employee)
+            visible = accessible_branches(company.id)
+            assert [row.id for row in visible] == [north.id]
+        db.session.rollback()
