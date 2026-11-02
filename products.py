@@ -386,13 +386,38 @@ def _get_kardex_movements(product_id):
     movements = []
     from stockarmobile.branch_context import get_active_branch_id
     branch_id = get_active_branch_id()
+    # Preserve existing sale/purchase history and use the branch movement ledger
+    # for adjustments and transfers, avoiding double-counting normal operations.
+    sale_query = scope_query_to_company(
+        db.session.query(Sale, SaleItem).join(SaleItem, Sale.id == SaleItem.sale_id), Sale
+    ).filter(SaleItem.product_id == product.id)
+    purchase_query = scope_query_to_company(
+        db.session.query(PurchaseOrder, PurchaseItem).join(PurchaseItem, PurchaseOrder.id == PurchaseOrder.id), PurchaseOrder
+    ).filter(PurchaseItem.product_id == product.id)
+    if branch_id is not None:
+        sale_query = sale_query.filter(Sale.branch_id == branch_id)
+        purchase_query = purchase_query.filter(PurchaseOrder.branch_id == branch_id)
+    for sale, item in sale_query.order_by(Sale.date.desc(), Sale.id.desc()).limit(500).all():
+        movements.append({
+            "date": sale.date, "type": "Venta",
+            "detail": "Venta #{} - {}".format(sale.id, sale.customer or "Consumidor final"),
+            "quantity": -float(item.quantity or 0), "unit_value": float(item.price or 0),
+        })
+    for purchase, item in purchase_query.order_by(PurchaseOrder.date.desc(), PurchaseOrder.id.desc()).limit(500).all():
+        movements.append({
+            "date": purchase.date, "type": "Compra",
+            "detail": "Compra #{}".format(purchase.id),
+            "quantity": float(item.quantity or 0), "unit_value": float(item.unit_cost or 0),
+        })
     branch_query = BranchStockMovement.query.filter(
         BranchStockMovement.company_id == product.company_id,
         BranchStockMovement.product_id == product.id,
     )
     if branch_id is not None:
         branch_query = branch_query.filter(BranchStockMovement.branch_id == branch_id)
-    branch_movements = branch_query.order_by(
+    branch_movements = branch_query.filter(
+        ~BranchStockMovement.movement_type.in_(["sale", "purchase", "purchase_ai"])
+    ).order_by(
         BranchStockMovement.created_at.desc(), BranchStockMovement.id.desc()
     ).limit(500).all()
     for movement in branch_movements:
