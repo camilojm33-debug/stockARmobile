@@ -4357,12 +4357,15 @@ def company_settings_user_delete(user_id):
         flash("El empleado tiene historial en esta empresa. Se revocó su acceso y se conservaron sus registros.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-    db.session.delete(membership)
-    if other_memberships == 0:
-        db.session.delete(user)
-    record_audit(action="company_membership_removed", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Vínculo eliminado para usuario_id={user.id}")
+    # Keep a revoked tombstone so the old primary-company compatibility path
+    # cannot silently re-grant access and the same global account can be invited later.
+    membership.active = False
+    membership.status = "revoked"
+    membership.invitation_token_hash = None
+    membership.invitation_expires_at = None
+    record_audit(action="company_membership_removed", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Vínculo revocado para usuario_id={user.id}; la cuenta global fue conservada.")
     db.session.commit()
-    flash("Se quitó el acceso del usuario a esta empresa. Su cuenta y otras empresas asociadas se conservaron.", "success")
+    flash("Se quitó el acceso del usuario a esta empresa. La cuenta global y otros vínculos se conservaron.", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
@@ -4544,24 +4547,18 @@ def company_settings_user_toggle(user_id):
             return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     if new_active:
+        if not user.active:
+            flash("La cuenta global está desactivada. Un SuperAdmin debe reactivarla antes de devolverle acceso.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
         allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
         if not allowed:
             flash(message, "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         membership.active = True
         membership.status = "active"
-        user.active = True
     else:
         membership.active = False
         membership.status = "revoked"
-        active_elsewhere = CompanyMembership.query.filter(
-            CompanyMembership.user_id == user.id,
-            CompanyMembership.company_id != company.id,
-            CompanyMembership.active.is_(True),
-            CompanyMembership.status == "active",
-        ).count()
-        if active_elsewhere == 0:
-            user.active = False
 
     record_audit(action="company_membership_toggle", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Acceso de usuario_id={user.id} {'activado' if new_active else 'revocado'} en la empresa.")
     db.session.commit()
