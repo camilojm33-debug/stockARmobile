@@ -175,3 +175,60 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
         assert stored.company_id == first_id
         assert stored.role == "admin"
         assert stored.permissions_json == '["inventory","cash"]'
+
+
+
+def test_user_without_active_membership_can_only_accept_new_company_invitation(app):
+    with app.app_context():
+        old_company = _company("Empresa anterior")
+        new_company = _company("Nueva empresa")
+        user = _user(old_company, role="admin", email="returning@example.test")
+        old_membership = _membership(user, old_company, role="admin")
+        old_membership.active = False
+        old_membership.status = "revoked"
+        token = "fresh-company-invitation"
+        invited = CompanyMembership(
+            user_id=user.id,
+            company_id=new_company.id,
+            role="user",
+            permissions_json='["inventory"]',
+            active=False,
+            status="invited",
+            invitation_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            invitation_expires_at=utcnow() + timedelta(days=7),
+        )
+        db.session.add(invited)
+        db.session.commit()
+        user_id = user.id
+        new_company_id = new_company.id
+
+    client = app.test_client()
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "returning@example.test", "password": "secret123"},
+        follow_redirects=False,
+    )
+    assert login_response.status_code in {302, 303}
+
+    invite_page = client.get(f"/auth/company-invitations/{token}/accept")
+    assert invite_page.status_code == 200
+    assert "Nueva empresa" in invite_page.get_data(as_text=True)
+
+    accepted = client.post(f"/auth/company-invitations/{token}/accept")
+    assert accepted.status_code in {302, 303}
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    html = dashboard.get_data(as_text=True)
+    assert f'data-company-id="{new_company_id}"' in html
+    assert 'data-role="user"' in html
+
+    with app.app_context():
+        stored = db.session.get(User, user_id)
+        assert stored.company_id == old_company_id
+        assert stored.active is True
+        assert CompanyMembership.query.filter_by(
+            user_id=user_id,
+            company_id=new_company_id,
+            status="active",
+            active=True,
+        ).first() is not None
