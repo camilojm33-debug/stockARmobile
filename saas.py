@@ -5522,6 +5522,9 @@ def users_panel():
             active=bool(user.active and membership.active),
             membership_active=bool(membership.active),
             account_active=bool(user.active),
+            invitation_required=bool(
+                membership.invitation_acceptance_required and not membership.active
+            ),
             invitation_pending=bool(
                 membership.invitation_token_hash
                 and (
@@ -5534,6 +5537,11 @@ def users_panel():
                 membership.invitation_token_hash
                 and membership.invitation_expires_at
                 and membership.invitation_expires_at <= utcnow()
+                and not membership.active
+            ),
+            invitation_cancelled=bool(
+                membership.invitation_acceptance_required
+                and not membership.invitation_token_hash
                 and not membership.active
             ),
             can_manage_membership=True,
@@ -5573,8 +5581,10 @@ def users_panel():
                 active=bool(user.active),
                 membership_active=None,
                 account_active=bool(user.active),
+                invitation_required=False,
                 invitation_pending=False,
                 invitation_expired=False,
+                invitation_cancelled=False,
                 can_manage_membership=False,
             ))
 
@@ -5651,8 +5661,13 @@ def users_update_status(user_id):
         flash("Estado inválido.", "danger")
         return _redirect_back("saas.users_panel")
     new_active = desired == "1"
-    invitation_pending = bool(membership.invitation_token_hash and not membership.active)
-    if invitation_pending:
+    invitation_required = bool(
+        membership.invitation_acceptance_required and not membership.active
+    )
+    if invitation_required:
+        if not membership.invitation_token_hash:
+            flash("Esta membresía requiere aceptación. Reenviá la invitación desde Mi Empresa antes de habilitar el acceso.", "warning")
+            return _redirect_back("saas.users_panel")
         if new_active:
             flash("La persona debe aceptar la invitación antes de habilitar su acceso.", "warning")
             return _redirect_back("saas.users_panel")
