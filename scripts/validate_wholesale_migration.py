@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261102_01_multibranch_opening"
+HEAD_REVISION = "20261102_02_company_memberships"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -101,6 +101,7 @@ def main() -> None:
             # create them as it would on an existing production tenant.
             for table_name in ("branch_stock_transfers", "branch_stock_movements", "branch_stock", "user_branch_access", "branches"):
                 connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
+            connection.execute(text('DROP TABLE IF EXISTS "user_company_memberships" CASCADE'))
             for table_name in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents"):
                 connection.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
             connection.execute(text('ALTER TABLE "plans" DROP COLUMN IF EXISTS "max_branches" CASCADE'))
@@ -235,7 +236,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers", "user_company_memberships"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")
@@ -267,6 +268,30 @@ def main() -> None:
             text("SELECT count(*) FROM user_branch_access WHERE company_id = :company_id AND user_id = :user_id AND branch_id = :branch_id"),
             {"company_id": expected_company_id, "user_id": expected_user_id, "branch_id": migrated_branch},
         ).scalar_one()
+        membership_columns = {
+            column["name"]
+            for column in inspector.get_columns("user_company_memberships")
+        }
+        required_membership_columns = {
+            "user_id", "company_id", "role", "permissions_json", "active",
+            "invitation_token_hash", "invitation_expires_at",
+            "invitation_password_setup_required", "invitation_acceptance_required",
+            "invited_email", "invited_at", "accepted_at",
+        }
+        if not required_membership_columns.issubset(membership_columns):
+            raise AssertionError("Company membership migration is missing required invitation or access columns.")
+
+        migrated_membership = db.session.execute(
+            text("SELECT role,active,invitation_acceptance_required FROM user_company_memberships WHERE company_id=:company_id AND user_id=:user_id"),
+            {"company_id": expected_company_id, "user_id": expected_user_id},
+        ).first()
+        if (
+            migrated_membership is None
+            or migrated_membership.role != "admin"
+            or not migrated_membership.active
+            or migrated_membership.invitation_acceptance_required
+        ):
+            raise AssertionError("Existing company administrator was not backfilled into an active membership.")
         migrated_stock = db.session.execute(
             text("SELECT stock FROM branch_stock WHERE company_id = :company_id AND branch_id = :branch_id AND product_id = :product_id"),
             {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},

@@ -1,0 +1,43 @@
+{% extends "base_master.html" %}
+{% block title %}Aceptar invitación - StockArMobile{% endblock %}
+{% block content %}
+<div class="container py-5" style="max-width: 620px;">
+  <div class="card app-card">
+    <div class="card-body p-4 p-lg-5 text-center">
+      <div class="metric-icon mx-auto mb-3"><i class="bi bi-buildings"></i></div>
+      <span class="page-kicker">Invitación a una empresa</span>
+      <h1 class="h3 fw-bold mb-2">Te invitaron a {{ company.name }}</h1>
+      <p class="text-muted mb-4">
+        Tu rol en esta empresa será
+        <strong>{{ 'Administrador' if membership.role == 'admin' else 'Empleado' }}</strong>.
+        Tus otros accesos y permisos no se modifican.
+      </p>
+      <div class="border rounded-3 p-3 text-start mb-4">
+        <div class="small text-muted">Cuenta invitada</div>
+        <div class="fw-semibold">{{ membership.invited_email or current_user.email or '' }}</div>
+        <div class="small text-muted mt-2">Vencimiento</div>
+        <div class="fw-semibold">{{ membership.invitation_expires_at.strftime('%d/%m/%Y %H:%M') if membership.invitation_expires_at else '-' }}</div>
+      </div>
+      <form method="post" action="{{ url_for('auth.accept_company_invitation', token=invitation_token) }}" class="text-start">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if password_setup_required %}
+        <p class="text-muted small">Esta invitación crea tu cuenta de StockArMobile. Elegí una contraseña de al menos 8 caracteres para activarla.</p>
+        <label class="form-label" for="invitation-new-password">Crear contraseña</label>
+        <input class="form-control mb-3" id="invitation-new-password" type="password" name="new_password" minlength="8" autocomplete="new-password" required>
+        <label class="form-label" for="invitation-confirm-password">Confirmar contraseña</label>
+        <input class="form-control mb-3" id="invitation-confirm-password" type="password" name="confirm_password" minlength="8" autocomplete="new-password" required>
+        <button class="btn btn-primary btn-lg w-100" type="submit">Crear cuenta y aceptar invitación</button>
+        {% else %}
+        <p class="text-muted small">Iniciaste sesión con tu cuenta existente. Al aceptar, se agregará esta empresa a tus accesos.</p>
+        <button class="btn btn-primary btn-lg w-100" type="submit">Aceptar invitación</button>
+        {% endif %}
+      </form>
+      {% if current_user.is_authenticated %}
+      <a class="btn btn-link mt-2" href="{{ url_for('dashboard.index') }}">Ahora no</a>
+      {% else %}
+      <a class="btn btn-link mt-2" href="{{ url_for('auth.login') }}">Ya tengo una cuenta e iniciar sesión</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

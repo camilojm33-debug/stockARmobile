@@ -483,19 +483,35 @@ class BackupService:
             SaleItem,
             Supplier,
             User,
+            UserCompanyMembership,
+            db,
         )
+        from stockarmobile.company_memberships import ensure_legacy_company_memberships
         from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
         company = Company.query.filter_by(id=company_id).first_or_404()
+        ensure_legacy_company_memberships(db.session, company_id)
 
-        users = (
-            User.query.filter(
-                User.company_id == company_id,
+        membership_rows = (
+            db.session.query(User, UserCompanyMembership)
+            .join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+            .filter(
+                UserCompanyMembership.company_id == company_id,
                 User.role != "superadmin",
             )
             .order_by(User.id.asc())
             .all()
         )
+        users = []
+        for user, membership in membership_rows:
+            user_payload = BackupService._row_to_dict(user)
+            # The exported user row is tenant-scoped, even when the account's
+            # legacy/default company_id points at a different company.
+            user_payload["company_id"] = int(company_id)
+            user_payload["role"] = membership.role or "user"
+            user_payload["permissions_json"] = membership.permissions_json or "[]"
+            user_payload["active"] = bool(user.active and membership.active)
+            users.append(user_payload)
         products = Product.query.filter_by(company_id=company_id).order_by(Product.id.asc()).all()
         branch_stock_rows = BranchStock.query.filter_by(company_id=company_id).order_by(
             BranchStock.branch_id.asc(), BranchStock.product_id.asc()
@@ -912,7 +928,7 @@ class BackupService:
         other branches are set to zero rather than silently duplicating inventory.
         """
         from decimal import Decimal, InvalidOperation
-        from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Product, User, db
+        from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Product, User, UserCompanyMembership, db
 
         company_id = int(company_id)
         product_id_map = {int(key): int(value) for key, value in (product_id_map or {}).items()}
@@ -1122,7 +1138,9 @@ class BackupService:
                 candidate["product_id"] = product_id
                 candidate["quantity"] = quantity
                 created_by = candidate.get("created_by_user_id")
-                if created_by is not None and User.query.filter_by(id=int(created_by), company_id=company_id).first() is None:
+                if created_by is not None and UserCompanyMembership.query.filter_by(
+                    user_id=int(created_by), company_id=company_id
+                ).first() is None:
                     candidate["created_by_user_id"] = None
                 transfer = BranchStockTransfer(**candidate)
                 db.session.add(transfer)
@@ -1158,52 +1176,77 @@ class BackupService:
                 if str(candidate.get("source_type") or "") == "branch_transfer" and candidate.get("source_id") is not None:
                     candidate["source_id"] = transfer_id_map.get(int(candidate["source_id"]))
                 actor_id = candidate.get("user_id")
-                if actor_id is not None and User.query.filter_by(id=int(actor_id), company_id=company_id).first() is None:
+                if actor_id is not None and UserCompanyMembership.query.filter_by(
+                    user_id=int(actor_id), company_id=company_id
+                ).first() is None:
                     candidate["user_id"] = None
                 db.session.add(BranchStockMovement(**candidate))
 
     @staticmethod
     def _restore_employee_rows(db_session, *, company_id: int, rows):
-        """Restore profile data without restoring historical security decisions."""
-        from app import User
+        """Restore profile data and ensure a safe, inactive tenant membership."""
+        from app import User, UserCompanyMembership
+        from stockarmobile.company_memberships import ensure_membership
 
-        existing_users = {
-            int(row.id): row
-            for row in User.query.filter(
-                User.company_id == company_id,
-                User.role != "superadmin",
-            ).all()
-        }
+        existing_memberships = (
+            db_session.query(User, UserCompanyMembership)
+            .join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+            .filter(UserCompanyMembership.company_id == company_id)
+            .all()
+        )
+        existing_users = {int(user.id): (user, membership) for user, membership in existing_memberships}
+
         for raw_row in rows or []:
             if not isinstance(raw_row, dict):
                 raise ValueError("El backup contiene un registro de empleado inválido.")
             row = BackupService._deserialize_rows(User, [raw_row])[0]
             incoming_id = row.get("id")
-            user = existing_users.get(int(incoming_id)) if incoming_id is not None else None
+            user_pair = existing_users.get(int(incoming_id)) if incoming_id is not None else None
             username = str(row.get("username") or "").strip()
             email = str(row.get("email") or "").strip().lower()
 
-            if user is None:
-                by_username = (
-                    User.query.filter_by(company_id=company_id, username=username)
-                    .filter(User.role != "superadmin").first()
-                    if username else None
+            if user_pair is not None:
+                user, membership = user_pair
+            else:
+                user = db_session.get(User, int(incoming_id)) if incoming_id is not None else None
+                if user is not None:
+                    # Backup primary keys are tenant-local snapshots, while live
+                    # user IDs are global. Never bind a different person's account
+                    # merely because its numeric ID happens to collide.
+                    same_identity = (
+                        str(user.username or "").strip().lower() == username.lower()
+                        and str(user.email or "").strip().lower() == email
+                    )
+                    if not same_identity:
+                        user = None
+                if user is None:
+                    by_username = User.query.filter_by(username=username).first() if username else None
+                    by_email = User.query.filter_by(email=email).first() if email else None
+                    if by_username is not None and by_email is not None and by_username.id != by_email.id:
+                        raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
+                    if by_username is not None and str(by_username.email or "").strip().lower() != email:
+                        raise ValueError("El nombre de usuario del backup coincide con una cuenta cuyo correo es diferente.")
+                    if by_email is not None and str(by_email.username or "").strip().lower() != username.lower():
+                        raise ValueError("El correo del backup coincide con una cuenta cuyo usuario es diferente.")
+                    user = by_username or by_email
+                membership = (
+                    UserCompanyMembership.query.filter_by(user_id=user.id, company_id=company_id).first()
+                    if user is not None else None
                 )
-                by_email = (
-                    User.query.filter_by(company_id=company_id, email=email)
-                    .filter(User.role != "superadmin").first()
-                    if email else None
-                )
-                if by_username is not None and by_email is not None and by_username.id != by_email.id:
-                    raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
-                user = by_username or by_email
 
             if user is not None:
-                # Existing credentials, roles, active state and permissions remain
-                # authoritative. Restore only non-security display fields.
+                # Credentials and security policy remain authoritative. When an
+                # account already exists in another tenant, link it inactive here
+                # rather than changing its primary company or duplicating identity.
                 for field in ("first_name", "last_name", "avatar_url"):
                     if field in row:
                         setattr(user, field, row.get(field))
+                if membership is None:
+                    restored_membership = ensure_membership(
+                        db_session, user, company_id,
+                        role="user", permissions_json="[]", active=False,
+                    )
+                    restored_membership.invitation_acceptance_required = True
                 continue
 
             if not username or not email or "@" not in email:
@@ -1229,6 +1272,14 @@ class BackupService:
             if incoming_id is not None and db_session.get(User, int(incoming_id)) is not None:
                 candidate.pop("id", None)
             db_session.execute(User.__table__.insert(), [candidate])
+            restored_user = User.query.filter_by(username=username).first()
+            if restored_user is None:
+                raise ValueError("No se pudo recuperar la cuenta del empleado desde el respaldo.")
+            restored_membership = ensure_membership(
+                db_session, restored_user, company_id,
+                role="user", permissions_json="[]", active=False,
+            )
+            restored_membership.invitation_acceptance_required = True
 
     @staticmethod
     def _restore_full_company_dataset(db_session, model, rows):
@@ -1252,6 +1303,7 @@ class BackupService:
             SaleItem,
             Supplier,
             User,
+            UserCompanyMembership,
             db,
             utcnow,
         )
@@ -1767,6 +1819,7 @@ class BackupService:
             SaleItem,
             Supplier,
             User,
+            UserCompanyMembership,
             db,
         )
         from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
@@ -1784,9 +1837,8 @@ class BackupService:
                 "products": Product.query.filter_by(company_id=expected_company_id).count(),
                 "clients": Client.query.filter_by(company_id=expected_company_id).count(),
                 "sales": Sale.query.filter_by(company_id=expected_company_id).count(),
-                "employees": User.query.filter(
-                    User.company_id == expected_company_id,
-                    User.role != "superadmin",
+                "employees": UserCompanyMembership.query.filter_by(
+                    company_id=expected_company_id
                 ).count(),
                 "suppliers": Supplier.query.filter_by(company_id=expected_company_id).count(),
                 "purchase_orders": PurchaseOrder.query.filter_by(company_id=expected_company_id).count(),

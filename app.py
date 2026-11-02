@@ -447,6 +447,9 @@ def migrate_legacy_company_logos_once():
 
 @app.before_request
 def bind_tenant_context():
+    from stockarmobile.company_memberships import bind_active_company_context
+
+    bind_active_company_context(current_user)
     bind_current_tenant_context(current_user)
 
 
@@ -1102,6 +1105,34 @@ class UserBranchAccess(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
     user = db.relationship("User")
     branch = db.relationship("Branch")
+
+
+class UserCompanyMembership(db.Model):
+    __tablename__ = "user_company_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id", name="uq_user_company_membership"),
+        UniqueConstraint("invitation_token_hash", name="uq_user_company_membership_invitation_token_hash"),
+        Index("ix_user_company_memberships_company_active", "company_id", "active"),
+        Index("ix_user_company_memberships_user_active", "user_id", "active"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False, default="user")
+    permissions_json = db.Column(db.Text, nullable=False, default="[]")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    invitation_token_hash = db.Column(db.String(64))
+    invitation_expires_at = db.Column(db.DateTime)
+    invitation_password_setup_required = db.Column(db.Boolean, nullable=False, default=False)
+    invitation_acceptance_required = db.Column(db.Boolean, nullable=False, default=False)
+    invited_email = db.Column(db.String(160))
+    invited_at = db.Column(db.DateTime)
+    accepted_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    user = db.relationship("User")
+    company = db.relationship("Company")
 
 
 class BranchStock(db.Model):
@@ -2633,6 +2664,7 @@ def internal_error(error):
 def inject_notifications():
     has_active_seller_profile = False
     switchable_company_users = []
+    available_company_choices = []
     current_company_preferences = {}
     ai_feature_pricing_allowed = False
     ai_feature_vendor_allowed = False
@@ -2679,23 +2711,35 @@ def inject_notifications():
                 commercial_wholesale_pricing_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
-        if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
-            switchable_company_users = (
-                User.query.filter(
-                    User.company_id == current_user.company_id,
-                    User.active.is_(True),
-                    User.id != current_user.id,
-                    User.role.in_(["user", "admin"]),
+        if getattr(current_user, "role", None) != "superadmin":
+            from stockarmobile.company_memberships import apply_membership_to_user, available_company_choices as build_company_choices
+
+            available_company_choices = build_company_choices(current_user)
+            if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
+                membership_rows = (
+                    db.session.query(User, UserCompanyMembership)
+                    .join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+                    .filter(
+                        UserCompanyMembership.company_id == current_user.company_id,
+                        UserCompanyMembership.active.is_(True),
+                        User.active.is_(True),
+                        User.id != current_user.id,
+                        UserCompanyMembership.role.in_(["user", "admin"]),
+                    )
+                    .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
+                    .all()
                 )
-                .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
-                .all()
-            )
+                switchable_company_users = [
+                    apply_membership_to_user(user, membership)
+                    for user, membership in membership_rows
+                ]
         return {
             "notification_items": notification_payload["items"],
             "notification_count": notification_payload["count"],
             "has_active_seller_profile": has_active_seller_profile,
             "support_contact": support_contact,
             "switchable_company_users": switchable_company_users,
+            "available_company_choices": available_company_choices,
             "company_preferences": current_company_preferences,
             "company_feature_enabled": lambda key, default=False: bool(current_company_preferences.get(key, default)),
             "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
@@ -2713,6 +2757,7 @@ def inject_notifications():
         "has_active_seller_profile": False,
         "support_contact": support_contact,
         "switchable_company_users": [],
+        "available_company_choices": [],
         "company_preferences": {},
         "company_feature_enabled": lambda key, default=False: bool(default),
         "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
@@ -2872,6 +2917,7 @@ def offline_page():
 def create_admin_user():
     from services.plan_service import PlanService
     from services.subscription_service import SubscriptionService
+    from stockarmobile.company_memberships import ensure_membership
 
     admin_created = False
     company = Company.query.first()
@@ -2910,6 +2956,13 @@ def create_admin_user():
         SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
     from auth import _ensure_company_default_branch
     owner_user = User.query.filter_by(company_id=company.id, role="admin", active=True).order_by(User.id.asc()).first()
+    if owner_user is not None:
+        ensure_membership(
+            db.session, owner_user, company.id,
+            role=owner_user.role,
+            permissions_json=owner_user.permissions_json or "[]",
+            active=owner_user.active,
+        )
     _ensure_company_default_branch(company, owner_user)
     db.session.commit()
     if admin_created:

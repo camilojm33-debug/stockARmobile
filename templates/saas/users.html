@@ -45,7 +45,7 @@
       <span>Empleados y empresas/negocios</span>
       <small class="text-muted">{{ users|length }} registros</small>
     </div>
-    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Empresa / Negocio</th><th>Email</th><th>Rol actual</th><th>Empresa</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>
+    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Cuenta</th><th>Email</th><th>Rol en empresa</th><th>Empresa</th><th>Cuenta global</th><th>Acceso a empresa</th><th class="text-end">Acciones</th></tr></thead><tbody>
       {% for user in users %}
       {% set company = companies_by_id.get(user.company_id) if user.company_id else None %}
       <tr>
@@ -60,7 +60,7 @@
         </td>
         <td>
           {% if company %}
-          <div class="fw-semibold">{{ company.name }}</div>
+          <div class="fw-semibold">{{ user.company_name or company.name }}</div>
           <div class="small text-muted">ID {{ company.id }}</div>
           {% elif user.company_id %}
           <span>ID {{ user.company_id }}</span>
@@ -68,14 +68,41 @@
           <span class="text-muted">Global</span>
           {% endif %}
         </td>
-        <td>{{ 'activo' if user.active else 'inactivo' }}</td>
+        <td>
+          <span class="badge {{ 'text-bg-success' if user.account_active else 'text-bg-secondary' }}">{{ 'Activa' if user.account_active else 'Desactivada' }}</span>
+          {% if user.can_manage_membership %}
+          <form method="post" action="{{ url_for('saas.users_update_account_status', user_id=user.id) }}" class="mt-1" onsubmit="return confirm('{{ '¿Desactivar esta cuenta en todas sus empresas?' if user.account_active else '¿Reactivar esta cuenta global?' }}')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="active" value="{{ '0' if user.account_active else '1' }}">
+            <input type="password" name="step_up_password" class="form-control form-control-sm mb-1" autocomplete="current-password" placeholder="Contraseña si venció">
+            <button class="btn btn-sm {{ 'btn-outline-danger' if user.account_active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar cuenta global' if user.account_active else 'Reactivar cuenta global' }}</button>
+          </form>
+          {% endif %}
+        </td>
+        <td>
+          {% if user.can_manage_membership %}
+          {% if user.invitation_pending %}
+          <span class="badge text-bg-warning">Invitación pendiente</span>
+          {% elif user.invitation_expired %}
+          <span class="badge text-bg-secondary">Invitación vencida</span>
+          {% elif user.invitation_cancelled %}
+          <span class="badge text-bg-secondary">Invitación cancelada</span>
+          {% else %}
+          <span class="badge {{ 'text-bg-success' if user.membership_active else 'text-bg-secondary' }}">{{ 'Habilitado' if user.membership_active else 'Revocado' }}</span>
+          {% endif %}
+          {% else %}
+          <span class="text-muted small">Sin membresía</span>
+          {% endif %}
+        </td>
         <td class="text-end">
-          {% if user.role != 'superadmin' and user.company_id %}
-          <div class="small text-muted mb-1">Estado: <strong>{{ 'Activo' if user.active else 'Inactivo' }}</strong></div>
+          {% if user.can_manage_membership and user.company_id %}
+          <div class="small text-muted mb-1">Cuenta global: <strong>{{ 'Activa' if user.account_active else 'Desactivada' }}</strong></div>
           <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
             <form method="post" action="{{ url_for('saas.users_update_role', user_id=user.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="company_id" value="{{ user.company_id }}">
               <input type="hidden" name="role" value="admin">
               <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-dark' if user.role == 'admin' else 'btn-outline-dark' }}" type="submit" {% if user.role == 'admin' %}disabled{% endif %}>Hacer admin</button>
@@ -83,19 +110,25 @@
             <form method="post" action="{{ url_for('saas.users_update_role', user_id=user.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="company_id" value="{{ user.company_id }}">
               <input type="hidden" name="role" value="user">
               <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
             </form>
-            <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Desactivar este usuario?' if user.active else '¿Activar este usuario?' }}')">
+            {% if user.invitation_cancelled %}
+            <span class="small text-muted">Reenviá la invitación desde Mi Empresa.</span>
+            {% else %}
+            <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Cancelar esta invitación?' if user.invitation_pending or user.invitation_expired else ('¿Desactivar el acceso a esta empresa?' if user.membership_active else '¿Habilitar el acceso a esta empresa?') }}')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
-              <input type="hidden" name="active" value="{{ '0' if user.active else '1' }}">
+              <input type="hidden" name="company_id" value="{{ user.company_id }}">
+              <input type="hidden" name="active" value="{{ '0' if user.invitation_pending or user.invitation_expired or user.membership_active else '1' }}">
               <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
-              <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">
-                {{ 'Desactivar' if user.active else 'Activar' }}
+              <button class="btn btn-sm {{ 'btn-outline-warning' if user.invitation_pending or user.invitation_expired else ('btn-outline-danger' if user.membership_active else 'btn-outline-success') }}" type="submit" {% if not user.membership_active and not user.account_active %}disabled title="La cuenta global está desactivada"{% endif %}>
+                {{ 'Cancelar invitación' if user.invitation_pending or user.invitation_expired else ('Quitar acceso' if user.membership_active else 'Habilitar acceso') }}
               </button>
             </form>
+            {% endif %}
           </div>
           {% else %}
           <span class="text-muted small">Sin cambios</span>
@@ -103,7 +136,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-center text-muted py-4">Sin usuarios.</td></tr>
+      <tr><td colspan="8" class="text-center text-muted py-4">Sin usuarios.</td></tr>
       {% endfor %}
     </tbody></table></div>
   </div>

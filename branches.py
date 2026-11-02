@@ -3,7 +3,7 @@ import re
 from flask import Blueprint, abort, current_app, flash, redirect, request, session, url_for
 from flask_login import current_user
 from sqlalchemy import func
-from app import Branch, Company, User, UserBranchAccess, db, tenant_required, company_admin_required
+from app import Branch, Company, User, UserBranchAccess, UserCompanyMembership, db, tenant_required, company_admin_required
 from stockarmobile.branch_context import SESSION_KEY
 
 bp = Blueprint("branches", __name__, url_prefix="/sucursales")
@@ -231,7 +231,17 @@ def assign_users(branch_id):
         return pin_blocked
     branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first_or_404()
     selected_ids = {int(value) for value in request.form.getlist("user_ids") if str(value).isdigit()}
-    users = User.query.filter(User.company_id == company_id, User.role != "superadmin", User.id.in_(selected_ids)).all() if selected_ids else []
+    users = (
+        User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .filter(
+            UserCompanyMembership.company_id == company_id,
+            UserCompanyMembership.active.is_(True),
+            User.active.is_(True),
+            UserCompanyMembership.role != "superadmin",
+            User.id.in_(selected_ids),
+        ).all()
+        if selected_ids else []
+    )
     if {int(user.id) for user in users} != selected_ids:
         abort(400)
     for row in UserBranchAccess.query.filter_by(branch_id=branch.id, company_id=company_id).all():

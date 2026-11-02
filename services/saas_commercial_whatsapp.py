@@ -337,7 +337,9 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         SaaSCommercialCheckout,
         Subscription,
         User,
+        UserCompanyMembership,
     )
+    from stockarmobile.company_memberships import ensure_membership
     from services.saas_ops_service import SaaSOpsService
     from services.subscription_service import SubscriptionService
 
@@ -400,8 +402,13 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
     existing_user = User.query.filter(db.func.lower(User.email) == checkout.payer_email.lower()).first()
     if existing_user is not None and (existing_user.role or "").strip().lower() == "superadmin":
         raise RuntimeError("El email de contratación pertenece a un usuario Super Admin y no puede reutilizarse para un alta comercial.")
+    if existing_user is not None and not existing_user.active:
+        raise RuntimeError("La cuenta existente está desactivada y no puede vincularse a una nueva empresa.")
     if existing_user is not None and existing_user.company_id not in {None, company.id}:
-        raise RuntimeError("El email de contratación ya pertenece a otra empresa.")
+        # A payment/payer email alone is not proof of control of an existing
+        # StockArMobile identity. Multi-company access is granted through the
+        # authenticated employee invitation flow instead.
+        raise RuntimeError("El email ya pertenece a otra empresa. Iniciá sesión en esa cuenta y pedí que te inviten desde Mi Empresa.")
 
     user = existing_user
     if user is None:
@@ -416,9 +423,18 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         db.session.add(user)
         db.session.flush()
     else:
-        user.company_id = company.id
-        user.role = "admin"
-        user.active = True
+        if user.company_id is None:
+            user.company_id = company.id
+            user.role = "admin"
+
+    ensure_membership(
+        db.session,
+        user,
+        company.id,
+        role="admin",
+        permissions_json=user.permissions_json or "[]",
+        active=True,
+    )
 
     from auth import _ensure_company_default_branch
     _ensure_company_default_branch(company, user)

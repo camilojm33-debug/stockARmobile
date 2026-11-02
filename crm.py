@@ -123,12 +123,13 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
 
 def _opportunity_form_options():
     from app import Client, Quote, Sale, User
+    from stockarmobile.company_memberships import users_for_company_query
 
     return {
         "clients": scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all(),
         "quotes": scope_query_to_company(Quote.query, Quote).order_by(Quote.date.desc(), Quote.id.desc()).limit(250).all(),
         "sales": scope_query_to_company(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).limit(250).all(),
-        "owners": scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.username).all(),
+        "owners": users_for_company_query(current_user.company_id).order_by(User.username).all(),
     }
 
 
@@ -158,7 +159,8 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
             raise ValueError("No se puede desvincular o reemplazar el presupuesto/venta de una operación registrada; conservá la trazabilidad comercial.")
     owner_id = request.form.get("owner_user_id", type=int) or current_user.id
     from app import User
-    owner = scope_query_to_company(User.query.filter(User.active.is_(True)), User).filter(User.id == owner_id).first()
+    from stockarmobile.company_memberships import users_for_company_query
+    owner = users_for_company_query(current_user.company_id).filter(User.id == owner_id).first()
     if not owner:
         raise ValueError("El responsable debe ser un usuario activo de tu empresa.")
     expected_close_date = _parse_datetime(request.form.get("expected_close_date"))
@@ -258,7 +260,8 @@ def pipeline():
     grouped = {stage: [] for stage, _ in STAGES}
     for opportunity in opportunities:
         grouped.setdefault(opportunity.stage, []).append(opportunity)
-    owners = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.username).all()
+    from stockarmobile.company_memberships import users_for_company_query
+    owners = users_for_company_query(current_user.company_id).order_by(User.username).all()
     return render_template(
         "crm/pipeline.html",
         grouped=grouped,

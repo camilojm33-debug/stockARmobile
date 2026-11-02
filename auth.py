@@ -49,13 +49,20 @@ def _ensure_company_default_branch(company, owner_user):
     return branch
 
 
-def _login_user_and_bind_company(user, remember=False):
+def _login_user_and_bind_company(user, remember=False, preserve_active_company=False):
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+
     preserved_session = {}
-    for key in (SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID,):
+    preserve_keys = [SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID]
+    if preserve_active_company:
+        preserve_keys.append(ACTIVE_COMPANY_SESSION_KEY)
+    for key in preserve_keys:
         if key in session:
             preserved_session[key] = session.get(key)
     session.clear()
     login_user(user, remember=remember)
+    from stockarmobile.company_memberships import bind_active_company_context
+    bind_active_company_context(user)
     session.update({key: value for key, value in preserved_session.items() if value is not None})
 
 
@@ -86,6 +93,7 @@ def _registered_company_name(raw_name):
 
 def _ensure_demo_account():
     from app import CashSession, Client, Company, Product, Sale, SaleItem, Subscription, User, db, utcnow
+    from stockarmobile.company_memberships import ensure_membership
     from services.plan_service import PlanService
     from services.subscription_service import SubscriptionService
 
@@ -185,6 +193,7 @@ def _ensure_demo_account():
             )
             product.stock = float(product.stock or 0) - 1
 
+    ensure_membership(db.session, user, company.id, role=user.role, permissions_json=user.permissions_json or "[]", active=user.active)
     branch = _ensure_company_default_branch(company, user)
     CashSession.query.filter_by(company_id=company.id, status="abierta", branch_id=None).update(
         {"branch_id": branch.id}, synchronize_session=False
@@ -221,6 +230,9 @@ def login():
             ).first()
 
             if user and user.active and user.check_password(form.password.data):
+                next_page = (request.form.get("next") or request.args.get("next") or "").strip()
+                if not _is_safe_redirect(next_page):
+                    next_page = None
                 _login_user_and_bind_company(user, remember=form.remember.data)
                 if getattr(user, "role", None) == "superadmin":
                     from saas import _SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY, _SUPERADMIN_STEP_UP_AT_SESSION_KEY, _SUPERADMIN_STEP_UP_USER_SESSION_KEY
@@ -230,11 +242,10 @@ def login():
                 record_audit(action="login_success", entity="user", entity_id=user.id, detail="Inicio de sesion exitoso")
                 db.session.commit()
                 if getattr(user, "must_change_password", False):
+                    if next_page:
+                        session["post_password_change_next"] = next_page
                     flash("Debes cambiar tu contrasena para continuar.", "warning")
                     return redirect(url_for("auth.force_password_change"))
-                next_page = (request.form.get("next") or request.args.get("next") or "").strip()
-                if not _is_safe_redirect(next_page):
-                    next_page = None
                 flash("Inicio de sesion exitoso", "success")
                 onboarding_company_id = session.get(SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID)
                 if onboarding_company_id is not None and onboarding_company_id == getattr(user, "company_id", None):
@@ -389,6 +400,9 @@ def force_password_change():
         )
         db.session.commit()
         flash("Contrasena actualizada correctamente.", "success")
+        next_page = session.pop("post_password_change_next", None)
+        if next_page and _is_safe_redirect(next_page):
+            return redirect(next_page)
         return redirect(_post_login_redirect())
 
     return render_template("auth/force_password_change.html")
@@ -430,7 +444,9 @@ def activate_commercial(token):
         checkout.activation_token_encrypted = None
         checkout.updated_at = _utcnow()
         db.session.commit()
-        _login_user_and_bind_company(user, remember=True)
+        from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(checkout.company_id)
+        _login_user_and_bind_company(user, remember=True, preserve_active_company=True)
         flash("Tu empresa fue activada. Bienvenido a StockArMobile.", "success")
         return redirect(url_for("dashboard.index"))
 
@@ -441,6 +457,7 @@ def activate_commercial(token):
 def register():
     """Registro de usuario nuevo."""
     from app import Company, ReferralSeller, RegisterForm, User, db, record_audit, utcnow
+    from stockarmobile.company_memberships import ensure_membership
     from services.plan_service import PlanService
     from services.referral_service import ReferralService
     from services.saas_ops_service import SaaSOpsService
@@ -493,6 +510,7 @@ def register():
                         existing_user.company_id = company.id
                         existing_user.role = "admin"
                         existing_user.auth_provider = existing_user.auth_provider or "local"
+                        ensure_membership(db.session, existing_user, company.id, role="admin", permissions_json=existing_user.permissions_json or "[]", active=True)
 
                         SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
 
@@ -583,6 +601,7 @@ def register():
 
                 db.session.add(user)
                 db.session.flush()
+                ensure_membership(db.session, user, company.id, role=user.role, permissions_json=user.permissions_json or "[]", active=True)
 
                 SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
 
@@ -616,6 +635,180 @@ def register():
 
     form = RegisterForm()
     return render_template("auth/register.html", form=form, selected_plan=selected_plan_code, registration_mode=registration_mode)
+
+
+@bp.route("/accept-company-invitation/<token>", methods=["GET", "POST"])
+def accept_company_invitation(token):
+    from app import Branch, Company, User, UserBranchAccess, UserCompanyMembership, db, record_audit, utcnow
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+    from services.company_membership_invitation_service import CompanyMembershipInvitationService
+
+    membership = CompanyMembershipInvitationService.get_valid(token)
+    if membership is None:
+        flash("La invitación es inválida, ya fue utilizada o venció.", "warning")
+        return redirect(url_for("auth.login"))
+
+    company = Company.query.filter_by(id=membership.company_id, active=True).first()
+    user = db.session.get(User, membership.user_id)
+    invited_email = (membership.invited_email or "").strip().lower()
+    if (
+        company is None
+        or user is None
+        or not user.active
+        or not invited_email
+        or invited_email != (user.email or "").strip().lower()
+    ):
+        flash("La invitación ya no es válida. Pedí al administrador que envíe una nueva.", "warning")
+        return redirect(url_for("auth.login"))
+
+    password_setup_required = bool(membership.invitation_password_setup_required)
+    if current_user.is_authenticated and int(current_user.id) != int(user.id):
+        abort(403)
+    if not current_user.is_authenticated and not password_setup_required:
+        return redirect(url_for("auth.login", next=request.path))
+
+    if request.method == "POST":
+        # Recheck the invitation before changing the account or granting access.
+        membership = CompanyMembershipInvitationService.get_valid(token, for_update=True)
+        if membership is None or int(membership.user_id) != int(user.id):
+            abort(403)
+        company = (
+            Company.query.filter_by(id=membership.company_id, active=True)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if company is None:
+            abort(403)
+        user = (
+            User.query.filter_by(id=membership.user_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if user is None or not user.active:
+            abort(403)
+        if (
+            (membership.invited_email or "").strip().lower()
+            != (user.email or "").strip().lower()
+        ):
+            abort(403)
+
+        if password_setup_required:
+            new_password = str(request.form.get("new_password") or "")
+            confirm_password = str(request.form.get("confirm_password") or "")
+            if len(new_password) < 8:
+                flash("La contraseña debe tener al menos 8 caracteres.", "danger")
+                return render_template(
+                    "auth/accept_company_invitation.html",
+                    company=company,
+                    membership=membership,
+                    invitation_token=token,
+                    password_setup_required=True,
+                ), 400
+            if new_password != confirm_password:
+                flash("Las contraseñas no coinciden.", "danger")
+                return render_template(
+                    "auth/accept_company_invitation.html",
+                    company=company,
+                    membership=membership,
+                    invitation_token=token,
+                    password_setup_required=True,
+                ), 400
+            user.set_password(new_password)
+            user.must_change_password = False
+        elif not current_user.is_authenticated or int(current_user.id) != int(user.id):
+            abort(403)
+
+        from services.plan_usage_service import PlanUsageService
+        allowed, limit_message = PlanUsageService.can_create(
+            company.id, PlanUsageService.RESOURCE_USERS
+        )
+        if not allowed:
+            flash(
+                f"No se puede aceptar la invitación porque la empresa alcanzó el límite de usuarios. {limit_message}",
+                "warning",
+            )
+            return redirect(url_for("auth.accept_company_invitation", token=token))
+
+        membership.active = True
+        membership.invitation_token_hash = None
+        membership.invitation_expires_at = None
+        membership.invited_email = None
+        membership.invitation_password_setup_required = False
+        membership.invitation_acceptance_required = False
+        membership.accepted_at = utcnow()
+
+        default_branch = Branch.query.filter_by(
+            company_id=company.id, is_default=True, active=True
+        ).first()
+        if default_branch is not None and UserBranchAccess.query.filter_by(
+            company_id=company.id,
+            user_id=user.id,
+            branch_id=default_branch.id,
+        ).first() is None:
+            db.session.add(UserBranchAccess(
+                company_id=company.id,
+                user_id=user.id,
+                branch_id=default_branch.id,
+            ))
+
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(company.id)
+        session.pop("stockarmobile_active_branch_id", None)
+        record_audit(
+            action="company_membership_accepted",
+            entity="user",
+            entity_id=user.id,
+            user_id=user.id,
+            company_id=company.id,
+            detail=f"El usuario aceptó la invitación para {company.name}.",
+        )
+        db.session.commit()
+        if password_setup_required:
+            _login_user_and_bind_company(user, remember=True, preserve_active_company=True)
+        flash(f"Invitación aceptada. Ya podés trabajar en {company.name}.", "success")
+        return redirect(url_for("dashboard.index"))
+
+    return render_template(
+        "auth/accept_company_invitation.html",
+        company=company,
+        membership=membership,
+        invitation_token=token,
+        password_setup_required=password_setup_required,
+    )
+
+@bp.route("/switch-company", methods=["POST"])
+@login_required
+def switch_company():
+    from app import Company, UserCompanyMembership, db, record_audit
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+
+    if getattr(current_user, "role", None) == "superadmin" or not current_user.company_id:
+        abort(403)
+    company_id = request.form.get("company_id", type=int)
+    membership = UserCompanyMembership.query.filter_by(
+        user_id=current_user.id,
+        company_id=company_id,
+        active=True,
+    ).first() if company_id else None
+    company = Company.query.filter_by(id=company_id, active=True).first() if membership else None
+    if membership is None or company is None:
+        abort(403)
+
+    previous_company_id = getattr(current_user, "company_id", None)
+    session[ACTIVE_COMPANY_SESSION_KEY] = int(company.id)
+    session.pop("stockarmobile_active_branch_id", None)
+    record_audit(
+        action="company_membership_switch",
+        entity="company",
+        entity_id=company.id,
+        company_id=company.id,
+        detail=f"Cambio de empresa activa desde company_id={previous_company_id} a company_id={company.id}",
+    )
+    db.session.commit()
+    flash(f"Empresa activa: {company.name}.", "success")
+    return redirect(url_for("dashboard.index"))
+
 
 
 @bp.route("/demo", methods=["GET"])
@@ -657,11 +850,20 @@ def switch_user():
         abort(403)
 
     target_user_id = request.form.get("target_user_id", type=int)
-    target_user = (
-        User.query.filter_by(id=target_user_id, company_id=company_id, active=True)
-        .filter(User.role.in_(["user", "admin"]))
+    from app import UserCompanyMembership
+    target_pair = (
+        db.session.query(User, UserCompanyMembership)
+        .join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .filter(
+            User.id == target_user_id,
+            User.active.is_(True),
+            UserCompanyMembership.company_id == company_id,
+            UserCompanyMembership.active.is_(True),
+            UserCompanyMembership.role.in_(["user", "admin"]),
+        )
         .first()
     )
+    target_user = target_pair[0] if target_pair else None
     if target_user is None:
         flash("Empleado no encontrado o no disponible para cambio de sesión.", "warning")
         return redirect(url_for("dashboard.index"))
@@ -669,7 +871,7 @@ def switch_user():
     actor_id = current_user.id
     actor_username = current_user.username
 
-    _login_user_and_bind_company(target_user, remember=False)
+    _login_user_and_bind_company(target_user, remember=False, preserve_active_company=True)
     record_audit(
         action="session_switch_user",
         entity="user",
