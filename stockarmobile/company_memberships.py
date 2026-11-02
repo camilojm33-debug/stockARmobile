@@ -9,6 +9,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm.attributes import set_committed_value
 
+
+def _unwrap_user(user):
+    """Return the ORM identity behind Flask-Login's LocalProxy, when supplied."""
+    resolver = getattr(user, "_get_current_object", None)
+    return resolver() if callable(resolver) else user
+
+
 ACTIVE_COMPANY_SESSION_KEY = "stockarmobile_active_company_id"
 
 
@@ -23,6 +30,7 @@ def get_membership(user_id: int, company_id: int, *, active_only: bool = False):
 
 def apply_membership_context(user, membership):
     """Expose the selected company's membership attributes without persisting them."""
+    user = _unwrap_user(user)
     if membership is None:
         return user
     set_committed_value(user, "company_id", int(membership.company_id))
@@ -38,15 +46,16 @@ def apply_membership_context(user, membership):
 
 def ensure_primary_membership(user, company_id: int, *, db_session=None):
     """Create a compatibility membership for a legacy user still tied to its primary tenant."""
-    from app import CompanyMembership, db
+    from app import CompanyMembership, User, db
 
+    user = _unwrap_user(user)
     db_session = db_session or db.session
     company_id = int(company_id)
     membership = get_membership(user.id, company_id)
     if membership is not None:
         return membership
     # Never infer a secondary-company relationship from the legacy primary key.
-    primary_company_id = db_session.query(type(user).company_id).filter(type(user).id == user.id).scalar()
+    primary_company_id = db_session.query(User.company_id).filter(User.id == user.id).scalar()
     if primary_company_id is None or int(primary_company_id) != company_id:
         return None
     membership = CompanyMembership(
@@ -123,8 +132,9 @@ def active_memberships_for_user(user_id: int):
 
 def choose_membership_for_login(user, requested_company_id=None):
     """Validate the selected tenant against active memberships; fallback to primary."""
-    from app import Company, CompanyMembership, db
+    from app import Company, CompanyMembership, User, db
 
+    user = _unwrap_user(user)
     if (user.role or "").strip().lower() == "superadmin":
         return None
 
@@ -139,7 +149,7 @@ def choose_membership_for_login(user, requested_company_id=None):
             if selected is not None:
                 return selected
 
-    primary_id = db.session.query(type(user).company_id).filter(type(user).id == user.id).scalar()
+    primary_id = db.session.query(User.company_id).filter(User.id == user.id).scalar()
     if primary_id is not None:
         selected = next((row for row in memberships if int(row.company_id) == int(primary_id)), None)
         if selected is not None:
