@@ -1218,13 +1218,12 @@
           <form method="post" action="{{ url_for('branches.transfer_stock') }}" class="row g-2 align-items-end">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-3"><label class="form-label">Origen</label><select class="form-select" name="source_branch_id" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
-            <div class="col-md-3"><label class="form-label">Destino</label><select class="form-select" name="target_branch_id" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}" {% if not loop.first %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}</select></div>
-            <div class="col-md-3"><label class="form-label">Producto</label><select class="form-select" name="product_id" required>{% for product in branch_transfer_products %}<option value="{{ product.id }}">{{ product.name }} · {{ product.barcode }}</option>{% endfor %}</select></div>
+            <div class="col-md-3"><label class="form-label">Destino</label><select class="form-select" name="target_branch_id" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}" {% if loop.index == 2 %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}</select></div>
+            <div class="col-md-3"><label class="form-label">Producto / código de barras</label><input class="form-control" name="product_code" maxlength="50" autocomplete="off" placeholder="Escaneá o ingresá el código" required></div>
             <div class="col-md-1"><label class="form-label">Cant.</label><input class="form-control" name="quantity" type="number" min="0.001" step="0.001" required></div>
             <div class="col-md-2"><label class="form-label">Referencia</label><input class="form-control" name="note" maxlength="255"></div>
-            <div class="col-12"><button class="btn btn-primary" type="submit" {% if not branch_transfer_products or company_branches|selectattr('active')|list|length < 2 %}disabled{% endif %}>Confirmar transferencia</button></div>
+            <div class="col-12"><button class="btn btn-primary" type="submit" {% if company_branches|selectattr('active')|list|length < 2 %}disabled{% endif %}>Confirmar transferencia</button></div>
           </form>
-          {% if not branch_transfer_products %}<div class="small text-warning mt-2">No hay productos activos para transferir.</div>{% endif %}
         </div>
         {% endif %}
         <p class="small text-muted mt-3 mb-0">El acceso se valida en el servidor. Desactivar una sucursal conserva sus ventas, movimientos e historial.</p>
