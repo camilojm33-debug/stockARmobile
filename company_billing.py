@@ -4566,7 +4566,7 @@ def company_settings_user_toggle(user_id):
             return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     membership.active = not membership.active
-    if membership.active and membership.accepted_at is not None:
+    if membership.active and not membership.invitation_acceptance_required:
         default_branch = Branch.query.filter_by(
             company_id=company.id, is_default=True, active=True
         ).first()
