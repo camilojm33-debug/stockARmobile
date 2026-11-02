@@ -79,6 +79,8 @@ def get_company_users(company_id: int, *, active_only: bool | None = None, inclu
 
     result = []
     for user_id, user in users_by_id.items():
+        if (getattr(user, "role", None) or "").strip().lower() == "superadmin":
+            continue
         membership = membership_by_user.get(user_id)
         if membership is None:
             membership = ensure_primary_membership(user, company_id, db_session=db.session)
