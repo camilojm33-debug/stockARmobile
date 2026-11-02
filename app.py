@@ -2908,6 +2908,9 @@ def create_admin_user():
     if Subscription.query.filter_by(company_id=company.id).first() is None:
         trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
         SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+    from auth import _ensure_company_default_branch
+    owner_user = User.query.filter_by(company_id=company.id, role="admin", active=True).order_by(User.id.asc()).first()
+    _ensure_company_default_branch(company, owner_user)
     db.session.commit()
     if admin_created:
         app.logger.info("Administrador de empresa creado")
