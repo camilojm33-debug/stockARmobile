@@ -1791,8 +1791,16 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
             "invitation_pending": bool(
                 memberships_by_user_id.get(int(user.id))
                 and memberships_by_user_id[int(user.id)].invitation_token_hash
+                and (
+                    memberships_by_user_id[int(user.id)].invitation_expires_at is None
+                    or memberships_by_user_id[int(user.id)].invitation_expires_at > utcnow()
+                )
+            ),
+            "invitation_expired": bool(
+                memberships_by_user_id.get(int(user.id))
+                and memberships_by_user_id[int(user.id)].invitation_token_hash
                 and memberships_by_user_id[int(user.id)].invitation_expires_at
-                and memberships_by_user_id[int(user.id)].invitation_expires_at > utcnow()
+                and memberships_by_user_id[int(user.id)].invitation_expires_at <= utcnow()
             ),
         })
     result_rows.sort(key=lambda item: (-item["total_sold"], item["user"].created_at or datetime.min, item["user"].id))
@@ -4478,12 +4486,7 @@ def company_settings_user_toggle(user_id):
     ).first_or_404()
     action = (request.form.get("action") or "").strip().lower()
 
-    pending_invitation = bool(
-        membership.invitation_token_hash
-        and membership.invitation_expires_at
-        and membership.invitation_expires_at > utcnow()
-        and not membership.active
-    )
+    pending_invitation = bool(membership.invitation_token_hash and not membership.active)
     if pending_invitation:
         if action != "cancel_invitation":
             flash("La invitación sigue pendiente. La persona debe aceptarla antes de habilitar su acceso.", "warning")
