@@ -445,7 +445,7 @@ def test_employees_only_see_assigned_active_branches(app):
 def test_ai_marketing_tools_use_employee_branch_inventory_and_sales(app):
     from datetime import datetime
     from flask_login import login_user
-    from app import BranchStock, Sale
+    from app import BranchStock, Sale, UserBranchAccess
     from services.ai_agent.business_intelligence import ProductRecommendationTool, InventoryTurnoverTool
     from services.ai_agent.tools.analyst_marketing import _branch_stock_products, _scope_sale_query
 
