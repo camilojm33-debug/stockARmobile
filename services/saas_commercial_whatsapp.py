@@ -404,6 +404,11 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         raise RuntimeError("El email de contratación pertenece a un usuario Super Admin y no puede reutilizarse para un alta comercial.")
     if existing_user is not None and not existing_user.active:
         raise RuntimeError("La cuenta existente está desactivada y no puede vincularse a una nueva empresa.")
+    if existing_user is not None and existing_user.company_id not in {None, company.id}:
+        # A payment/payer email alone is not proof of control of an existing
+        # StockArMobile identity. Multi-company access is granted through the
+        # authenticated employee invitation flow instead.
+        raise RuntimeError("El email ya pertenece a otra empresa. Iniciá sesión en esa cuenta y pedí que te inviten desde Mi Empresa.")
 
     user = existing_user
     if user is None:
@@ -418,22 +423,18 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         db.session.add(user)
         db.session.flush()
     else:
-        # The login identity may already belong to another tenant. Keep its
-        # primary company pointer and credentials stable; grant an admin
-        # membership only in the newly contracted company.
         if user.company_id is None:
             user.company_id = company.id
             user.role = "admin"
-        elif user.company_id == company.id:
-            user.role = "admin"
-        ensure_membership(
-            db.session,
-            user,
-            company.id,
-            role="admin",
-            permissions_json=user.permissions_json or "[]",
-            active=True,
-        )
+
+    ensure_membership(
+        db.session,
+        user,
+        company.id,
+        role="admin",
+        permissions_json=user.permissions_json or "[]",
+        active=True,
+    )
 
     from auth import _ensure_company_default_branch
     _ensure_company_default_branch(company, user)
