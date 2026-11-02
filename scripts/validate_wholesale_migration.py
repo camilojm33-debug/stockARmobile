@@ -268,12 +268,30 @@ def main() -> None:
             text("SELECT count(*) FROM user_branch_access WHERE company_id = :company_id AND user_id = :user_id AND branch_id = :branch_id"),
             {"company_id": expected_company_id, "user_id": expected_user_id, "branch_id": migrated_branch},
         ).scalar_one()
+        membership_columns = {
+            column["name"]
+            for column in inspector.get_columns("user_company_memberships")
+        }
+        required_membership_columns = {
+            "user_id", "company_id", "role", "permissions_json", "active",
+            "invitation_token_hash", "invitation_expires_at",
+            "invitation_password_setup_required", "invitation_acceptance_required",
+            "invited_email", "invited_at", "accepted_at",
+        }
+        if not required_membership_columns.issubset(membership_columns):
+            raise AssertionError("Company membership migration is missing required invitation or access columns.")
+
         migrated_membership = db.session.execute(
-            text("SELECT role,active FROM user_company_memberships WHERE company_id=:company_id AND user_id=:user_id"),
+            text("SELECT role,active,invitation_acceptance_required FROM user_company_memberships WHERE company_id=:company_id AND user_id=:user_id"),
             {"company_id": expected_company_id, "user_id": expected_user_id},
         ).first()
-        if migrated_membership is None or migrated_membership.role != "admin" or not migrated_membership.active:
-            raise AssertionError("Existing company administrator was not backfilled into user_company_memberships.")
+        if (
+            migrated_membership is None
+            or migrated_membership.role != "admin"
+            or not migrated_membership.active
+            or migrated_membership.invitation_acceptance_required
+        ):
+            raise AssertionError("Existing company administrator was not backfilled into an active membership.")
         migrated_stock = db.session.execute(
             text("SELECT stock FROM branch_stock WHERE company_id = :company_id AND branch_id = :branch_id AND product_id = :product_id"),
             {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
