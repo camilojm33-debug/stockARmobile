@@ -128,10 +128,10 @@ def test_revoked_membership_does_not_allow_tenant_switch(app):
 
 
 
-def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity(app):
+def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity(company_membership_app):
     from flask import url_for
 
-    with app.app_context():
+    with company_membership_app.app_context():
         first = _company("Empresa de origen")
         second = _company("Empresa asociada")
         third = _company("Empresa no autorizada")
@@ -143,10 +143,10 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
         second_id = second.id
         third_id = third.id
         db.session.commit()
-        with app.test_request_context():
+        with company_membership_app.test_request_context():
             dashboard_url = url_for("dashboard.index")
 
-    client = app.test_client()
+    client = company_membership_app.test_client()
     login_response = client.post(
         "/auth/login",
         data={"username": "switch@example.test", "password": "secret123"},
@@ -172,7 +172,7 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
     denied = client.post("/auth/switch-company", data={"company_id": str(third_id)})
     assert denied.status_code == 403
 
-    with app.app_context():
+    with company_membership_app.app_context():
         stored = db.session.get(User, user_id)
         assert stored.company_id == first_id
         assert stored.role == "admin"
@@ -180,10 +180,10 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
 
 
 
-def test_user_without_active_membership_can_only_accept_new_company_invitation(app):
-    from flask import g, url_for
+def test_user_without_active_membership_can_only_accept_new_company_invitation(company_membership_app):
+    from flask import url_for
 
-    with app.app_context():
+    with company_membership_app.app_context():
         old_company = _company("Empresa anterior")
         new_company = _company("Nueva empresa")
         user = _user(old_company, role="admin", email="returning@example.test")
@@ -206,10 +206,10 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(a
         user_id = user.id
         old_company_id = old_company.id
         new_company_id = new_company.id
-        with app.test_request_context():
+        with company_membership_app.test_request_context():
             dashboard_url = url_for("dashboard.index")
 
-    client = app.test_client()
+    client = company_membership_app.test_client()
     login_response = client.post(
         "/auth/login",
         data={"username": "returning@example.test", "password": "secret123"},
@@ -229,7 +229,7 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(a
     assert f'data-company-id="{new_company_id}"' in html
     assert 'data-role="user"' in html
 
-    with app.app_context():
+    with company_membership_app.app_context():
         stored = db.session.get(User, user_id)
         assert stored.company_id == old_company_id
         assert stored.active is True
