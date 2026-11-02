@@ -20,7 +20,7 @@ from flask import abort, current_app, flash, g, jsonify, make_response, redirect
 from flask_login import UserMixin, current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFError
-from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint, event, inspect as sa_inspect, select, text
 from sqlalchemy.exc import ProgrammingError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -677,6 +677,61 @@ class CompanyMembership(db.Model):
     user = db.relationship("User", foreign_keys=[user_id])
     company = db.relationship("Company")
     invited_by = db.relationship("User", foreign_keys=[invited_by_user_id])
+
+
+
+@event.listens_for(User, "after_insert")
+def _create_initial_company_membership(mapper, connection, target):
+    """Give every newly-created tenant user their initial company membership."""
+    company_id = getattr(target, "company_id", None)
+    if company_id is None or (getattr(target, "role", None) or "").strip().lower() == "superadmin":
+        return
+    membership_table = CompanyMembership.__table__
+    existing = connection.execute(
+        select(membership_table.c.id).where(
+            membership_table.c.user_id == target.id,
+            membership_table.c.company_id == company_id,
+        )
+    ).first()
+    if existing is None:
+        connection.execute(membership_table.insert().values(
+            user_id=target.id,
+            company_id=company_id,
+            role=target.role or "user",
+            permissions_json=target.permissions_json or "[]",
+            active=bool(target.active),
+            status="active" if target.active else "revoked",
+            created_at=target.created_at or utcnow(),
+        ))
+
+
+@event.listens_for(User, "after_update")
+def _sync_primary_company_membership(mapper, connection, target):
+    """Keep the legacy primary-company role synchronized without touching other tenants."""
+    state = sa_inspect(target)
+    company_history = state.attrs.company_id.history
+    if not company_history.has_changes():
+        return
+    company_id = getattr(target, "company_id", None)
+    if company_id is None or (getattr(target, "role", None) or "").strip().lower() == "superadmin":
+        return
+    membership_table = CompanyMembership.__table__
+    existing = connection.execute(
+        select(membership_table.c.id).where(
+            membership_table.c.user_id == target.id,
+            membership_table.c.company_id == company_id,
+        )
+    ).first()
+    if existing is None:
+        connection.execute(membership_table.insert().values(
+            user_id=target.id,
+            company_id=company_id,
+            role=target.role or "user",
+            permissions_json=target.permissions_json or "[]",
+            active=bool(target.active),
+            status="active" if target.active else "revoked",
+            created_at=target.created_at or utcnow(),
+        ))
 
 
 class NotificationReadState(db.Model):
