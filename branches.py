@@ -39,7 +39,7 @@ def select_branch():
     session[SESSION_KEY] = int(branch.id)
     session.modified = True
     flash(f"Sucursal activa: {branch.name}.", "success")
-    return redirect(request.referrer or url_for("dashboard.index"))
+    return redirect(url_for("dashboard.index"))
 
 @bp.route("/crear", methods=["POST"])
 @company_admin_required
