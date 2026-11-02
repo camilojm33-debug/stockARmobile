@@ -8,9 +8,13 @@ equivalent to the pre-wholesale state, stamps that revision, and runs the new mi
 from __future__ import annotations
 
 import faulthandler
+import importlib.util
 import os
+import threading
 import time
 from sqlalchemy import inspect, text
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
 
 from app import Company, Plan, Product, User, app, db
 from flask_migrate import stamp, upgrade
@@ -159,10 +163,55 @@ def main() -> None:
                 },
             )
 
+        # Seed an already-existing non-default branch with a post-release movement.
+        # The additive Kardex migration must backfill every branch, not only Casa central.
+        with db.engine.begin() as connection:
+            secondary_branch_id = connection.execute(
+                text(
+                    "INSERT INTO branches(company_id,name,code,active,is_default,created_at,updated_at) "
+                    "VALUES(:company_id,'Sucursal Norte','NORTE',TRUE,FALSE,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) "
+                    "RETURNING id"
+                ),
+                {"company_id": expected_company_id},
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO branch_stock(company_id,branch_id,product_id,stock,min_stock,reserved_stock,updated_at) "
+                    "VALUES(:company_id,:branch_id,:product_id,6.000,1.000,0.000,CURRENT_TIMESTAMP)"
+                ),
+                {"company_id": expected_company_id, "branch_id": secondary_branch_id, "product_id": expected_product_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO branch_stock_movements("
+                    "company_id,branch_id,product_id,movement_type,quantity_delta,stock_after,"
+                    "source_type,source_id,user_id,note,created_at"
+                    ") VALUES(:company_id,:branch_id,:product_id,'sale',-2.000,6.000,"
+                    "'sale',9002,:user_id,'Venta en sucursal secundaria',CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "company_id": expected_company_id,
+                    "branch_id": secondary_branch_id,
+                    "product_id": expected_product_id,
+                    "user_id": expected_user_id,
+                },
+            )
+
         _progress(f"Applying additive opening-ledger revision {HEAD_REVISION}")
         upgrade(directory="migrations", revision="head")
         _progress("Alembic upgrade returned successfully")
         db.session.remove()
+
+        # Re-run the migration function directly against the same schema to prove
+        # its data backfill is idempotent, not merely protected by alembic_version.
+        migration_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "versions", "20261102_01_multibranch_opening.py")
+        migration_spec = importlib.util.spec_from_file_location("multibranch_opening_migration", migration_path)
+        migration_module = importlib.util.module_from_spec(migration_spec)
+        migration_spec.loader.exec_module(migration_module)
+        with db.engine.begin() as connection:
+            with Operations.context(MigrationContext.configure(connection)):
+                migration_module.upgrade()
+        _progress("Direct second execution of opening-ledger migration completed")
 
         _progress("Inspecting migrated schema, columns, tables and constraints")
         inspector = inspect(db.engine)
@@ -222,6 +271,29 @@ def main() -> None:
             text("SELECT stock FROM branch_stock WHERE company_id = :company_id AND branch_id = :branch_id AND product_id = :product_id"),
             {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
         ).scalar_one()
+        secondary_opening = db.session.execute(
+            text(
+                "SELECT quantity_delta,stock_after FROM branch_stock_movements "
+                "WHERE company_id=:company_id AND branch_id=:branch_id AND product_id=:product_id "
+                "AND movement_type='opening' AND source_type='multibranch_opening_backfill'"
+            ),
+            {"company_id": expected_company_id, "branch_id": secondary_branch_id, "product_id": expected_product_id},
+        ).one_or_none()
+        secondary_movement_total = db.session.execute(
+            text(
+                "SELECT COALESCE(SUM(quantity_delta),0) FROM branch_stock_movements "
+                "WHERE company_id=:company_id AND branch_id=:branch_id AND product_id=:product_id"
+            ),
+            {"company_id": expected_company_id, "branch_id": secondary_branch_id, "product_id": expected_product_id},
+        ).scalar_one()
+        opening_count = db.session.execute(
+            text(
+                "SELECT count(*) FROM branch_stock_movements "
+                "WHERE company_id=:company_id AND product_id=:product_id "
+                "AND movement_type='opening' AND source_type='multibranch_opening_backfill'"
+            ),
+            {"company_id": expected_company_id, "product_id": expected_product_id},
+        ).scalar_one()
         migrated_opening = db.session.execute(
             text(
                 "SELECT quantity_delta,stock_after FROM branch_stock_movements "
@@ -243,10 +315,14 @@ def main() -> None:
         ).scalar_one()
         if int(migrated_access) != 1 or float(migrated_stock) != 14.0:
             raise AssertionError("Existing employee access or product stock was not migrated to Casa central.")
-        if float(migrated_company_stock) != 14.0 or float(movement_total) != 14.0:
-            raise AssertionError("The consolidated stock does not reconcile with the branch movement ledger.")
+        if float(migrated_company_stock) != 20.0 or float(movement_total) != 14.0 or float(secondary_movement_total) != 6.0:
+            raise AssertionError("The consolidated stock does not reconcile with every branch movement ledger.")
         if migrated_opening is None or float(migrated_opening.quantity_delta) != 17.0 or float(migrated_opening.stock_after) != 17.0:
-            raise AssertionError("The migrated opening balance was not reconstructed before post-migration movements.")
+            raise AssertionError("Casa central opening balance was not reconstructed before post-migration movements.")
+        if secondary_opening is None or float(secondary_opening.quantity_delta) != 8.0 or float(secondary_opening.stock_after) != 8.0:
+            raise AssertionError("The non-default branch opening balance was not reconstructed.")
+        if int(opening_count) != 2:
+            raise AssertionError(f"Opening migration is not idempotent; expected two opening movements, got {opening_count}.")
         premium_limit = db.session.execute(
             text("SELECT max_branches FROM plans WHERE code = 'premium'")
         ).scalar_one()
@@ -272,12 +348,67 @@ def main() -> None:
         if any(status == "picked_up" for status in pickup_statuses):
             raise AssertionError("Legacy quote deliveries were incorrectly classified as picked up.")
 
+        _progress("Checking company row lock serializes concurrent branch-limit operations")
+        from branches import _lock_company_for_branch_limit
+        first_acquired = threading.Event()
+        release_first = threading.Event()
+        second_acquired = threading.Event()
+        lock_errors = []
+
+        def _hold_company_lock():
+            with app.app_context():
+                try:
+                    _lock_company_for_branch_limit(expected_company_id)
+                    first_acquired.set()
+                    if not release_first.wait(10):
+                        raise AssertionError("Timed out while holding the company row lock.")
+                    db.session.rollback()
+                except Exception as exc:
+                    lock_errors.append(exc)
+                    db.session.rollback()
+                finally:
+                    db.session.remove()
+
+        def _wait_for_company_lock():
+            with app.app_context():
+                try:
+                    _lock_company_for_branch_limit(expected_company_id)
+                    second_acquired.set()
+                    db.session.rollback()
+                except Exception as exc:
+                    lock_errors.append(exc)
+                    db.session.rollback()
+                finally:
+                    db.session.remove()
+
+        first_thread = threading.Thread(target=_hold_company_lock, daemon=True)
+        second_thread = threading.Thread(target=_wait_for_company_lock, daemon=True)
+        first_thread.start()
+        if not first_acquired.wait(5):
+            release_first.set()
+            raise AssertionError("First branch-limit operation did not acquire the company row lock.")
+        second_thread.start()
+        try:
+            if second_acquired.wait(0.35):
+                raise AssertionError("A concurrent branch-limit operation bypassed the company row lock.")
+        finally:
+            release_first.set()
+        first_thread.join(5)
+        second_thread.join(5)
+        if first_thread.is_alive() or second_thread.is_alive():
+            raise AssertionError("Concurrent company row-lock test did not finish.")
+        if lock_errors:
+            raise AssertionError(f"Company row-lock concurrency test failed: {lock_errors!r}")
+        if not second_acquired.is_set():
+            raise AssertionError("Second branch-limit operation did not proceed after the first transaction released its lock.")
+
         _progress("All schema and data assertions passed")
         print("PASS: wholesale, pickup-tracking and multisucursal migrations upgraded the pre-feature PostgreSQL schema.", flush=True)
         print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.", flush=True)
         print("PASS: existing Negocio plan gains wholesale_pricing; Premium keeps a configurable limit of five branches.", flush=True)
         print("PASS: existing tenants, users and product stock are migrated to Casa central.", flush=True)
-        print("PASS: each migrated product balance has an idempotent opening movement in the branch Kardex.", flush=True)
+        print("PASS: every existing branch balance receives exactly one idempotent opening movement in the branch Kardex.", flush=True)
+        print("PASS: concurrent branch-limit operations serialize on the company row lock.", flush=True)
         _progress("END: PostgreSQL migration validation passed")
 
 
