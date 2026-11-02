@@ -162,7 +162,7 @@ def test_business_documents_use_the_pos_assigned_to_the_sale_branch(app):
             "active_pos": "00001",
             "points_of_sale": [
                 {"number": "00001", "description": "Casa central", "branch": "Casa central", "active": True},
-                {"number": "00002", "description": "Sucursal Norte", "branch": "Sucursal Norte", "active": False},
+                {"number": "00002", "description": "Sucursal Norte", "branch": "Sucursal Norte", "active": True},
             ],
             "numbering": {"factura_b": "00001-00000124"},
             "emission": {"currency": "ARS"},
@@ -545,4 +545,129 @@ def test_ai_marketing_tools_use_employee_branch_inventory_and_sales(app):
             turnover = InventoryTurnoverTool(company_id=company.id).execute(days=30)
             assert turnover["success"] is True
             assert turnover["items"][0]["stock"] == 3.0
+        db.session.rollback()
+
+
+
+def test_inactive_branch_keeps_its_original_fiscal_pos_when_issuing_sale_document(app):
+    from types import SimpleNamespace
+    from services.business_billing_service import BusinessBillingService
+
+    with app.app_context():
+        company = _company("Empresa fiscal sucursal inactiva")
+        _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        north.active = False
+        db.session.flush()
+        sale = SimpleNamespace(
+            id=9101,
+            branch_id=north.id,
+            tipo_comprobante="factura_b",
+            customer="Cliente Norte",
+            total_amount=Decimal("1200.00"),
+            comprobante_emitido=False,
+        )
+        config = {
+            "active_pos": "00001",
+            "points_of_sale": [
+                {"number": "00001", "branch": "Casa central", "active": True},
+                {"number": "00002", "branch": "Sucursal Norte", "active": True},
+            ],
+            "numbering": {"factura_b": "00001-00000001"},
+            "emission": {"currency": "ARS"},
+        }
+
+        document = BusinessBillingService.issue_sale_document(
+            db.session, company=company, sale=sale, config=config
+        )
+
+        assert document.pos_number == "00002"
+        assert document.branch_id == north.id
+        assert document.branch_label == "Sucursal Norte"
+        db.session.rollback()
+
+
+def test_pending_invoice_sales_are_detected_before_branch_deactivation(app):
+    from app import Sale
+    from branches import _has_pending_invoice_sales
+
+    with app.app_context():
+        company = _company("Empresa ventas pendientes")
+        branch = _branch(company, "Sucursal Norte", "NORTE")
+        sale = Sale(
+            company_id=company.id,
+            branch_id=branch.id,
+            customer="Cliente",
+            total_amount=100,
+            status="confirmada",
+            requiere_comprobante=True,
+            comprobante_emitido=False,
+        )
+        db.session.add(sale)
+        db.session.flush()
+
+        assert _has_pending_invoice_sales(company.id, branch.id) is True
+        sale.comprobante_emitido = True
+        db.session.flush()
+        assert _has_pending_invoice_sales(company.id, branch.id) is False
+        db.session.rollback()
+
+
+def test_branch_stock_rejects_more_than_three_decimals_without_rounding(app):
+    from stockarmobile.branch_inventory import validate_stock_quantity
+
+    with app.app_context():
+        assert validate_stock_quantity("1.234") == Decimal("1.234")
+        assert validate_stock_quantity("1.0000") == Decimal("1.000")
+        with pytest.raises(ValueError, match="tres decimales"):
+            validate_stock_quantity("1.2345")
+
+        company = _company("Empresa precisión stock")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        product = Product(
+            company_id=company.id, barcode="PREC-001", name="Producto precisión",
+            stock=10, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, branch.id, Decimal("10"))
+        with pytest.raises(ValueError, match="tres decimales"):
+            adjust_branch_stock(product, branch.id, Decimal("-0.0001"), movement_type="sale")
+        assert available_stock(product, branch.id) == 10.0
+        assert float(product.stock) == 10.0
+        db.session.rollback()
+
+
+def test_sales_and_purchase_inputs_reject_more_than_three_stock_decimals(app):
+    from types import SimpleNamespace
+    from services.sales.inventory_service import InventoryService
+    from purchases import _parse_purchase_lines
+
+    with app.app_context():
+        company = _company("Empresa precisión operaciones")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        product = Product(
+            company_id=company.id, barcode="PREC-002", name="Producto precisión",
+            price=10, discount=0, stock=10, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, branch.id, Decimal("10"))
+        current_user = SimpleNamespace(company_id=company.id)
+
+        with pytest.raises(ValueError, match="tres decimales"):
+            InventoryService.calculate_lines(
+                items={product.id: "1.2345"},
+                current_user=current_user,
+                fetch_products_func=lambda ids: {product.id: product},
+                branch_id=branch.id,
+            )
+
+        with app.test_request_context(
+            "/",
+            method="POST",
+            data={"product_id[]": str(product.id), "quantity[]": "1.2345", "unit_cost[]": "5"},
+        ):
+            with pytest.raises(ValueError, match="tres decimales"):
+                _parse_purchase_lines(enforce_branch_precision=True)
         db.session.rollback()
