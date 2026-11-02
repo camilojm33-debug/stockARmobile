@@ -289,3 +289,127 @@ def test_invitation_cannot_be_accepted_by_a_different_user(app):
         ).first()
         assert pending.active is False
         assert pending.invitation_token_hash is not None
+
+
+
+def test_new_invited_account_sets_password_from_link_without_existing_login(app, monkeypatch):
+    from app import Branch, User
+    from services.company_membership_invitation_service import CompanyMembershipInvitationService
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    monkeypatch.setattr(
+        CompanyMembershipInvitationService,
+        "send_invitation_email",
+        staticmethod(lambda **kwargs: False),
+    )
+    with app.app_context():
+        company = _company("Empresa con alta nueva")
+        PlanService.ensure_defaults(db.session)
+        trial_plan = PlanService.get_plan(code="trial")
+        SubscriptionService.ensure_company_trial(
+            db.session, company=company, trial_plan=trial_plan
+        )
+        branch = Branch(
+            company_id=company.id,
+            name="Casa central",
+            code="CASA-CENTRAL",
+            active=True,
+            is_default=True,
+        )
+        user = User(
+            username="new-invitee",
+            email="new-invitee@example.test",
+            company_id=company.id,
+            role="user",
+            active=True,
+            must_change_password=True,
+            auth_provider="local",
+        )
+        user.set_password("unusable-random-initial-password")
+        db.session.add_all([branch, user])
+        db.session.flush()
+        with app.test_request_context("/"):
+            membership, _url, _sent = CompanyMembershipInvitationService.create_or_refresh(
+                db.session,
+                user=user,
+                company=company,
+                role="user",
+                password_setup_required=True,
+            )
+            token = app.config["_LAST_COMPANY_INVITATION_TOKEN"]
+        db.session.commit()
+        user_id = user.id
+        company_id = company.id
+        assert membership.active is False
+
+        client = app.test_client()
+        path = f"/auth/accept-company-invitation/{token}"
+        page = client.get(path)
+        assert page.status_code == 200
+        assert b"Crear contrase" in page.data
+
+        accepted = client.post(
+            path,
+            data={
+                "new_password": "a-secure-new-password",
+                "confirm_password": "a-secure-new-password",
+            },
+            follow_redirects=False,
+        )
+        assert accepted.status_code == 302
+        refreshed = db.session.get(User, user_id)
+        db.session.refresh(refreshed)
+        refreshed_membership = UserCompanyMembership.query.filter_by(
+            user_id=user_id, company_id=company_id
+        ).first()
+        assert refreshed.check_password("a-secure-new-password")
+        assert refreshed.must_change_password is False
+        assert refreshed_membership.active is True
+        assert refreshed_membership.invitation_password_setup_required is False
+
+        with client.session_transaction() as session_data:
+            assert session_data[ACTIVE_COMPANY_SESSION_KEY] == company_id
+
+        second = client.get(path)
+        assert second.status_code == 302
+
+
+def test_revoking_company_membership_also_revokes_branch_access(app):
+    from app import Branch, UserBranchAccess
+
+    with app.app_context():
+        company = _company("Empresa con sucursales")
+        branch_one = Branch(
+            company_id=company.id, name="Casa central", code="CASA",
+            active=True, is_default=True,
+        )
+        branch_two = Branch(
+            company_id=company.id, name="Norte", code="NORTE",
+            active=True, is_default=False,
+        )
+        db.session.add_all([branch_one, branch_two])
+        db.session.flush()
+        user = _user(company, username="branch-revocation-user")
+        membership = _membership(
+            user, company, role="user", permissions='["inventory"]'
+        )
+        db.session.add_all([
+            UserBranchAccess(
+                company_id=company.id, user_id=user.id, branch_id=branch_one.id
+            ),
+            UserBranchAccess(
+                company_id=company.id, user_id=user.id, branch_id=branch_two.id
+            ),
+        ])
+        db.session.commit()
+
+        membership.active = False
+        UserBranchAccess.query.filter_by(
+            company_id=company.id, user_id=user.id
+        ).delete(synchronize_session=False)
+        db.session.commit()
+
+        assert UserBranchAccess.query.filter_by(
+            company_id=company.id, user_id=user.id
+        ).count() == 0
