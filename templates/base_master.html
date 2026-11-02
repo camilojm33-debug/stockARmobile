@@ -1204,13 +1204,15 @@
           clearOfflineQueue();
         });
       });
-      document.querySelectorAll('form[action*="/auth/switch-user"]').forEach(function(form) {
+      document.querySelectorAll('form[action*="/auth/switch-user"], form[action*="/auth/switch-company"]').forEach(function(form) {
         form.addEventListener('submit', function(event) {
           if (form.dataset.privateCacheCleared === 'true') return;
           event.preventDefault();
           if (form.dataset.clearingPrivateCache === 'true') return;
           form.dataset.clearingPrivateCache = 'true';
           const submitter = event.submitter;
+          clearCartStorage();
+          clearOfflineQueue();
           clearPrivateOfflineCache().finally(function() {
             form.dataset.privateCacheCleared = 'true';
             form.dataset.clearingPrivateCache = 'false';
