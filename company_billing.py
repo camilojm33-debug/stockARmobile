@@ -1788,6 +1788,11 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
             "saldo": saldo,
             "last_access": access_rows.get(user.id),
             "permissions": _user_permissions(user),
+            "invitation_required": bool(
+                memberships_by_user_id.get(int(user.id))
+                and memberships_by_user_id[int(user.id)].invitation_acceptance_required
+                and not memberships_by_user_id[int(user.id)].active
+            ),
             "invitation_pending": bool(
                 memberships_by_user_id.get(int(user.id))
                 and memberships_by_user_id[int(user.id)].invitation_token_hash
@@ -4502,10 +4507,15 @@ def company_settings_user_toggle(user_id):
     ).first_or_404()
     action = (request.form.get("action") or "").strip().lower()
 
-    pending_invitation = bool(membership.invitation_token_hash and not membership.active)
-    if pending_invitation:
+    requires_invitation = bool(
+        membership.invitation_acceptance_required and not membership.active
+    )
+    if requires_invitation:
+        if not membership.invitation_token_hash:
+            flash("Esta membresía requiere aceptación de la persona. Reenviá la invitación desde el formulario de alta.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
         if action != "cancel_invitation":
-            flash("La invitación sigue pendiente. La persona debe aceptarla antes de habilitar su acceso.", "warning")
+            flash("La persona debe aceptar la invitación antes de habilitar su acceso.", "warning")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         membership.invitation_token_hash = None
         membership.invitation_expires_at = None
