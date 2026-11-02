@@ -5853,7 +5853,7 @@ def password_recovery_panel():
 @bp.route("/password-recovery/company-user/reset", methods=["POST"])
 @superadmin_required
 def password_recovery_company_user_reset():
-    from app import User, UserCompanyMembership, db, record_audit
+    from app import Company, User, UserCompanyMembership, db, record_audit
 
     _require_superadmin()
     if not _require_superadmin_step_up():
