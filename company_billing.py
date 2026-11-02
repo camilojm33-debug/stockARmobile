@@ -4466,6 +4466,18 @@ def company_settings_user_invite():
         flash("Ese usuario ya pertenece a esta empresa.", "info")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
+    pending_not_expired = bool(
+        membership is not None
+        and membership.status == "invited"
+        and membership.invitation_expires_at is not None
+        and membership.invitation_expires_at > utcnow()
+    )
+    if not pending_not_expired:
+        allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
+        if not allowed:
+            flash(message, "danger")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     if membership is None:
