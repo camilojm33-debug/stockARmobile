@@ -220,6 +220,22 @@ def available_company_choices(user):
     return choices
 
 
+def users_for_company_query(company_id: int, *, active_only: bool = True):
+    """Return identities that have an active membership in the requested tenant."""
+    from app import User, UserCompanyMembership
+
+    query = (
+        User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .filter(UserCompanyMembership.company_id == int(company_id))
+    )
+    if active_only:
+        query = query.filter(
+            UserCompanyMembership.active.is_(True),
+            User.active.is_(True),
+        )
+    return query
+
+
 def apply_membership_to_user(user, membership):
     """Apply per-company fields to a User instance for read-only tenant UI rows."""
     set_committed_value(user, "company_id", int(membership.company_id))
