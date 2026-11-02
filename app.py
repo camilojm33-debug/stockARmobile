@@ -1111,6 +1111,7 @@ class UserCompanyMembership(db.Model):
     __tablename__ = "user_company_memberships"
     __table_args__ = (
         UniqueConstraint("user_id", "company_id", name="uq_user_company_membership"),
+        UniqueConstraint("invitation_token_hash", name="uq_user_company_membership_invitation_token_hash"),
         Index("ix_user_company_memberships_company_active", "company_id", "active"),
         Index("ix_user_company_memberships_user_active", "user_id", "active"),
     )
