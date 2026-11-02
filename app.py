@@ -331,13 +331,41 @@ def add_security_headers(response):
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load only currently active accounts so revocation applies to existing sessions."""
+    """Load an active identity and bind its selected, authorized company membership."""
     try:
         user = db.session.get(User, int(user_id))
     except (TypeError, ValueError):
         return None
     if user is None or not bool(getattr(user, "active", True)):
         return None
+
+    if (getattr(user, "role", None) or "").strip().lower() == "superadmin":
+        return user
+
+    from stockarmobile.company_memberships import (
+        ACTIVE_COMPANY_SESSION_KEY,
+        apply_membership_context,
+        choose_membership_for_login,
+    )
+
+    membership = choose_membership_for_login(
+        user,
+        session.get(ACTIVE_COMPANY_SESSION_KEY),
+    )
+    if membership is not None:
+        apply_membership_context(user, membership)
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(membership.company_id)
+        return user
+
+    # Compatibility for legacy tenant accounts that have not yet received a
+    # membership row (e.g. an app bootstrapped without running Alembic).
+    if getattr(user, "company_id", None) is not None:
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(user.company_id)
+        user.company_membership_active = bool(user.active)
+        user.company_membership_role = user.role or "user"
+        return user
+
+    # Referral sellers and other non-tenant identities remain global accounts.
     return user
 
 
@@ -620,6 +648,35 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+
+class CompanyMembership(db.Model):
+    """A person's independent role and access policy in one tenant company."""
+    __tablename__ = "company_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id", name="uq_company_memberships_user_company"),
+        Index("ix_company_memberships_user", "user_id"),
+        Index("ix_company_memberships_company", "company_id"),
+        Index("ix_company_memberships_status", "company_id", "status", "active"),
+        Index("ix_company_memberships_invitation_hash", "invitation_token_hash", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False, default="user")
+    permissions_json = db.Column(db.Text, nullable=False, default="[]")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    status = db.Column(db.String(20), nullable=False, default="active")
+    invitation_token_hash = db.Column(db.String(64), unique=True, index=True)
+    invitation_expires_at = db.Column(db.DateTime)
+    invited_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    accepted_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+    company = db.relationship("Company")
+    invited_by = db.relationship("User", foreign_keys=[invited_by_user_id])
 
 
 class NotificationReadState(db.Model):
@@ -2633,6 +2690,7 @@ def internal_error(error):
 def inject_notifications():
     has_active_seller_profile = False
     switchable_company_users = []
+    available_companies = []
     current_company_preferences = {}
     ai_feature_pricing_allowed = False
     ai_feature_vendor_allowed = False
@@ -2679,23 +2737,39 @@ def inject_notifications():
                 commercial_wholesale_pricing_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
-        if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
-            switchable_company_users = (
-                User.query.filter(
-                    User.company_id == current_user.company_id,
-                    User.active.is_(True),
-                    User.id != current_user.id,
-                    User.role.in_(["user", "admin"]),
-                )
-                .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
-                .all()
-            )
+        if getattr(current_user, "company_id", None) and getattr(current_user, "role", None) == "admin":
+            from stockarmobile.company_memberships import get_company_users
+            switchable_company_users = [
+                user for user in get_company_users(current_user.company_id, active_only=True)
+                if user.id != current_user.id and user.role in {"user", "admin"}
+            ]
+
+        if getattr(current_user, "role", None) != "superadmin":
+            from stockarmobile.company_memberships import active_memberships_for_user
+            for membership in active_memberships_for_user(current_user.id):
+                linked_company = db.session.get(Company, membership.company_id)
+                if linked_company is not None:
+                    available_companies.append({
+                        "id": int(linked_company.id),
+                        "name": linked_company.name,
+                        "role": membership.role or "user",
+                        "current": int(linked_company.id) == int(getattr(current_user, "company_id", 0) or 0),
+                    })
+            if not available_companies and getattr(current_user, "company_id", None):
+                available_companies = [{
+                    "id": int(current_user.company_id),
+                    "name": company.name if company is not None else "Empresa",
+                    "role": getattr(current_user, "role", "user"),
+                    "current": True,
+                }]
+
         return {
             "notification_items": notification_payload["items"],
             "notification_count": notification_payload["count"],
             "has_active_seller_profile": has_active_seller_profile,
             "support_contact": support_contact,
             "switchable_company_users": switchable_company_users,
+            "available_companies": available_companies,
             "company_preferences": current_company_preferences,
             "company_feature_enabled": lambda key, default=False: bool(current_company_preferences.get(key, default)),
             "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
@@ -2713,6 +2787,7 @@ def inject_notifications():
         "has_active_seller_profile": False,
         "support_contact": support_contact,
         "switchable_company_users": [],
+        "available_companies": [],
         "company_preferences": {},
         "company_feature_enabled": lambda key, default=False: bool(default),
         "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
