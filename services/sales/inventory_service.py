@@ -56,19 +56,22 @@ class InventoryService:
                         product, branch_id, item.quantity or 0,
                         movement_type="sale_reversal", source_type="sale",
                         source_id=source_id, user_id=user_id, allow_legacy_precision=True,
+                        allow_inactive=True,
                     )
                 else:
                     product.stock = float(product.stock or 0) + float(item.quantity or 0)
 
     @staticmethod
-    def apply_stock(*, lines, branch_id=None, source_type="sale", source_id=None, user_id=None):
+    def apply_stock(*, lines, branch_id=None, source_type="sale", source_id=None, user_id=None,
+                    allow_inactive=False):
         for line in lines:
             product = line["product"]
             quantity = line["quantity"]
             if branch_id is not None:
                 from stockarmobile.branch_inventory import adjust_branch_stock
                 adjust_branch_stock(product, branch_id, -quantity, movement_type="sale",
-                                    source_type=source_type, source_id=source_id, user_id=user_id)
+                                    source_type=source_type, source_id=source_id, user_id=user_id,
+                                    allow_inactive=allow_inactive)
             else:
                 product.stock = float(product.stock or 0) - float(quantity)
 
@@ -84,6 +87,7 @@ class InventoryService:
         to_decimal,
         is_truthy,
         branch_id=None,
+        allow_inactive=False,
     ):
         new_lines = []
         row_count = max(len(product_ids), len(quantities), len(prices), len(discounts), len(row_deletes))
@@ -123,7 +127,7 @@ class InventoryService:
             available = float(product.stock or 0)
             if branch_id is not None:
                 from stockarmobile.branch_inventory import available_stock
-                available = available_stock(product, branch_id)
+                available = available_stock(product, branch_id, allow_inactive=allow_inactive)
             if available < float(quantity):
                 raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 

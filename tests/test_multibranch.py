@@ -91,6 +91,83 @@ def test_branch_stock_rejects_branch_from_another_company(app):
         db.session.rollback()
 
 
+def test_historical_sale_reversal_and_edit_work_on_inactive_branch(app):
+    from types import SimpleNamespace
+    from services.sales.inventory_service import InventoryService
+
+    with app.app_context():
+        company = _company("Empresa reversión histórica")
+        branch = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id,
+            barcode="HIST-001",
+            name="Producto histórico",
+            stock=Decimal("5"),
+            price=Decimal("10"),
+            discount=Decimal("0"),
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, branch.id, Decimal("5"))
+        db.session.flush()
+
+        # Deactivated branches cannot receive new operational stock movements.
+        branch.active = False
+        db.session.flush()
+        with pytest.raises(ValueError, match="inactiva"):
+            adjust_branch_stock(
+                product, branch.id, Decimal("-1"), movement_type="sale"
+            )
+
+        # Reversing an existing sale is a historical correction and must restore
+        # stock to the original branch, not to the current/default branch.
+        old_item = SimpleNamespace(product_id=product.id, quantity=Decimal("2"), product=product)
+        InventoryService.reverse_stock(
+            sale_items=[old_item],
+            resolve_product_func=lambda item: item.product,
+            branch_id=branch.id,
+            source_id=7001,
+        )
+        assert available_stock(product, branch.id, allow_inactive=True) == 7.0
+        assert Decimal(str(product.stock)) == Decimal("7")
+
+        # Editing the same historical sale re-applies its corrected quantity
+        # against that inactive branch, while ordinary sale paths remain blocked.
+        lines = InventoryService.build_edit_lines(
+            product_ids=[str(product.id)],
+            quantities=["3"],
+            prices=["10"],
+            discounts=["0"],
+            row_deletes=[],
+            products_by_id={product.id: product},
+            to_decimal=lambda value: Decimal(str(value)),
+            is_truthy=lambda value: bool(value),
+            branch_id=branch.id,
+            allow_inactive=True,
+        )
+        InventoryService.apply_stock(
+            lines=lines,
+            branch_id=branch.id,
+            source_type="sale_edit",
+            source_id=7001,
+            allow_inactive=True,
+        )
+
+        assert available_stock(product, branch.id, allow_inactive=True) == 4.0
+        assert Decimal(str(product.stock)) == Decimal("4")
+        movements = BranchStockMovement.query.filter_by(
+            company_id=company.id, branch_id=branch.id, source_id=7001
+        ).order_by(BranchStockMovement.id.asc()).all()
+        assert [movement.movement_type for movement in movements] == [
+            "sale_reversal", "sale"
+        ]
+        assert [Decimal(str(movement.quantity_delta)) for movement in movements] == [
+            Decimal("2"), Decimal("-3")
+        ]
+        db.session.rollback()
+
+
 def test_multibranch_feature_is_premium_only(app):
     with app.app_context():
         business = _company("Empresa Negocio")
