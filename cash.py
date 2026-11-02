@@ -221,7 +221,7 @@ def _session_ticket_text(session):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import CashMovement, CashSession, Company, Sale, User, db, record_audit, scope_query_to_company, utcnow
+    from app import CashMovement, CashSession, Company, Sale, User, UserCompanyMembership, db, record_audit, scope_query_to_company, utcnow
 
     status_filter = (request.args.get("status") or "").strip().lower()
     user_filter = request.args.get("user_id", type=int)
@@ -396,7 +396,16 @@ def index():
 
     employees = []
     if _is_admin():
-        employees = scope_query_to_company(User.query.filter_by(active=True), User).order_by(User.username).all()
+        employees = (
+            User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+            .filter(
+                UserCompanyMembership.company_id == current_user.company_id,
+                UserCompanyMembership.active.is_(True),
+                User.active.is_(True),
+            )
+            .order_by(User.username.asc(), User.id.asc())
+            .all()
+        )
 
     return render_template(
         "caja/index.html",
