@@ -651,7 +651,7 @@ def export_cash_pdf():
             f"EF ${summary['sales_cash']:.2f} | TR ${summary['sales_transfer']:.2f} | DB ${summary['sales_debit']:.2f} | "
             f"CR ${summary['sales_credit']:.2f} | MP ${summary['sales_mp']:.2f} | OT ${summary['sales_other']:.2f}"
         )
-        totals = f"Esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
+        totals_line = f"Esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
         if y < 40:
             pdf.showPage()
             y = page_h - 40
@@ -668,7 +668,7 @@ def export_cash_pdf():
             pdf.showPage()
             y = page_h - 40
             pdf.setFont("Helvetica", 9)
-        pdf.drawString(36, y, totals[:180])
+        pdf.drawString(36, y, totals_line[:180])
         y -= 18
 
     if y < 80:
