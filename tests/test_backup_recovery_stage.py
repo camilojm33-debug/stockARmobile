@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from app import (
-    CashMovement, CashSession, Client, Company, Expense, Product, PurchaseItem,
+    Branch, BranchStock, CashMovement, CashSession, Client, Company, Expense, Product, PurchaseItem,
     PurchaseOrder, Quote, Sale, SaleItem, Supplier, User, db,
 )
 from services.backup_service import BackupService
@@ -24,17 +24,28 @@ def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
         company = Company(name="Backup QA", active=True)
         db.session.add(company)
         db.session.flush()
-
-        db.session.add(
-            Product(
-                company_id=company.id,
-                barcode="BKP-001",
-                name="Producto QA",
-                price=123.45,
-                stock=7,
-                active=True,
-            )
+        central = Branch(
+            company_id=company.id, name="Casa central", code="CENTRAL",
+            active=True, is_default=True,
         )
+        db.session.add(central)
+        db.session.flush()
+
+        product = Product(
+            company_id=company.id,
+            barcode="BKP-001",
+            name="Producto QA",
+            price=123.45,
+            stock=7,
+            min_stock=2,
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        db.session.add(BranchStock(
+            company_id=company.id, branch_id=central.id, product_id=product.id,
+            stock=7, min_stock=2, reserved_stock=0,
+        ))
         db.session.add(
             Client(
                 company_id=company.id,
@@ -55,6 +66,7 @@ def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
         assert result["rolled_back"] is True
         assert result["counts_before"]["products"] == 1
         assert result["counts_before"]["clients"] == 1
+        assert BranchStock.query.filter_by(company_id=company.id, branch_id=central.id, product_id=product.id).one().stock == 7
         assert backup.status == "ready"
         assert sequence_sync_calls == [], "Verification must not mutate PostgreSQL sequences outside its rollbackable savepoint."
 
