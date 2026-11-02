@@ -1089,7 +1089,7 @@ class VendorOrderService:
                         "product_id": product.id,
                         "name": product.name,
                         "price": float(product.price or 0),
-                        "stock": normalized_stock_quantity(product.stock),
+                        "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
                         "unit_measure": product.unit_measure or "u",
                     },
                 }
@@ -2072,7 +2072,7 @@ class VendorOrderService:
                 "brand": product.brand or "",
                 "category": product.category or "",
                 "price": float(product.price or 0),
-                "stock": normalized_stock_quantity(product.stock),
+                "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
                 "unit_measure": product.unit_measure or "u",
                 "photo": product.photo or "",
             }
@@ -2102,7 +2102,7 @@ class VendorOrderService:
                     "price": float(price),
                     "discount": float(discount),
                     "final_price": float(final_price),
-                    "stock": normalized_stock_quantity(product.stock),
+                    "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
                     "unit_measure": product.unit_measure or "u",
                 }
             )
