@@ -365,11 +365,11 @@ class PrepararCampanaTool(AgentTool):
             ).count())
             opportunity = "recuperación de clientes"
         elif campaign_type == "productos_sin_ventas":
-            sold = SaleItem.query.join(Sale).filter(
+            sold = _scope_sale_query(SaleItem.query.join(Sale).filter(
                 Sale.company_id == self.company_id,
                 Sale.date >= cutoff,
                 Sale.status.notin_(["cancelada", "anulada"]),
-            ).with_entities(SaleItem.product_id).distinct()
+            ), self.company_id).with_entities(SaleItem.product_id).distinct()
             sold_ids = {int(row[0]) for row in sold.all()}
             products = [
                 product for product in _branch_stock_products(self.company_id, limit=1000)
