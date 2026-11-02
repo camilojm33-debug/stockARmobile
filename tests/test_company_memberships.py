@@ -200,6 +200,7 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(a
         db.session.add(invited)
         db.session.commit()
         user_id = user.id
+        old_company_id = old_company.id
         new_company_id = new_company.id
 
     client = app.test_client()
