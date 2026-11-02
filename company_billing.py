@@ -4296,7 +4296,6 @@ def company_settings_user_update(user_id):
             membership.invitation_token_hash = None
             membership.invitation_expires_at = None
             membership.invited_email = None
-            membership.invited_email = None
 
     record_audit(action="company_user_update", entity="user", entity_id=user.id, detail=f"Datos de cuenta actualizados desde company_id={company.id}: {user.username}")
     db.session.commit()
