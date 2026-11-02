@@ -291,9 +291,23 @@ class ExecutiveSummaryTool(AgentTool):
         restricted, branch_id = employee_branch_scope(self.company_id)
         if restricted:
             from app import BranchStock
-            critical = BranchStock.query.filter_by(company_id=self.company_id, branch_id=branch_id).filter(BranchStock.stock <= 0).join(Product).filter(Product.active.is_(True)).count()
+            critical = Product.query.outerjoin(
+                BranchStock,
+                (BranchStock.company_id == Product.company_id)
+                & (BranchStock.product_id == Product.id)
+                & (BranchStock.branch_id == branch_id),
+            ).filter(
+                Product.company_id == self.company_id,
+                Product.active.is_(True),
+                func.coalesce(BranchStock.stock, 0)
+                <= func.coalesce(BranchStock.min_stock, Product.min_stock),
+            ).count()
         else:
-            critical = Product.query.filter(Product.company_id == self.company_id, Product.active.is_(True), Product.stock <= 0).count()
+            critical = Product.query.filter(
+                Product.company_id == self.company_id,
+                Product.active.is_(True),
+                Product.stock <= Product.min_stock,
+            ).count()
         historical_query = Sale.query.filter(Sale.company_id == self.company_id, Sale.client_id.isnot(None))
         recent_query = Sale.query.filter(Sale.company_id == self.company_id, Sale.client_id.isnot(None), Sale.date >= start)
         if restricted:
