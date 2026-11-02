@@ -346,8 +346,10 @@ def load_user(user_id):
         ACTIVE_COMPANY_SESSION_KEY,
         apply_membership_context,
         choose_membership_for_login,
+        get_membership,
     )
 
+    primary_company_id = getattr(user, "company_id", None)
     membership = choose_membership_for_login(
         user,
         session.get(ACTIVE_COMPANY_SESSION_KEY),
@@ -357,10 +359,19 @@ def load_user(user_id):
         session[ACTIVE_COMPANY_SESSION_KEY] = int(membership.company_id)
         return user
 
+    # An explicit revoked/suspended primary membership must never fall through
+    # to the legacy primary-company compatibility path.
+    primary_membership = (
+        get_membership(user.id, primary_company_id)
+        if primary_company_id is not None else None
+    )
+    if primary_membership is not None:
+        return None
+
     # Compatibility for legacy tenant accounts that have not yet received a
     # membership row (e.g. an app bootstrapped without running Alembic).
-    if getattr(user, "company_id", None) is not None:
-        session[ACTIVE_COMPANY_SESSION_KEY] = int(user.company_id)
+    if primary_company_id is not None:
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(primary_company_id)
         user.company_membership_active = bool(user.active)
         user.company_membership_role = user.role or "user"
         return user
