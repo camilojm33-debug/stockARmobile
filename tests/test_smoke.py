@@ -15,7 +15,7 @@ from flask_login import login_user, logout_user
 from sqlite_test_db import clear_test_data
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, Quote, QuoteItem, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, CompanyMembership, Product, Quote, QuoteItem, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
 
 APP_URL = "http://test.local"
 from services.whatsapp_share_service import normalize_whatsapp_number
@@ -3807,11 +3807,20 @@ def test_my_company_module_employee_permissions_delete_and_billing_pdf():
     with stock_app.app.app_context():
         target_user = db.session.get(User, target_user_id)
         deleted_user = db.session.get(User, deletable_id)
+        deleted_membership = CompanyMembership.query.filter_by(
+            user_id=deletable_id,
+            company_id=company.id,
+        ).first()
         assert target_user is not None
         assert target_user.permissions_json is not None
         assert "sales" in target_user.permissions_json
         assert "clients" in target_user.permissions_json
-        assert deleted_user is None
+        assert deleted_user is not None
+        assert deleted_user.active is True
+        assert deleted_user.company_id == company.id
+        assert deleted_membership is not None
+        assert deleted_membership.active is False
+        assert deleted_membership.status == "revoked"
 
 
 def test_my_company_module_role_update_and_schedule_assignment():
