@@ -482,8 +482,8 @@
       <form method="post" action="{{ url_for('company_billing.company_settings_user_create') }}" class="row g-3 mb-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="col-md-3">
-          <label class="form-label">Empresa / Negocio</label>
-          <input class="form-control" name="username" maxlength="80" required>
+          <label class="form-label">Usuario (solo cuenta nueva)</label>
+          <input class="form-control" name="username" maxlength="80" placeholder="Opcional si ya tiene cuenta">
         </div>
         <div class="col-md-3">
           <label class="form-label">Email</label>
