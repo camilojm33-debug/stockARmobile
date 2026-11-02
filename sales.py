@@ -398,20 +398,41 @@ def _json_dumps(value):
 @bp.route("/")
 @tenant_required
 def index():
-    from app import Client, Company, Product, Sale, db, scope_query_to_company
+    from app import BranchStock, Client, Company, Product, Sale, db, scope_query_to_company
 
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
     low_stock = request.args.get("low_stock")
     search = request.args.get("q") or request.args.get("search")
     category = request.args.get("category") or request.args.get("categoria")
     products_query = scope_query_to_company(Product.query.filter_by(active=True), Product)
+    if branch_id is not None:
+        products_query = products_query.outerjoin(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == branch_id),
+        )
     if search:
         like = f"%{search}%"
         products_query = products_query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.category.ilike(like)))
     if category:
         products_query = products_query.filter(Product.category == category)
     if low_stock:
-        products_query = products_query.filter(Product.stock <= Product.min_stock)
+        if branch_id is not None:
+            products_query = products_query.filter(
+                db.func.coalesce(BranchStock.stock, 0)
+                <= db.func.coalesce(BranchStock.min_stock, Product.min_stock)
+            )
+        else:
+            products_query = products_query.filter(Product.stock <= Product.min_stock)
     products = products_query.order_by(Product.favorite.desc(), Product.name).all()
+    for product in products:
+        if branch_id is not None:
+            from stockarmobile.branch_inventory import available_stock
+            product.branch_stock_display = available_stock(product, branch_id)
+        else:
+            product.branch_stock_display = float(product.stock or 0)
     categories = [c[0] for c in scope_query_to_company(Product.query.with_entities(Product.category), Product).filter(Product.active.is_(True)).distinct().order_by(Product.category).all() if c[0]]
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     quick_price_lists = []
