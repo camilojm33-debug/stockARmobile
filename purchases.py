@@ -172,8 +172,11 @@ def _apply_product_purchase_totals(product_totals, *, branch_id=None):
 
     for product_id, (_, purchase_quantity, purchase_value) in product_totals.items():
         product = locked_products[int(product_id)]
-        purchase_quantity = Decimal(str(purchase_quantity)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
-        purchase_quantity_float = float(purchase_quantity)
+        if branch_id is not None:
+            purchase_quantity = Decimal(str(purchase_quantity)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+            purchase_quantity_float = float(purchase_quantity)
+        else:
+            purchase_quantity_float = purchase_quantity
         previous_stock = float(product.stock or 0)
         previous_cost = float(product.cost_price or 0)
         new_stock = previous_stock + purchase_quantity_float
