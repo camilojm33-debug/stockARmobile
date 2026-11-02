@@ -1021,7 +1021,14 @@ class BackupService:
             and "branch_stock_movements" in payload
             and "branch_stock_transfers" in payload
         )
-        if has_history_snapshot:
+        if not has_history_snapshot:
+            # Older snapshots cannot describe the branch-aware movement ledger.
+            # Clear post-snapshot history rather than leave entries that disagree
+            # with the restored aggregate/central inventory.
+            BranchStockMovement.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            BranchStockTransfer.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            db.session.flush()
+        else:
             raw_movements = payload.get("branch_stock_movements") or []
             raw_transfers = payload.get("branch_stock_transfers") or []
             if not isinstance(raw_movements, list) or not isinstance(raw_transfers, list):
