@@ -4632,6 +4632,804 @@ def company_settings_user_reset_password(user_id):
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
+
+
+@bp.route("/company-settings/password", methods=["POST"])
+@company_member_required
+def company_settings_change_password():
+    from app import db, record_audit
+
+    current_password = (request.form.get("current_password") or "").strip()
+    new_password = (request.form.get("new_password") or "").strip()
+    confirm_password = (request.form.get("confirm_password") or "").strip()
+
+    if not current_user.check_password(current_password):
+        flash("La contrasena actual es incorrecta.", "danger")
+        return redirect(url_for("company_billing.company_settings"))
+    if len(new_password) < 6:
+        flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+        return redirect(url_for("company_billing.company_settings"))
+    if new_password != confirm_password:
+        flash("Las contrasenas no coinciden.", "danger")
+        return redirect(url_for("company_billing.company_settings"))
+
+    current_user.set_password(new_password)
+    current_user.must_change_password = False
+    record_audit(action="company_admin_password_change", entity="user", entity_id=current_user.id, detail="Contrasena de administrador actualizada desde Mi Empresa")
+    db.session.commit()
+    flash("Contrasena actualizada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings"))
+
+
+
+@bp.route("/company-settings/general", methods=["POST"])
+@company_admin_required
+def company_settings_general_save():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    company.language = (request.form.get("language") or "es").strip()[:20] or "es"
+    company.timezone = (request.form.get("timezone") or "America/Argentina/Buenos_Aires").strip()[:80] or "America/Argentina/Buenos_Aires"
+    company.currency = (request.form.get("currency") or "ARS").strip()[:10] or "ARS"
+    company.date_format = (request.form.get("date_format") or "%Y-%m-%d").strip()[:20] or "%Y-%m-%d"
+    company.numbering_format = (request.form.get("numbering_format") or "es_AR").strip()[:20] or "es_AR"
+
+    preferences = {
+        "allow_negative_stock": bool(request.form.get("allow_negative_stock")),
+        "show_costs": bool(request.form.get("show_costs")),
+        "compact_print": bool(request.form.get("compact_print")),
+        "quick_mode_default": bool(request.form.get("quick_mode_default")),
+        "quotes_module_enabled": bool(request.form.get("quotes_module_enabled")),
+    }
+    try:
+        printer_port = int(request.form.get("printer_port") or 9100)
+    except (TypeError, ValueError):
+        printer_port = 9100
+
+    printer_settings = {
+        "printer_name": (request.form.get("printer_name") or "").strip()[:160],
+        "ticket_name": (request.form.get("ticket_name") or "").strip()[:120],
+        "paper_size": (request.form.get("paper_size") or "A4").strip()[:20] or "A4",
+        "printer_type": (request.form.get("printer_type") or "browser").strip()[:20] or "browser",
+        "printer_host": (request.form.get("printer_host") or "").strip()[:120],
+        "printer_port": printer_port,
+        "cashdrawer_enabled": bool(request.form.get("cashdrawer_enabled")),
+    }
+
+    company.preferences_json = json.dumps(preferences)
+    company.printer_settings_json = json.dumps(printer_settings)
+    record_audit(action="company_general_settings", entity="company", entity_id=company.id, detail="Configuracion general actualizada")
+    db.session.commit()
+    flash("Configuración general guardada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="general"))
+
+
+
+@bp.route("/company-settings/billing", methods=["POST"])
+@company_admin_required
+def company_settings_billing_save():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    company.tax_id = (request.form.get("tax_id") or "").strip()[:50] or None
+    company.legal_name = (request.form.get("legal_name") or "").strip()[:160] or None
+
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing = _load_company_billing_config(company, company_preferences)
+
+    fiscal = billing.get("fiscal") or {}
+    fiscal["tax_id"] = (request.form.get("tax_id") or "").strip()[:50]
+    fiscal["legal_name"] = (request.form.get("legal_name") or "").strip()[:160]
+    fiscal["iva_condition"] = (request.form.get("iva_condition") or "Consumidor Final").strip()[:80]
+    fiscal["activity_start"] = (request.form.get("activity_start") or "").strip()[:20]
+    fiscal["tax_profile"] = (request.form.get("tax_profile") or "Monotributo").strip()[:60]
+    fiscal["gross_income"] = (request.form.get("gross_income") or "").strip()[:80]
+    fiscal["jurisdiction"] = (request.form.get("jurisdiction") or "").strip()[:120]
+    billing["fiscal"] = fiscal
+
+    documents_enabled = billing.get("documents_enabled") or {}
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        documents_enabled[key] = bool(request.form.get(f"doc_{key}"))
+    billing["documents_enabled"] = documents_enabled
+
+    points = billing.get("points_of_sale") or []
+    active_pos = _normalize_pos_number(request.form.get("active_pos") or billing.get("active_pos") or "00001")
+    for row in points:
+        row["active"] = row.get("number") == active_pos
+    if not any(row.get("number") == active_pos for row in points):
+        points.append({"number": active_pos, "description": f"Punto de venta {active_pos}", "active": True})
+    billing["points_of_sale"] = points
+    billing["active_pos"] = active_pos
+
+    numbering = billing.get("numbering") or {}
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        raw = (request.form.get(f"numbering_{key}") or "").strip()[:20]
+        if raw:
+            numbering[key] = raw
+    billing["numbering"] = numbering
+
+    print_template = billing.get("print_template") or {}
+    print_template["logo"] = (request.form.get("tpl_logo") or company.logo or "").strip()[:255]
+    print_template["footer"] = (request.form.get("tpl_footer") or "").strip()[:400]
+    print_template["commercial_terms"] = (request.form.get("tpl_commercial_terms") or "").strip()[:600]
+    print_template["observations"] = (request.form.get("tpl_observations") or "").strip()[:600]
+    print_template["show_qr"] = bool(request.form.get("tpl_show_qr"))
+    print_template["show_barcode"] = bool(request.form.get("tpl_show_barcode"))
+    print_template["format_a4"] = bool(request.form.get("tpl_format_a4"))
+    print_template["format_ticket_58"] = bool(request.form.get("tpl_format_ticket_58"))
+    print_template["format_ticket_80"] = bool(request.form.get("tpl_format_ticket_80"))
+    billing["print_template"] = print_template
+
+    electronic = billing.get("electronic") or {}
+    electronic["environment"] = (request.form.get("electronic_environment") or "homologacion").strip().lower()[:30]
+    billing["electronic"] = electronic
+
+    company_preferences["billing_business"] = billing
+    company.preferences_json = json.dumps(company_preferences)
+
+    record_audit(action="company_billing_business_update", entity="company", entity_id=company.id, detail="Configuración de facturación del negocio actualizada")
+    db.session.commit()
+    flash("Facturación del negocio guardada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+
+
+@bp.route("/company-settings/billing/pos/add", methods=["POST"])
+@company_admin_required
+def company_settings_billing_pos_add():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing = _load_company_billing_config(company, company_preferences)
+
+    number = _normalize_pos_number(request.form.get("pos_number") or "")
+    description = (request.form.get("pos_description") or "").strip()[:80] or f"Punto de venta {number}"
+
+    points = billing.get("points_of_sale") or []
+    if any(row.get("number") == number for row in points):
+        flash("Ese punto de venta ya existe.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+    branch_name = (request.form.get("branch") or "Casa central").strip()[:80] or "Casa central"
+    points.append({"number": number, "description": description, "branch": branch_name, "active": False})
+    billing["points_of_sale"] = sorted(points, key=lambda item: item.get("number") or "00000")
+
+    company_preferences["billing_business"] = billing
+    company.preferences_json = json.dumps(company_preferences)
+    record_audit(action="company_billing_pos_add", entity="company", entity_id=company.id, detail=f"Punto de venta agregado {number}")
+    db.session.commit()
+    flash("Punto de venta agregado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+
+
+@bp.route("/company-settings/billing/numbering/reset", methods=["POST"])
+@company_admin_required
+def company_settings_billing_numbering_reset():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    if getattr(current_user, "role", None) != "admin":
+        flash("Solo el administrador puede reiniciar la numeración.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing = _load_company_billing_config(company, company_preferences)
+    active_pos = billing.get("active_pos") or "00001"
+    numbering = billing.get("numbering") or {}
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        numbering[key] = f"{active_pos}-00000001"
+    billing["numbering"] = numbering
+    company_preferences["billing_business"] = billing
+    company.preferences_json = json.dumps(company_preferences)
+
+    record_audit(action="company_billing_numbering_reset", entity="company", entity_id=company.id, detail="Numeración de comprobantes reiniciada")
+    db.session.commit()
+    flash("Numeración reiniciada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+
+
+@bp.route("/company-settings/schedules", methods=["POST"])
+@company_admin_required
+def company_settings_schedules_save():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    weekdays = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+    weekly = {}
+    for day in weekdays:
+        weekly[day] = {
+            "open": (request.form.get(f"{day}_open") or "").strip()[:5],
+            "close": (request.form.get(f"{day}_close") or "").strip()[:5],
+        }
+
+    schedules_payload = {
+        "weekly": weekly,
+        "special_shifts": (request.form.get("special_shifts") or "").strip()[:2000],
+        "vacations": (request.form.get("vacations") or "").strip()[:2000],
+        "licenses": (request.form.get("licenses") or "").strip()[:2000],
+    }
+    existing = _company_schedules_payload(company)
+    schedules_payload["employee_assignments"] = existing.get("employee_assignments", [])
+    company.schedules_json = json.dumps(schedules_payload)
+    record_audit(action="company_schedules_update", entity="company", entity_id=company.id, detail="Horarios de atencion actualizados")
+    db.session.commit()
+    flash("Horarios de atención guardados correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+
+
+@bp.route("/company-settings/schedules/assign", methods=["POST"])
+@company_admin_required
+def company_settings_schedules_assign_add():
+    from app import db, record_audit
+    from stockarmobile.company_memberships import get_company_users
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    user_id = request.form.get("user_id", type=int)
+    day = (request.form.get("day") or "").strip().lower()
+    start = (request.form.get("start") or "").strip()[:5]
+    end = (request.form.get("end") or "").strip()[:5]
+    valid_days = {"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
+
+    user = next((item for item in get_company_users(company.id, active_only=True) if item.id == user_id), None)
+    if user is None:
+        flash("Debes seleccionar un empleado activo válido.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+    if day not in valid_days or not start or not end:
+        flash("Completa día y rango horario para asignar actividad.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+    if start >= end:
+        flash("El horario de inicio debe ser menor al de cierre.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+    schedules_payload = _company_schedules_payload(company)
+    assignments = schedules_payload.get("employee_assignments", [])
+    assignments.append({
+        "id": secrets.token_hex(6),
+        "user_id": user.id,
+        "day": day,
+        "start": start,
+        "end": end,
+    })
+    schedules_payload["employee_assignments"] = assignments
+    company.schedules_json = json.dumps(schedules_payload)
+    record_audit(action="company_schedule_assignment_add", entity="company", entity_id=company.id, detail=f"Asignación de horario para {user.username} {day} {start}-{end}")
+    db.session.commit()
+    flash("Asignación de horario guardada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+
+
+@bp.route("/company-settings/schedules/assign/<string:assignment_id>/delete", methods=["POST"])
+@company_admin_required
+def company_settings_schedules_assign_delete(assignment_id):
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    schedules_payload = _company_schedules_payload(company)
+    assignments = schedules_payload.get("employee_assignments", [])
+    filtered = [row for row in assignments if row.get("id") != assignment_id]
+    if len(filtered) == len(assignments):
+        flash("No se encontró la asignación solicitada.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+    schedules_payload["employee_assignments"] = filtered
+    company.schedules_json = json.dumps(schedules_payload)
+    record_audit(action="company_schedule_assignment_delete", entity="company", entity_id=company.id, detail=f"Asignación eliminada {assignment_id}")
+    db.session.commit()
+    flash("Asignación de horario eliminada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+
+
+@bp.route("/company-settings/security/logout-current", methods=["POST"])
+@company_member_required
+def company_settings_security_logout_current():
+    from app import db, record_audit
+    from flask_login import logout_user
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _mark_pin_verified(company.id, False)
+    record_audit(action="company_security_logout_current", entity="company", entity_id=company.id, detail="Usuario cerro sesion actual desde Mi Empresa")
+    db.session.commit()
+    logout_user()
+    flash("Sesión cerrada correctamente.", "info")
+    return redirect(url_for("auth.login"))
+
+
+
+@bp.route("/company-settings/billing/invoice/<int:invoice_id>/pdf")
+@company_admin_required
+def company_settings_billing_invoice_pdf(invoice_id):
+    from app import Invoice
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    invoice = Invoice.query.filter_by(id=invoice_id, company_id=company.id).first_or_404()
+    lines = [
+        f"Empresa: {company.name}",
+        f"Factura: {invoice.invoice_number or ('#' + str(invoice.id))}",
+        f"Estado: {invoice.status or '-'}",
+        f"Importe: {float(invoice.amount or 0):.2f} {invoice.currency or ''}",
+        f"Vencimiento: {invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-'}",
+        f"Emision: {invoice.issued_at.strftime('%Y-%m-%d %H:%M') if invoice.issued_at else '-'}",
+        f"Detalle: {(invoice.detail or '-').strip()[:500]}",
+    ]
+    return _pdf_from_lines("Factura SaaS - StockArmobile", lines, f"factura_{invoice.id}.pdf")
+
+
+
+@bp.route("/company-settings/billing/payment/<int:payment_id>/pdf")
+@company_admin_required
+def company_settings_billing_payment_pdf(payment_id):
+    from app import Payment
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    payment = Payment.query.filter(Payment.id == payment_id, Payment.company_id == company.id, standard_subscription_payment_filter(Payment)).first_or_404()
+    lines = [
+        f"Empresa: {company.name}",
+        f"Pago: {payment.payment_id or ('#' + str(payment.id))}",
+        f"Estado: {payment.status or '-'}",
+        f"Importe: {float(payment.amount or 0):.2f} {payment.currency or ''}",
+        f"Metodo: {payment.payment_method or '-'}",
+        f"Referencia: {payment.reference or '-'}",
+        f"Fecha de registro: {payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-'}",
+    ]
+    return _pdf_from_lines("Comprobante de Pago - StockArmobile", lines, f"pago_{payment.id}.pdf")
+
+
+
+@bp.route("/company-settings/backups/create", methods=["POST"])
+@company_member_required
+def company_settings_backups_create():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _require_company_admin_or_forbid()
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup, plan = BackupService.create_manual_backup(company_id, user_id=current_user.id, trigger_type="manual")
+    record_audit(
+        action="backup_create",
+        entity="backup",
+        entity_id=backup.id,
+        company_id=company_id,
+        detail=f"Backup manual creado por usuario empresa. plan={plan['code']}",
+    )
+    db.session.commit()
+    flash("Backup creado correctamente.", "success")
+    if BackupService.plan_limit_status(company_id)["count"] >= plan["limit"]:
+        flash("Límite de Backups alcanzado. Se eliminó automáticamente el backup más antiguo.", "warning")
+    return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
+
+@bp.route("/company-settings/backups/import", methods=["POST"])
+@company_member_required
+def company_settings_backups_import():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _require_company_admin_or_forbid()
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup_file = request.files.get("backup_file")
+    if not backup_file or not getattr(backup_file, "filename", "").strip():
+        flash("Seleccioná un archivo de backup válido.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+    try:
+        backup, plan, payload = BackupService.import_backup_file(company_id=company.id, file_storage=backup_file, created_by_user_id=current_user.id)
+        record_audit(
+            action="backup_import",
+            entity="backup",
+            entity_id=backup.id,
+            company_id=company.id,
+            detail=f"Backup importado por usuario empresa. plan={plan['code']} version={payload.get('schema_version')}",
+        )
+        db.session.commit()
+        flash("Backup importado correctamente. Revisá el resumen antes de restaurar.", "success")
+        return redirect(url_for("company_billing.company_settings", panel="backups", preview_id=backup.id))
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo importar el backup de empresa: %s", exc)
+        flash("No se pudo importar el backup.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
+
+@bp.route("/company-settings/backups/<int:backup_id>/download")
+@company_member_required
+def company_settings_backups_download(backup_id):
+    from app import BackupLog
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _require_company_admin_or_forbid()
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
+    backup_path = BackupService.backup_download_path(backup)
+    return send_file(
+        backup_path,
+        mimetype="application/gzip",
+        as_attachment=True,
+        download_name=backup.file_name or backup_path.name,
+    )
+
+
+
+@bp.route("/company-settings/backups/<int:backup_id>/restore", methods=["POST"])
+@company_member_required
+def company_settings_backups_restore(backup_id):
+    from app import BackupLog, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _require_company_admin_or_forbid()
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
+    sections = request.form.getlist("sections")
+    confirm_restore = (request.form.get("confirm_restore") or "").strip() == "1"
+    if not confirm_restore:
+        return redirect(url_for("company_billing.company_settings", panel="backups", preview_id=backup.id))
+
+    try:
+        BackupService.restore_backup(backup, expected_company_id=company_id, restored_by_user_id=current_user.id, sections=sections)
+        record_audit(
+            action="backup_restore",
+            entity="backup",
+            entity_id=backup.id,
+            company_id=company_id,
+            detail=f"Backup restaurado desde Mi Empresa. sections={','.join(sections or ['full'])}",
+        )
+        db.session.commit()
+        flash("Backup restaurado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo restaurar el backup de empresa: %s", exc)
+        flash("No se pudo restaurar el backup.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
+
+@bp.route("/company-settings/backups/<int:backup_id>/delete", methods=["POST"])
+@company_member_required
+def company_settings_backups_delete(backup_id):
+    from app import BackupLog, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _require_company_admin_or_forbid()
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+    confirm_delete = (request.form.get("confirm_delete") or "").strip() == "1"
+    if not confirm_delete:
+        flash("Confirmá la eliminación del backup para continuar.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+    backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
+    try:
+        BackupService.delete_backup(backup)
+        record_audit(
+            action="backup_delete",
+            entity="backup",
+            entity_id=backup_id,
+            company_id=company_id,
+            detail="Backup eliminado desde Mi Empresa.",
+        )
+        db.session.commit()
+        flash("Backup eliminado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar el backup de empresa id=%s: %s", backup_id, exc)
+        flash("No se pudo eliminar el backup.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
+
+@bp.route("/company-settings")
+@company_member_required
+def company_settings():
+    from flask import session
+    from sqlalchemy.orm import selectinload
+
+    from app import AuditLog, Branch, CashSession, Product, Quote, Sale, SaleItem, UserBranchAccess
+    from stockarmobile.company_memberships import get_company_users
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    settings_panel = (request.args.get("panel") or "").strip().lower()
+    from services.ai_agent.usage_service import can_use_commercial_feature
+    multi_branch_access = can_use_commercial_feature(company, "multi_branch").allowed
+    company_branches = Branch.query.filter_by(company_id=company.id).order_by(Branch.is_default.desc(), Branch.name.asc()).all()
+    branch_user_access = {
+        branch.id: {row.user_id for row in UserBranchAccess.query.filter_by(company_id=company.id, branch_id=branch.id).all()}
+        for branch in company_branches
+    }
+    branch_limit = max(1, int(getattr(PlanUsageService._active_plan_for_company(company.id)[1], "max_branches", 1) or 1))
+    active_branch_count = sum(1 for branch in company_branches if branch.active)
+
+    pin_verified = _is_pin_verified(company.id)
+    date_from_raw = request.args.get("from") or ""
+    date_to_raw = request.args.get("to") or ""
+    if not settings_panel and (date_from_raw or date_to_raw):
+        settings_panel = "stats"
+    date_from = _parse_date(date_from_raw)
+    date_to = _parse_date(date_to_raw)
+    employee_search = (request.args.get("q") or "").strip()
+    employee_role = (request.args.get("role") or "").strip().lower()
+    employee_status = (request.args.get("status") or "").strip().lower()
+
+    users = []
+    cash_rows = []
+    recent_sales = []
+    usage_snapshot, users_metric = _plan_limit_context(company.id)
+    subscription = usage_snapshot["subscription"]
+    plan = usage_snapshot["plan"]
+    pin_created_at, pin_last_used_at = _pin_metadata(company)
+    pin_bootstrap_reveal = session.pop(_pin_reveal_session_key(company.id), None)
+    cash_summary = {"total_sold": 0.0, "total_sales": 0, "average_ticket": 0.0}
+    cash_sessions_recent = []
+    open_cash_session = None
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing_config = _load_company_billing_config(company, company_preferences)
+    printer_settings = _json_company_dict(company.printer_settings_json)
+    schedules_settings = _company_schedules_payload(company)
+    schedule_assignments = schedules_settings.get("employee_assignments", [])
+    mercado_pago_connection_summary = _mercadopago_connection_summary(company)
+    active_employees = []
+    device_rows = []
+    backups = []
+    backup_plan = {}
+    backup_storage_used = "0.00 B"
+    backup_automation = BackupService.automation_scaffold()
+    backup_summaries = {}
+    selected_backup = None
+    selected_backup_summary = None
+    preview_backup_id = request.args.get("preview_id", type=int)
+    company_dashboard = {}
+    billing_status = _business_billing_status(billing_config)
+    billing_document_labels = {key: label for key, label in BILLING_DOCUMENT_TYPES}
+    billing_enabled_documents = [
+        billing_document_labels[key]
+        for key, _label in BILLING_DOCUMENT_TYPES
+        if (billing_config.get("documents_enabled") or {}).get(key)
+    ]
+    billing_last_receipt = None
+    billing_history_rows = []
+    if pin_verified:
+        users, cash_rows = _build_user_and_cash_rows(
+            company.id,
+            date_from=date_from,
+            date_to=date_to,
+            search_text=employee_search if settings_panel == "employees" else "",
+            role_filter=employee_role if settings_panel == "employees" else "",
+            status_filter=employee_status if settings_panel == "employees" else "",
+        )
+        cash_summary = _cash_summary(cash_rows)
+        recent_sales = (
+            Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product))
+            .filter_by(company_id=company.id)
+            .order_by(Sale.date.desc())
+            .limit(12)
+            .all()
+        )
+        active_employees = get_company_users(company.id, active_only=True)
+        device_rows = (
+            AuditLog.query.filter_by(company_id=company.id, action="login_success")
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(12)
+            .all()
+        )
+        cash_sessions_recent = (
+            CashSession.query.filter_by(company_id=company.id)
+            .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+            .limit(12)
+            .all()
+        )
+        open_cash_session = next((item for item in cash_sessions_recent if (item.status or "").lower() == "abierta"), None)
+        backups = BackupService.company_backups(company.id)
+        backup_plan = BackupService.plan_limit_status(company.id)
+        backup_storage_used = _format_size(sum(int(item.file_size_bytes or 0) for item in backups))
+        for backup in backups:
+            try:
+                backup_summaries[backup.id] = BackupService.summarize_backup(backup)
+            except Exception:
+                backup_summaries[backup.id] = {"schema_version": "-", "system_version": "-", "company_id": backup.company_id, "generated_at": None, "products": 0, "inventory": 0, "categories": 0, "clients": 0, "sales": 0, "employees": 0, "schedules": 0}
+        if preview_backup_id:
+            selected_backup = next((item for item in backups if item.id == preview_backup_id), None)
+            if selected_backup is not None:
+                selected_backup_summary = backup_summaries.get(selected_backup.id)
+
+        if not settings_panel:
+            from services.dashboard_service import build_dashboard_context
+
+            company_dashboard = build_dashboard_context()
+        if settings_panel == "billing":
+            recent_sales_docs = (
+                Sale.query.filter_by(company_id=company.id)
+                .filter((Sale.requiere_comprobante.is_(True)) | (Sale.comprobante_emitido.is_(True)))
+                .order_by(Sale.date.desc(), Sale.id.desc())
+                .limit(50)
+                .all()
+            )
+            recent_quotes_docs = (
+                Quote.query.options(selectinload(Quote.client))
+                .filter_by(company_id=company.id)
+                .order_by(Quote.date.desc(), Quote.id.desc())
+                .limit(30)
+                .all()
+            )
+
+            for sale in recent_sales_docs:
+                doc_label = _format_document_type_label(sale.tipo_comprobante or "factura_b")
+                number = f"{billing_config.get('active_pos', '00001')}-{sale.id:08d}"
+                row = {
+                    "origin": "sale",
+                    "date": sale.date,
+                    "number": number,
+                    "client": sale.customer or "Consumidor final",
+                    "doc_type": doc_label,
+                    "amount": float(sale.total_amount or 0),
+                    "status": _sale_business_status_badge(sale),
+                    "sale_id": sale.id,
+                    "quote_id": None,
+                    "can_email": False,
+                    "can_duplicate": False,
+                    "can_annul": False,
+                }
+                billing_history_rows.append(row)
+
+            for quote in recent_quotes_docs:
+                quote_status = (quote.status or "BORRADOR").strip().upper()
+                if quote_status in {"APROBADO", "CONVERTIDO"}:
+                    badge = {"label": "Emitido", "class": "text-bg-success"}
+                elif quote_status in {"ANULADO", "RECHAZADO", "VENCIDO"}:
+                    badge = {"label": "Anulado", "class": "text-bg-danger"}
+                elif quote_status in {"PENDIENTE", "ENVIADO"}:
+                    badge = {"label": "Pendiente", "class": "text-bg-warning"}
+                else:
+                    badge = {"label": "En proceso", "class": "text-bg-primary"}
+                billing_history_rows.append(
+                    {
+                        "origin": "quote",
+                        "date": quote.date,
+                        "number": quote.number or f"P-{quote.id:06d}",
+                        "client": quote.client.name if quote.client else (quote.consumer_name or "Consumidor final"),
+                        "doc_type": "Presupuesto",
+                        "amount": float(quote.total_amount or 0),
+                        "status": badge,
+                        "sale_id": None,
+                        "quote_id": quote.id,
+                        "can_email": True,
+                        "can_duplicate": True,
+                        "can_annul": quote_status != "CONVERTIDO",
+                    }
+                )
+
+            billing_history_rows.sort(key=lambda item: item.get("date") or datetime.min, reverse=True)
+            billing_last_receipt = next((item for item in billing_history_rows if item.get("status", {}).get("label") == "Emitido"), None)
+            if billing_last_receipt is None:
+                billing_last_receipt = billing_history_rows[0] if billing_history_rows else None
+
+    return render_template(
+        "company_billing/settings.html",
+        company=company,
+        users=users,
+        cash_rows=cash_rows,
+        recent_sales=recent_sales,
+        cash_summary=cash_summary,
+        subscription=subscription,
+        current_plan=plan,
+        plan_expiration=_subscription_expiration(subscription, company),
+        users_metric=users_metric,
+        usage_snapshot=usage_snapshot,
+        pin_verified=pin_verified,
+        settings_panel=settings_panel,
+        pin_created_at=pin_created_at,
+        pin_last_used_at=pin_last_used_at,
+        pin_bootstrap_reveal=pin_bootstrap_reveal,
+        date_from=date_from_raw,
+        date_to=date_to_raw,
+        pin_block_seconds=CompanySecurityService.remaining_block_seconds(company),
+        employee_search=employee_search,
+        employee_role=employee_role,
+        employee_status=employee_status,
+        employee_permissions=EMPLOYEE_PERMISSIONS,
+        company_preferences=company_preferences,
+        printer_settings=printer_settings,
+        schedules_settings=schedules_settings,
+        schedule_assignments=schedule_assignments,
+        mercado_pago_connection_summary=mercado_pago_connection_summary,
+        active_employees=active_employees,
+        device_rows=device_rows,
+        cash_sessions_recent=cash_sessions_recent,
+        open_cash_session=open_cash_session,
+        backups=backups,
+        backup_plan=backup_plan,
+        backup_storage_used=backup_storage_used,
+        backup_automation=backup_automation,
+        backup_summaries=backup_summaries,
+        selected_backup=selected_backup,
+        selected_backup_summary=selected_backup_summary,
+        backup_section_options=BackupService.restore_section_options(),
+        preview_backup_id=preview_backup_id,
+        format_size=_format_size,
+        company_dashboard=company_dashboard,
+        billing_config=billing_config,
+        billing_status=billing_status,
+        billing_document_types=BILLING_DOCUMENT_TYPES,
+        billing_enabled_documents=billing_enabled_documents,
+        billing_last_receipt=billing_last_receipt,
+        billing_history_rows=billing_history_rows,
+        multi_branch_access=multi_branch_access,
+        company_branches=company_branches,
+        branch_user_access=branch_user_access,
+        branch_limit=branch_limit,
+        active_branch_count=active_branch_count,
+    )
+
 @bp.route("/company-settings/day-activity")
 @company_admin_required
 def company_settings_day_activity():
