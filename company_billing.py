@@ -4264,10 +4264,8 @@ def company_settings_user_update(user_id):
         user.first_name = parts[0][:80]
         user.last_name = (parts[1] if len(parts) > 1 else "")[:80] or None
     if email and email != user.email:
-        active_memberships = UserCompanyMembership.query.filter_by(
-            user_id=user.id, active=True
-        ).count()
-        if active_memberships > 1:
+        linked_memberships = UserCompanyMembership.query.filter_by(user_id=user.id).count()
+        if linked_memberships > 1:
             flash("El correo es la identidad única de esta cuenta y está vinculada a varias empresas. El cambio debe gestionarse desde la cuenta global.", "warning")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         existing_email = User.query.filter(User.email == email, User.id != user.id).first()
@@ -4275,6 +4273,10 @@ def company_settings_user_update(user_id):
             flash("Ese email ya esta en uso por otra cuenta.", "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         user.email = email
+        if membership.invitation_token_hash:
+            membership.invitation_token_hash = None
+            membership.invitation_expires_at = None
+            membership.invited_email = None
 
     record_audit(action="company_user_update", entity="user", entity_id=user.id, detail=f"Datos de cuenta actualizados desde company_id={company.id}: {user.username}")
     db.session.commit()
@@ -4554,10 +4556,8 @@ def company_settings_user_reset_password(user_id):
     if user is None:
         abort(404)
 
-    active_memberships = UserCompanyMembership.query.filter_by(
-        user_id=user.id, active=True
-    ).count()
-    if active_memberships > 1:
+    linked_memberships = UserCompanyMembership.query.filter_by(user_id=user.id).count()
+    if linked_memberships > 1:
         flash("Esta cuenta pertenece a varias empresas. Por seguridad, la contraseña compartida debe restablecerla el propio usuario desde Recuperar contraseña.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
@@ -5238,6 +5238,8 @@ def company_settings():
     billing_last_receipt = None
     billing_history_rows = []
     if pin_verified:
+        from stockarmobile.company_memberships import ensure_legacy_company_memberships
+        ensure_legacy_company_memberships(db.session, company.id)
         users, cash_rows = _build_user_and_cash_rows(
             company.id,
             date_from=date_from,
