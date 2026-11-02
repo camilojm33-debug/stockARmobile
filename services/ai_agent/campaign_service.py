@@ -28,9 +28,11 @@ class CampaignService:
             product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
             if product is None:
                 raise ValueError("El producto no pertenece a la empresa o no está disponible.")
-        creator = User.query.filter_by(id=user_id, company_id=company_id, active=True).first()
+        from stockarmobile.company_memberships import get_company_users
+        company_users = get_company_users(company_id, active_only=True)
+        creator = next((item for item in company_users if item.id == user_id), None)
         if creator is None:
-            creator = User.query.filter(User.company_id == company_id, User.active.is_(True), User.role.in_(["admin", "user"])).order_by(User.id.asc()).first()
+            creator = next((item for item in company_users if item.role in {"admin", "user"}), None)
         if creator is None:
             raise ValueError("No hay un usuario activo para crear la campaña.")
         context = system_data if isinstance(system_data, dict) else {}
