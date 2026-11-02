@@ -49,14 +49,19 @@ def _ensure_company_default_branch(company, owner_user):
     return branch
 
 
-def _login_user_and_bind_company(user, remember=False):
+def _login_user_and_bind_company(user, remember=False, company_id=None):
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+
     preserved_session = {}
     for key in (SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID,):
         if key in session:
             preserved_session[key] = session.get(key)
+    selected_company_id = company_id if company_id is not None else getattr(user, "company_id", None)
     session.clear()
     login_user(user, remember=remember)
     session.update({key: value for key, value in preserved_session.items() if value is not None})
+    if selected_company_id is not None:
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(selected_company_id)
 
 
 def _post_login_redirect():
@@ -657,10 +662,13 @@ def switch_user():
         abort(403)
 
     target_user_id = request.form.get("target_user_id", type=int)
-    target_user = (
-        User.query.filter_by(id=target_user_id, company_id=company_id, active=True)
-        .filter(User.role.in_(["user", "admin"]))
-        .first()
+    from stockarmobile.company_memberships import get_company_users
+    target_user = next(
+        (
+            item for item in get_company_users(company_id, active_only=True)
+            if item.id == target_user_id and item.role in {"user", "admin"}
+        ),
+        None,
     )
     if target_user is None:
         flash("Empleado no encontrado o no disponible para cambio de sesión.", "warning")
@@ -669,7 +677,7 @@ def switch_user():
     actor_id = current_user.id
     actor_username = current_user.username
 
-    _login_user_and_bind_company(target_user, remember=False)
+    _login_user_and_bind_company(target_user, remember=False, company_id=company_id)
     record_audit(
         action="session_switch_user",
         entity="user",
@@ -685,3 +693,104 @@ def switch_user():
         next_page = None
     flash(f"Sesión cambiada a {target_user.username}.", "success")
     return redirect(next_page if next_page else _post_login_redirect())
+
+
+@bp.route("/switch-company", methods=["POST"])
+@login_required
+def switch_company():
+    """Switch tenant only when the authenticated identity has an active membership."""
+    from app import Company, CompanyMembership, db, record_audit
+    from stockarmobile.branch_context import SESSION_KEY as ACTIVE_BRANCH_SESSION_KEY
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+
+    try:
+        target_company_id = int(request.form.get("company_id") or 0)
+    except (TypeError, ValueError):
+        abort(400)
+    membership = CompanyMembership.query.filter_by(
+        user_id=current_user.id,
+        company_id=target_company_id,
+        active=True,
+        status="active",
+    ).first()
+    company = Company.query.filter_by(id=target_company_id, active=True).first()
+    if membership is None or company is None:
+        abort(403)
+
+    previous_company_id = getattr(current_user, "company_id", None)
+    session[ACTIVE_COMPANY_SESSION_KEY] = int(target_company_id)
+    session.pop(ACTIVE_BRANCH_SESSION_KEY, None)
+    session.modified = True
+    record_audit(
+        action="company_membership_switch",
+        entity="company",
+        entity_id=target_company_id,
+        company_id=target_company_id,
+        detail=f"Cambio de empresa desde company_id={previous_company_id} hacia company_id={target_company_id}.",
+    )
+    db.session.commit()
+    flash(f"Empresa activa: {company.name}.", "success")
+    return redirect(url_for("dashboard.index"))
+
+
+@bp.route("/company-invitations/<token>/accept", methods=["GET", "POST"])
+@login_required
+def accept_company_invitation(token):
+    """Accept a one-time invitation after authenticating with the invited email."""
+    import hashlib
+    from app import Branch, Company, CompanyMembership, UserBranchAccess, db, record_audit, utcnow
+    from stockarmobile.branch_context import SESSION_KEY as ACTIVE_BRANCH_SESSION_KEY
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+
+    token_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+    membership = CompanyMembership.query.filter_by(
+        invitation_token_hash=token_hash,
+        status="invited",
+        active=False,
+    ).first()
+    if membership is None or membership.invitation_expires_at is None or membership.invitation_expires_at <= utcnow():
+        flash("La invitación no existe o venció. Pedí que te envíen una nueva.", "warning")
+        return redirect(url_for("dashboard.index"))
+
+    invited_user = db.session.get(User, membership.user_id)
+    company = db.session.get(Company, membership.company_id)
+    if invited_user is None or company is None or not company.active:
+        abort(404)
+    if int(invited_user.id) != int(current_user.id) or (invited_user.email or "").strip().lower() != (current_user.email or "").strip().lower():
+        abort(403)
+
+    membership.status = "active"
+    membership.active = True
+    membership.accepted_at = utcnow()
+    membership.invitation_token_hash = None
+    membership.invitation_expires_at = None
+
+    default_branch = Branch.query.filter_by(
+        company_id=company.id,
+        is_default=True,
+        active=True,
+    ).first()
+    if default_branch is not None and UserBranchAccess.query.filter_by(
+        company_id=company.id,
+        user_id=invited_user.id,
+        branch_id=default_branch.id,
+    ).first() is None:
+        db.session.add(UserBranchAccess(
+            company_id=company.id,
+            user_id=invited_user.id,
+            branch_id=default_branch.id,
+        ))
+
+    session[ACTIVE_COMPANY_SESSION_KEY] = int(company.id)
+    session.pop(ACTIVE_BRANCH_SESSION_KEY, None)
+    session.modified = True
+    record_audit(
+        action="company_membership_accepted",
+        entity="company",
+        entity_id=company.id,
+        company_id=company.id,
+        detail=f"Invitación de acceso aceptada por usuario_id={invited_user.id}.",
+    )
+    db.session.commit()
+    flash(f"Ya tenés acceso a {company.name}.", "success")
+    return redirect(url_for("dashboard.index"))
