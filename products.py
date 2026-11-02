@@ -831,7 +831,7 @@ def import_excel():
         stock_changes = 0
 
         from stockarmobile.branch_context import get_active_branch_id
-        from stockarmobile.branch_inventory import get_branch_stock, set_branch_stock
+        from stockarmobile.branch_inventory import get_branch_stock
         branch_id = get_active_branch_id()
         try:
             for data in records:
