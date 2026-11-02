@@ -252,6 +252,32 @@ def _allowed_ui_actions_for_status(status: str | None):
     return SUBSCRIPTION_UI_ACTIONS.get(normalized, {"modify"})
 
 
+def _company_user_counts(company_id):
+    """Return total and active identities linked to one company, counting legacy rows once."""
+    from app import CompanyMembership, User
+
+    membership_query = CompanyMembership.query.filter(
+        CompanyMembership.company_id == company_id,
+        CompanyMembership.status.in_(["active", "revoked"]),
+    )
+    total = membership_query.count()
+    active = (
+        CompanyMembership.query.join(User, User.id == CompanyMembership.user_id)
+        .filter(
+            CompanyMembership.company_id == company_id,
+            CompanyMembership.status == "active",
+            CompanyMembership.active.is_(True),
+            User.active.is_(True),
+        )
+        .count()
+    )
+    linked_ids = CompanyMembership.query.with_entities(CompanyMembership.user_id).filter_by(company_id=company_id)
+    legacy_query = User.query.filter(User.company_id == company_id, ~User.id.in_(linked_ids))
+    total += legacy_query.count()
+    active += legacy_query.filter(User.active.is_(True)).count()
+    return int(total), int(active)
+
+
 def _hard_delete_company(company):
     import sqlalchemy as sa
 
@@ -4060,7 +4086,7 @@ def companies_panel():
     effective_states = {}
 
     if company_ids:
-        user_counts = {row[0]: int(row[1] or 0) for row in db.session.query(User.company_id, db.func.count(User.id)).filter(User.company_id.in_(company_ids)).group_by(User.company_id).all()}
+        user_counts = {company_id: _company_user_counts(company_id)[0] for company_id in company_ids}
         product_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Product.company_id, db.func.count(Product.id)).filter(Product.company_id.in_(company_ids), Product.active.is_(True)).group_by(Product.company_id).all()}
         client_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Client.company_id, db.func.count(Client.id)).filter(Client.company_id.in_(company_ids), Client.active.is_(True)).group_by(Client.company_id).all()}
         sale_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Sale.company_id, db.func.count(Sale.id)).filter(Sale.company_id.in_(company_ids)).group_by(Sale.company_id).all()}
@@ -4112,9 +4138,10 @@ def company_detail(company_id):
     effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
     payments_standard_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, standard_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
     payments_ai_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, ai_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
+    company_user_total, company_user_active = _company_user_counts(company.id)
     stats = {
-        "users": User.query.filter_by(company_id=company.id).count(),
-        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "users": company_user_total,
+        "active_users": company_user_active,
         "products": Product.query.filter_by(company_id=company.id, active=True).count(),
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
