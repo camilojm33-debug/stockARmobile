@@ -671,3 +671,37 @@ def test_sales_and_purchase_inputs_reject_more_than_three_stock_decimals(app):
             with pytest.raises(ValueError, match="tres decimales"):
                 _parse_purchase_lines(enforce_branch_precision=True)
         db.session.rollback()
+
+
+
+def test_business_billing_refuses_inactive_pos_instead_of_using_another_branch(app):
+    from types import SimpleNamespace
+    from services.business_billing_service import BusinessBillingService
+
+    with app.app_context():
+        company = _company("Empresa POS inactivo")
+        _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        sale = SimpleNamespace(
+            id=9102,
+            branch_id=north.id,
+            tipo_comprobante="factura_b",
+            customer="Cliente Norte",
+            total_amount=Decimal("100.00"),
+            comprobante_emitido=False,
+        )
+        config = {
+            "active_pos": "00001",
+            "points_of_sale": [
+                {"number": "00001", "branch": "Casa central", "active": True},
+                {"number": "00002", "branch": "Sucursal Norte", "active": False},
+            ],
+            "numbering": {"factura_b": "00001-00000001"},
+            "emission": {"currency": "ARS"},
+        }
+
+        with pytest.raises(ValueError, match="está inactivo"):
+            BusinessBillingService.issue_sale_document(
+                db.session, company=company, sale=sale, config=config
+            )
+        db.session.rollback()
