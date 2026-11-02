@@ -932,11 +932,22 @@ def _build_attention_queue(now):
                 "detail": f"Estado conexión: {conn.status}",
             })
 
+    active_membership_counts = (
+        db.session.query(CompanyMembership.company_id, db.func.count(CompanyMembership.id))
+        .join(User, User.id == CompanyMembership.user_id)
+        .filter(
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
+            User.active.is_(True),
+        )
+        .group_by(CompanyMembership.company_id)
+        .subquery()
+    )
     no_active_users = (
         db.session.query(Company)
-        .outerjoin(User, User.company_id == Company.id)
-        .group_by(Company.id)
-        .having(db.func.coalesce(db.func.sum(db.case((User.active.is_(True), 1), else_=0)), 0) == 0)
+        .outerjoin(active_membership_counts, active_membership_counts.c.company_id == Company.id)
+        .group_by(Company.id, active_membership_counts.c.count)
+        .having(db.func.coalesce(active_membership_counts.c.count, 0) == 0)
         .limit(20)
         .all()
     )
@@ -4217,9 +4228,10 @@ def company_360(company_id):
     )
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(12).all()
 
+    company_user_total, company_user_active = _company_user_counts(company.id)
     stats = {
-        "users": User.query.filter_by(company_id=company.id).count(),
-        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "users": company_user_total,
+        "active_users": company_user_active,
         "products": Product.query.filter_by(company_id=company.id, active=True).count(),
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
@@ -5735,7 +5747,7 @@ def password_recovery_panel():
 @bp.route("/password-recovery/company-user/reset", methods=["POST"])
 @superadmin_required
 def password_recovery_company_user_reset():
-    from app import User, db, record_audit
+    from app import Company, CompanyMembership, User, db, record_audit
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5748,11 +5760,15 @@ def password_recovery_company_user_reset():
         return _redirect_back("saas.password_recovery_panel")
 
     user = (
-        User.query.filter(
+        User.query.join(CompanyMembership, CompanyMembership.user_id == User.id)
+        .join(Company, Company.id == CompanyMembership.company_id)
+        .filter(
             User.id == user_id,
-            User.company_id.isnot(None),
             User.role != "superadmin",
             User.active.is_(True),
+            Company.active.is_(True),
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
         )
         .first()
     )
