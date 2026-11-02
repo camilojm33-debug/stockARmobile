@@ -267,6 +267,7 @@ def _build_user_notifications():
     from app import (
         BackupLog,
         CashSession,
+        BranchStock,
         Client,
         Product,
         PurchaseOrder,
@@ -284,25 +285,48 @@ def _build_user_notifications():
     today_start = datetime.combine(now.date(), time.min)
     confirmed_sale_filter = or_(Sale.status.is_(None), db.func.lower(Sale.status).in_(list(CONFIRMED_SALE_STATUSES)))
 
-    sales_today = scope_query_to_company(Sale.query.filter(Sale.date >= today_start, confirmed_sale_filter), Sale).count()
-    sales_amount = (
-        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= today_start, confirmed_sale_filter), Sale).scalar()
-        or 0
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    sales_query = scope_query_to_company(Sale.query.filter(Sale.date >= today_start, confirmed_sale_filter), Sale)
+    sales_amount_query = scope_query_to_company(
+        db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= today_start, confirmed_sale_filter), Sale
     )
-    low_stock = scope_query_to_company(
-        Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock, Product.stock > 0),
-        Product,
-    ).count()
-    out_stock = scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= 0), Product).count()
+    if branch_id is not None:
+        sales_query = sales_query.filter(Sale.branch_id == branch_id)
+        sales_amount_query = sales_amount_query.filter(Sale.branch_id == branch_id)
+    sales_today = sales_query.count()
+    sales_amount = sales_amount_query.scalar() or 0
+
+    stock_query = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product)
+    if branch_id is not None:
+        stock_query = stock_query.outerjoin(
+            BranchStock,
+            (BranchStock.company_id == Product.company_id)
+            & (BranchStock.product_id == Product.id)
+            & (BranchStock.branch_id == branch_id),
+        )
+        branch_stock_value = db.func.coalesce(BranchStock.stock, 0)
+        branch_min_value = db.func.coalesce(BranchStock.min_stock, Product.min_stock)
+        low_stock = stock_query.filter(branch_stock_value <= branch_min_value, branch_stock_value > 0).count()
+        out_stock = stock_query.filter(branch_stock_value <= 0).count()
+    else:
+        low_stock = stock_query.filter(Product.stock <= Product.min_stock, Product.stock > 0).count()
+        out_stock = stock_query.filter(Product.stock <= 0).count()
     new_clients = scope_query_to_company(Client.query.filter(Client.created_at >= today_start), Client).count()
-    open_cash = scope_query_to_company(
+    open_cash_query = scope_query_to_company(
         CashSession.query.filter_by(status="abierta", user_id=current_user.id),
         CashSession,
-    ).count()
-    pending_purchases = scope_query_to_company(
+    )
+    if branch_id is not None:
+        open_cash_query = open_cash_query.filter(CashSession.branch_id == branch_id)
+    open_cash = open_cash_query.count()
+    pending_purchase_query = scope_query_to_company(
         PurchaseOrder.query.filter(PurchaseOrder.status.in_(["pendiente", "ordenada"])),
         PurchaseOrder,
-    ).count()
+    )
+    if branch_id is not None:
+        pending_purchase_query = pending_purchase_query.filter(PurchaseOrder.branch_id == branch_id)
+    pending_purchases = pending_purchase_query.count()
     latest_subscription = scope_query_to_company(
         Subscription.query.order_by(Subscription.starts_at.desc()),
         Subscription,
