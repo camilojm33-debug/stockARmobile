@@ -505,6 +505,13 @@ def test_ai_marketing_tools_use_employee_branch_inventory_and_sales(app):
         company = _company("Empresa IA por sucursal")
         central = _branch(company, "Casa central", "CENTRAL", default=True)
         north = _branch(company, "Sucursal Norte", "NORTE")
+        premium_plan = Plan(
+            code="premium-ai-marketing-test", name="Premium IA QA", price=1,
+            max_branches=5, features_json="all", state="active", active=True,
+        )
+        db.session.add(premium_plan)
+        db.session.flush()
+        db.session.add(Subscription(company_id=company.id, plan_id=premium_plan.id, status="active"))
         employee = User(
             username="branch-ai-user", email="branch-ai-user@example.test",
             password_hash="test-hash", role="user", active=True, company_id=company.id,

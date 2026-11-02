@@ -926,7 +926,27 @@ class BackupService:
         }
         default_branch = next((row for row in branches.values() if row.is_default and row.active), None)
         if default_branch is None:
-            raise ValueError("No existe Casa central activa para restaurar el inventario.")
+            # Older tenants and pre-multibranch backups may be restored before a
+            # branch row exists. Ensure one usable Casa central so a valid legacy
+            # Product.stock snapshot can be restored without duplicating stock.
+            default_branch = next(
+                (row for row in branches.values() if str(row.code or "").upper() == "CASA-CENTRAL"),
+                None,
+            )
+            if default_branch is None:
+                default_branch = Branch(
+                    company_id=company_id,
+                    name="Casa central",
+                    code="CASA-CENTRAL",
+                    active=True,
+                    is_default=True,
+                )
+                db.session.add(default_branch)
+                db.session.flush()
+                branches[int(default_branch.id)] = default_branch
+            else:
+                default_branch.active = True
+                default_branch.is_default = True
 
         has_branch_snapshot = isinstance(payload, dict) and "branch_stock" in payload
         snapshot_rows = (payload.get("branch_stock") or []) if has_branch_snapshot else []

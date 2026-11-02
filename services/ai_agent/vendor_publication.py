@@ -1102,7 +1102,16 @@ def recover_committed_order_reply(*, company, conversation, operation, incoming,
 
 def _product_payload(product) -> dict:
     from services.ai_agent.vendor_order_service import _vendor_available_stock
-    available = getattr(product, "_public_branch_stock", _vendor_available_stock(product, product.company_id))
+    public_branch_stock = getattr(product, "_public_branch_stock", None)
+    if public_branch_stock is not None:
+        available = public_branch_stock
+    else:
+        company_id = getattr(product, "company_id", None)
+        available = (
+            _vendor_available_stock(product, company_id)
+            if company_id is not None
+            else float(getattr(product, "stock", 0) or 0)
+        )
     return {
         "id": product.id,
         "name": product.name,

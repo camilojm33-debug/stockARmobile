@@ -332,7 +332,7 @@ class SaleService:
                 db.session.add(
                     CashMovement(
                         session_id=cash_session.id,
-                        user_id=current_user.id,
+                        user_id=getattr(current_user, "id", None),
                         company_id=company_id,
                         branch_id=sale.branch_id,
                         sale_id=sale.id,
@@ -343,7 +343,7 @@ class SaleService:
                     )
                 )
 
-            InventoryService.apply_stock(lines=lines, branch_id=sale.branch_id, source_type="sale", source_id=sale.id, user_id=current_user.id)
+            InventoryService.apply_stock(lines=lines, branch_id=sale.branch_id, source_type="sale", source_id=sale.id, user_id=getattr(current_user, "id", None))
             for idx, line in enumerate(lines):
                 product = line["product"]
                 calculated_line = sale_totals["lines"][idx]
@@ -434,7 +434,7 @@ class SaleService:
         def _resolve_product_for_sale_item(item):
             return item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
 
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item, branch_id=getattr(sale, "branch_id", None), source_id=sale.id, user_id=current_user.id)
+        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item, branch_id=getattr(sale, "branch_id", None), source_id=sale.id, user_id=getattr(current_user, "id", None))
 
         product_ids = form.getlist("product_id")
         quantities = form.getlist("quantity")
@@ -478,7 +478,7 @@ class SaleService:
         )
         ValidationService.validate_edit_lines(new_lines)
 
-        InventoryService.apply_stock(lines=new_lines, branch_id=getattr(sale, "branch_id", None), source_type="sale_edit", source_id=sale.id, user_id=current_user.id)
+        InventoryService.apply_stock(lines=new_lines, branch_id=getattr(sale, "branch_id", None), source_type="sale_edit", source_id=sale.id, user_id=getattr(current_user, "id", None))
 
         sale_totals = TotalsService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
@@ -560,7 +560,7 @@ class SaleService:
             db.session.add(
                 CashMovement(
                     session_id=sale.cash_session_id or (open_cash_session.id if open_cash_session else None),
-                    user_id=current_user.id,
+                    user_id=getattr(current_user, "id", None),
                     company_id=sale.company_id,
                     branch_id=sale.branch_id,
                     sale_id=sale.id,
@@ -603,7 +603,7 @@ class SaleService:
             SaleModificationHistory(
                 sale_id=sale.id,
                 company_id=sale.company_id,
-                user_id=current_user.id,
+                user_id=getattr(current_user, "id", None),
                 reason=reason,
                 previous_data=json_dumps(previous_snapshot),
                 new_data=json_dumps(new_snapshot),
@@ -658,7 +658,7 @@ class SaleService:
             resolve_product_func=resolve_product_for_item,
             branch_id=getattr(sale, "branch_id", None),
             source_id=sale.id,
-            user_id=current_user.id,
+            user_id=getattr(current_user, "id", None),
         )
         sale.status = "anulada"
         self._sync_crm_opportunity_after_sale_annulment(sale)
@@ -684,7 +684,7 @@ class SaleService:
             resolve_product_func=resolve_product_for_item,
             branch_id=getattr(sale, "branch_id", None),
             source_id=sale.id,
-            user_id=current_user.id,
+            user_id=getattr(current_user, "id", None),
         )
         AuditService.record_delete(record_audit, sale_id=sale.id, total_amount=sale.total_amount)
         db.session.delete(sale)
