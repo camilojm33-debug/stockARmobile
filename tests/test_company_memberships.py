@@ -125,3 +125,53 @@ def test_revoked_membership_does_not_allow_tenant_switch(app):
         db.session.commit()
 
         assert all(row.company_id != second.id for row in active_memberships_for_user(user.id))
+
+
+
+def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity(app):
+    from flask import url_for
+
+    with app.app_context():
+        first = _company("Empresa de origen")
+        second = _company("Empresa asociada")
+        third = _company("Empresa no autorizada")
+        user = _user(first, role="admin", email="switch@example.test")
+        _membership(user, first, role="admin", permissions='["inventory","cash"]')
+        _membership(user, second, role="user", permissions='["inventory"]')
+        user_id = user.id
+        first_id = first.id
+        second_id = second.id
+        third_id = third.id
+        db.session.commit()
+        with app.test_request_context():
+            dashboard_url = url_for("dashboard.index")
+
+    client = app.test_client()
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "switch@example.test", "password": "secret123"},
+        follow_redirects=False,
+    )
+    assert login_response.status_code in {302, 303}
+
+    first_response = client.get(dashboard_url)
+    assert first_response.status_code == 200
+    assert f'data-company-id="{first_id}"' in first_response.get_data(as_text=True)
+    assert 'data-role="admin"' in first_response.get_data(as_text=True)
+
+    switched = client.post("/auth/switch-company", data={"company_id": str(second_id)})
+    assert switched.status_code in {302, 303}
+    second_response = client.get(dashboard_url)
+    assert second_response.status_code == 200
+    second_html = second_response.get_data(as_text=True)
+    assert f'data-company-id="{second_id}"' in second_html
+    assert 'data-role="user"' in second_html
+
+    denied = client.post("/auth/switch-company", data={"company_id": str(third_id)})
+    assert denied.status_code == 403
+
+    with app.app_context():
+        stored = db.session.get(User, user_id)
+        assert stored.company_id == first_id
+        assert stored.role == "admin"
+        assert stored.permissions_json == '["inventory","cash"]'
