@@ -74,6 +74,13 @@ class PlanUsageService:
             )
             .count()
         )
+        from app import utcnow
+        users_count += CompanyMembership.query.filter(
+            CompanyMembership.company_id == company_id,
+            CompanyMembership.status == "invited",
+            CompanyMembership.active.is_(False),
+            CompanyMembership.invitation_expires_at > utcnow(),
+        ).count()
         # Keep pre-migration/test-created primary-tenant users counted until their
         # compatibility membership is backfilled.
         users_count += User.query.filter(
