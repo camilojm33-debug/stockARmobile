@@ -1123,6 +1123,7 @@ class UserCompanyMembership(db.Model):
     active = db.Column(db.Boolean, nullable=False, default=True)
     invitation_token_hash = db.Column(db.String(64))
     invitation_expires_at = db.Column(db.DateTime)
+    invited_email = db.Column(db.String(160))
     invited_at = db.Column(db.DateTime)
     accepted_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
