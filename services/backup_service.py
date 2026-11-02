@@ -1172,8 +1172,14 @@ class BackupService:
                 if str(candidate.get("source_type") or "") == "branch_transfer" and candidate.get("source_id") is not None:
                     candidate["source_id"] = transfer_id_map.get(int(candidate["source_id"]))
                 actor_id = candidate.get("user_id")
-                if actor_id is not None and User.query.filter_by(id=int(actor_id), company_id=company_id).first() is None:
-                    candidate["user_id"] = None
+                if actor_id is not None:
+                    from app import CompanyMembership
+                    actor_membership = CompanyMembership.query.filter_by(
+                        user_id=int(actor_id), company_id=company_id,
+                    ).filter_by(active=True, status="active").first()
+                    legacy_actor = User.query.filter_by(id=int(actor_id), company_id=company_id).first()
+                    if actor_membership is None and legacy_actor is None:
+                        candidate["user_id"] = None
                 db.session.add(BranchStockMovement(**candidate))
 
     @staticmethod
@@ -1641,6 +1647,7 @@ class BackupService:
                 db.session,
                 company_id=expected_company_id,
                 rows=payload.get("users") or [],
+                memberships=payload.get("company_memberships") or [],
             )
 
         # Restore cash sessions in place. Sales and cash movements reference
@@ -1878,10 +1885,10 @@ class BackupService:
                 "products": Product.query.filter_by(company_id=expected_company_id).count(),
                 "clients": Client.query.filter_by(company_id=expected_company_id).count(),
                 "sales": Sale.query.filter_by(company_id=expected_company_id).count(),
-                "employees": User.query.filter(
-                    User.company_id == expected_company_id,
-                    User.role != "superadmin",
-                ).count(),
+                "employees": len(__import__(
+                    "stockarmobile.company_memberships",
+                    fromlist=["get_company_users"],
+                ).get_company_users(expected_company_id)),
                 "suppliers": Supplier.query.filter_by(company_id=expected_company_id).count(),
                 "purchase_orders": PurchaseOrder.query.filter_by(company_id=expected_company_id).count(),
                 "purchase_items": (
