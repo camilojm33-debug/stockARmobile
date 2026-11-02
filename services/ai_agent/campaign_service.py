@@ -21,16 +21,25 @@ class CampaignService:
 
     @classmethod
     def create_draft(cls, *, company_id: int, user_id: int, title: str, objective: str, campaign_type: str, content: str, system_data: dict, audience_segment: str, audience_count: int, product_id: int | None = None):
-        from app import Campaign, Product, User
+        from app import Campaign, Product, User, UserCompanyMembership
 
         product = None
         if product_id is not None:
             product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
             if product is None:
                 raise ValueError("El producto no pertenece a la empresa o no está disponible.")
-        creator = User.query.filter_by(id=user_id, company_id=company_id, active=True).first()
+        creator_query = (
+            User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+            .filter(
+                UserCompanyMembership.company_id == company_id,
+                UserCompanyMembership.active.is_(True),
+                User.active.is_(True),
+                UserCompanyMembership.role.in_(["admin", "user"]),
+            )
+        )
+        creator = creator_query.filter(User.id == user_id).first() if user_id else None
         if creator is None:
-            creator = User.query.filter(User.company_id == company_id, User.active.is_(True), User.role.in_(["admin", "user"])).order_by(User.id.asc()).first()
+            creator = creator_query.order_by(User.id.asc()).first()
         if creator is None:
             raise ValueError("No hay un usuario activo para crear la campaña.")
         context = system_data if isinstance(system_data, dict) else {}
