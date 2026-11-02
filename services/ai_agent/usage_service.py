@@ -23,6 +23,8 @@ COMMERCIAL_FEATURE_LABELS = {
     "pricing_controller": "Controlador global de precios",
     "promotions": "Promociones comerciales",
     "wholesale_pricing": "Precios mayoristas",
+    "multi_branch": "Gestión multisucursal",
+    "multi_branch": "Gestión multisucursal",
 }
 
 AI_FEATURE_LABELS = {
@@ -92,8 +94,8 @@ def can_use_commercial_feature(company, feature: str) -> AIAccess:
     if key in COMMERCIAL_FEATURE_LABELS and ("all" in tokens or key in tokens):
         return AIAccess(True, None, {"code": plan.code, "name": plan.name, "commercial": True})
 
-    required = "Negocio"
-    return AIAccess(False, f"{COMMERCIAL_FEATURE_LABELS.get(key, 'Esta función')} requiere {required} o superior.", {"code": plan.code, "name": plan.name, "commercial": True})
+    required = "Premium" if key == "multi_branch" else "Negocio"
+    return AIAccess(False, f"{COMMERCIAL_FEATURE_LABELS.get(key, 'Esta función')} requiere {required}.", {"code": plan.code, "name": plan.name, "commercial": True})
 
 
 def can_use_ai_feature(company, feature: str) -> AIAccess:

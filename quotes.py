@@ -65,6 +65,13 @@ def _company_quotes_enabled(company):
     return bool(preferences.get("quotes_module_enabled"))
 
 
+def _quote_branch_stock(product, branch_id=None):
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    effective_branch_id = branch_id or get_active_branch_id()
+    return available_stock(product, effective_branch_id) if effective_branch_id is not None else float(product.stock or 0)
+
+
 def _next_quote_number(company_id):
     try:
         from services.ai_agent.quote_creation_service import next_quote_number
@@ -432,7 +439,7 @@ def _quote_cart_prefill_item(quote_item, product, *, quantity=None):
         "wholesaleReferencePrice": float(reference_price) if reference_price is not None else None,
         "wholesaleDiscountAmount": float(wholesale_saving),
         "quantity": float(quantity_value),
-        "stock": max(float(getattr(product, "stock", 0) or 0), 0.0),
+        "stock": max(_quote_branch_stock(product, getattr(getattr(quote_item, "quote", None), "branch_id", None)), 0.0),
         "barcode": str(getattr(product, "barcode", None) or "")[:80],
         "unitMeasure": str(getattr(product, "unit_measure", None) or "u")[:20],
     }
@@ -665,7 +672,8 @@ def _quote_from_form(*, quote=None):
         seller_id = requested_seller_id
     else:
         seller_id = getattr(current_user, "id", None)
-    branch_id = payload.get("branch_id") or None
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
     expires_at = _parse_date(payload.get("expires_at") or payload.get("fecha_vencimiento"))
     if expires_at is None:
         expires_at = (utcnow() + timedelta(days=5)).replace(hour=23, minute=59, second=59, microsecond=0)
@@ -1032,7 +1040,7 @@ def _build_product_catalog(products):
                 "name": name,
                 "category": category,
                 "barcode": code,
-                "stock": float(getattr(product, "stock", 0) or 0),
+                "stock": _quote_branch_stock(product),
                 "price": float(getattr(product, "price", 0) or 0),
                 "price_lists": price_tiers.get(int(product.id), {}),
                 "discount": float(getattr(product, "discount", 0) or 0),
@@ -1274,20 +1282,21 @@ def _quote_pdf_response(quote, *, as_attachment=False):
 
 def _quote_lookup(quote_id):
     from app import Quote, QuoteItem, scope_query_to_company
+    from stockarmobile.branch_context import get_active_branch_id
 
-    return (
-        scope_query_to_company(
-            Quote.query.options(
-                selectinload(Quote.client),
-                selectinload(Quote.seller),
-                selectinload(Quote.items).selectinload(QuoteItem.product),
-                selectinload(Quote.converted_sale),
-            ),
-            Quote,
-        )
-        .filter(Quote.id == quote_id)
-        .first_or_404()
+    query = scope_query_to_company(
+        Quote.query.options(
+            selectinload(Quote.client),
+            selectinload(Quote.seller),
+            selectinload(Quote.items).selectinload(QuoteItem.product),
+            selectinload(Quote.converted_sale),
+        ),
+        Quote,
     )
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(Quote.branch_id == active_branch_id)
+    return query.filter(Quote.id == quote_id).first_or_404()
 
 
 def _expire_quotes(company_id):
@@ -1376,6 +1385,10 @@ def index():
         Quote.query.options(selectinload(Quote.client), selectinload(Quote.seller), selectinload(Quote.items)),
         Quote,
     )
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(Quote.branch_id == active_branch_id)
     if getattr(current_user, "role", None) not in {"admin", "superadmin"} and not _can_view_other_quotes():
         query = query.filter(Quote.seller_id == getattr(current_user, "id", None))
     if search:
@@ -1645,7 +1658,7 @@ def delete_quote(quote_id):
     from app import Quote, db, scope_query_to_company
 
     _require_quote_permission("quotes_delete")
-    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first_or_404()
+    quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     if quote.status == "CONVERTIDO" or quote.converted_sale_id:
         flash("No se puede eliminar un presupuesto convertido.", "warning")
@@ -1669,7 +1682,12 @@ def annul_quote(quote_id):
     from app import Quote, db, record_audit, scope_query_to_company
 
     _require_quote_permission("quotes_anulate")
-    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first_or_404()
+    quote_query = scope_query_to_company(db.session.query(Quote), Quote)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        quote_query = quote_query.filter(Quote.branch_id == active_branch_id)
+    quote = quote_query.filter(Quote.id == quote_id).first_or_404()
     _require_owned_or_authorized(quote)
     if quote.status == "CONVERTIDO":
         flash("No se puede anular un presupuesto convertido.", "warning")
@@ -1843,7 +1861,12 @@ def convert_to_sale(quote_id):
     from app import Product, Quote, db, record_audit, scope_query_to_company
 
     _require_quote_permission("quotes_convert")
-    quote = scope_query_to_company(db.session.query(Quote).options(selectinload(Quote.items)), Quote).filter(Quote.id == quote_id).first_or_404()
+    quote_query = scope_query_to_company(db.session.query(Quote).options(selectinload(Quote.items)), Quote)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        quote_query = quote_query.filter(Quote.branch_id == active_branch_id)
+    quote = quote_query.filter(Quote.id == quote_id).first_or_404()
     _require_owned_or_authorized(quote)
     status = (quote.status or "BORRADOR").strip().upper()
     if status == "CONVERTIDO" and quote.converted_sale_id:
@@ -1897,7 +1920,14 @@ def convert_to_sale(quote_id):
         if product is None:
             skipped_lines += 1
             continue
-        max_stock = max(float(product.stock or 0), 0.0)
+        from stockarmobile.branch_context import get_active_branch_id
+        from stockarmobile.branch_inventory import available_stock
+        active_branch_id = get_active_branch_id()
+        target_branch_id = quote.branch_id or active_branch_id
+        if active_branch_id is not None and quote.branch_id is not None and int(quote.branch_id) != int(active_branch_id):
+            flash("El presupuesto pertenece a otra sucursal. Cambiá la sucursal activa para convertirlo.", "warning")
+            return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+        max_stock = max(available_stock(product, target_branch_id) if target_branch_id is not None else float(product.stock or 0), 0.0)
         requested_qty = max(float(row["quantity"] or 0), 0.0)
         if requested_qty > max_stock:
             stock_shortages.append(

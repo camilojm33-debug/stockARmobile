@@ -29,6 +29,10 @@ def _since(days: Any, default: int = 30) -> datetime:
 
 def _sale_filter(query, company_id: int, start: datetime | None = None, end: datetime | None = None):
     query = query.filter(Sale.company_id == company_id, Sale.status.notin_(["cancelada", "anulada"]))
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+    restricted, branch_id = employee_branch_scope(company_id)
+    if restricted:
+        query = query.filter(Sale.branch_id == branch_id)
     if start is not None:
         query = query.filter(Sale.date >= start)
     if end is not None:
@@ -129,17 +133,35 @@ class ProductRecommendationsTool(AgentTool):
         except (TypeError, ValueError):
             return {"success": False, "error": "limit_invalid"}
         query = Product.query.filter(Product.company_id == self.company_id, Product.active.is_(True))
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        restricted, branch_id = employee_branch_scope(self.company_id)
+        if restricted:
+            from app import BranchStock
+            query = query.outerjoin(
+                BranchStock,
+                (BranchStock.product_id == Product.id)
+                & (BranchStock.company_id == Product.company_id)
+                & (BranchStock.branch_id == branch_id),
+            )
+            stock_expr = func.coalesce(BranchStock.stock, 0)
+        else:
+            stock_expr = Product.stock
         if category:
             query = query.filter(Product.category.ilike(f"%{str(category).strip()}%"))
         if product_query:
             like = f"%{str(product_query).strip()}%"
-            candidates = query.filter(Product.name.ilike(like)).order_by(Product.stock.desc(), Product.name.asc()).limit(limit).all()
+            candidates = query.filter(Product.name.ilike(like)).order_by(stock_expr.desc(), Product.name.asc()).limit(limit).all()
         else:
-            candidates = query.order_by(Product.stock.desc(), Product.name.asc()).limit(limit).all()
+            candidates = query.order_by(stock_expr.desc(), Product.name.asc()).limit(limit).all()
+        if restricted:
+            from stockarmobile.branch_inventory import available_stock
+            for product in candidates:
+                product.branch_stock_display = available_stock(product, branch_id)
         return {
             "success": True,
             "items": [
-                {"id": p.id, "name": p.name, "category": p.category, "price": float(p.price or 0), "stock": float(p.stock or 0)}
+                {"id": p.id, "name": p.name, "category": p.category, "price": float(p.price or 0),
+                 "stock": (float(getattr(p, "branch_stock_display", 0) or 0) if restricted else float(p.stock or 0))}
                 for p in candidates
             ],
         }
@@ -161,12 +183,17 @@ class ProductProfitabilityTool(AgentTool):
         except (TypeError, ValueError):
             return {"success": False, "error": "limit_invalid"}
         start = _since(days, days)
-        rows = SaleItem.query.join(Sale).join(Product).filter(
+        profitability_sales = SaleItem.query.join(Sale).join(Product).filter(
             Sale.company_id == self.company_id,
             Sale.date >= start,
             Sale.status.notin_(["cancelada", "anulada"]),
             Product.company_id == self.company_id,
-        ).with_entities(
+        )
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        restricted, branch_id = employee_branch_scope(self.company_id)
+        if restricted:
+            profitability_sales = profitability_sales.filter(Sale.branch_id == branch_id)
+        rows = profitability_sales.with_entities(
             Product.id,
             Product.name,
             Product.category,
@@ -197,12 +224,31 @@ class InventoryTurnoverTool(AgentTool):
         except (TypeError, ValueError):
             return {"success": False, "error": "limit_invalid"}
         start = _since(days, days)
-        sold = SaleItem.query.join(Sale).filter(
+        sold_query = SaleItem.query.join(Sale).filter(
             Sale.company_id == self.company_id,
             Sale.date >= start,
             Sale.status.notin_(["cancelada", "anulada"]),
-        ).with_entities(SaleItem.product_id, func.coalesce(func.sum(SaleItem.quantity), 0).label("units")).group_by(SaleItem.product_id).subquery()
-        rows = Product.query.outerjoin(sold, Product.id == sold.c.product_id).filter(Product.company_id == self.company_id, Product.active.is_(True)).with_entities(Product.id, Product.name, Product.stock, func.coalesce(sold.c.units, 0).label("units_sold")).order_by(func.coalesce(sold.c.units, 0).desc()).limit(limit).all()
+        )
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        restricted, branch_id = employee_branch_scope(self.company_id)
+        if restricted:
+            sold_query = sold_query.filter(Sale.branch_id == branch_id)
+        sold = sold_query.with_entities(SaleItem.product_id, func.coalesce(func.sum(SaleItem.quantity), 0).label("units")).group_by(SaleItem.product_id).subquery()
+        product_query = Product.query.outerjoin(sold, Product.id == sold.c.product_id).filter(Product.company_id == self.company_id, Product.active.is_(True))
+        if restricted:
+            from app import BranchStock
+            product_query = product_query.outerjoin(
+                BranchStock,
+                (BranchStock.product_id == Product.id)
+                & (BranchStock.company_id == Product.company_id)
+                & (BranchStock.branch_id == branch_id),
+            )
+            stock_expr = func.coalesce(BranchStock.stock, 0)
+            product_query = product_query.with_entities(Product.id, Product.name, stock_expr.label("stock"), func.coalesce(sold.c.units, 0).label("units_sold"))
+        else:
+            stock_expr = Product.stock
+            product_query = product_query.with_entities(Product.id, Product.name, Product.stock, func.coalesce(sold.c.units, 0).label("units_sold"))
+        rows = product_query.order_by(func.coalesce(sold.c.units, 0).desc()).limit(limit).all()
         items = []
         for row in rows:
             stock = float(row.stock or 0)
@@ -241,9 +287,34 @@ class ExecutiveSummaryTool(AgentTool):
         days = _days(days, 30)
         start = _since(days, days)
         count, total = _sale_filter(Sale.query, self.company_id, start, datetime.utcnow()).with_entities(func.count(Sale.id), func.coalesce(func.sum(Sale.total_amount), 0)).first()
-        critical = Product.query.filter(Product.company_id == self.company_id, Product.active.is_(True), Product.stock <= 0).count()
-        historical = Sale.query.filter(Sale.company_id == self.company_id, Sale.client_id.isnot(None)).with_entities(Sale.client_id).distinct().subquery()
-        recent = Sale.query.filter(Sale.company_id == self.company_id, Sale.client_id.isnot(None), Sale.date >= start).with_entities(Sale.client_id).distinct().subquery()
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        restricted, branch_id = employee_branch_scope(self.company_id)
+        if restricted:
+            from app import BranchStock
+            critical = Product.query.outerjoin(
+                BranchStock,
+                (BranchStock.company_id == Product.company_id)
+                & (BranchStock.product_id == Product.id)
+                & (BranchStock.branch_id == branch_id),
+            ).filter(
+                Product.company_id == self.company_id,
+                Product.active.is_(True),
+                func.coalesce(BranchStock.stock, 0)
+                <= func.coalesce(BranchStock.min_stock, Product.min_stock),
+            ).count()
+        else:
+            critical = Product.query.filter(
+                Product.company_id == self.company_id,
+                Product.active.is_(True),
+                Product.stock <= Product.min_stock,
+            ).count()
+        historical_query = Sale.query.filter(Sale.company_id == self.company_id, Sale.client_id.isnot(None))
+        recent_query = Sale.query.filter(Sale.company_id == self.company_id, Sale.client_id.isnot(None), Sale.date >= start)
+        if restricted:
+            historical_query = historical_query.filter(Sale.branch_id == branch_id)
+            recent_query = recent_query.filter(Sale.branch_id == branch_id)
+        historical = historical_query.with_entities(Sale.client_id).distinct().subquery()
+        recent = recent_query.with_entities(Sale.client_id).distinct().subquery()
         inactive = Client.query.filter(Client.company_id == self.company_id, Client.active.is_(True), Client.id.in_(historical), ~Client.id.in_(recent)).count()
         return {"success": True, "days": days, "sales_count": int(count or 0), "sales_total": float(total or 0), "critical_stock_products": int(critical), "inactive_clients": int(inactive), "signals": ["stock_critico" if critical else None, "clientes_inactivos" if inactive else None]}
 

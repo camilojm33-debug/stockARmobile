@@ -144,7 +144,7 @@ def _recalculate_purchase_edit_values(
     return updated_stock, updated_cost
 
 
-def _apply_product_purchase_totals(product_totals):
+def _apply_product_purchase_totals(product_totals, *, branch_id=None):
     """Apply stock and moving-average cost while serializing concurrent purchases."""
     from app import Product, db
 
@@ -171,6 +171,11 @@ def _apply_product_purchase_totals(product_totals):
         previous_cost = float(product.cost_price or 0)
         new_stock = previous_stock + purchase_quantity
         product.stock = new_stock
+        if branch_id is not None:
+            from stockarmobile.branch_inventory import adjust_branch_stock
+            adjust_branch_stock(product, branch_id, purchase_quantity, movement_type="purchase",
+                                source_type="purchase", user_id=getattr(current_user, "id", None),
+                                update_company_total=False)
         product.cost_price = (
             ((previous_stock * previous_cost) + purchase_value) / new_stock
             if new_stock
@@ -218,9 +223,12 @@ def index():
                 product_totals[product.id][1] += line["quantity"]
                 product_totals[product.id][2] += line["quantity"] * line["unit_cost"]
             subtotal = sum(line["quantity"] * line["unit_cost"] for _, line in resolved_lines)
+            from stockarmobile.branch_context import get_active_branch_id
+            branch_id = get_active_branch_id()
             order = PurchaseOrder(
                 supplier_id=supplier.id if supplier else None,
                 company_id=company_id,
+                branch_id=branch_id,
                 date=utcnow(),
                 status="recibida",
                 subtotal=subtotal,
@@ -231,7 +239,7 @@ def index():
             db.session.flush()
             for product, line in resolved_lines:
                 db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=line["quantity"], unit_cost=line["unit_cost"]))
-            _apply_product_purchase_totals(product_totals)
+            _apply_product_purchase_totals(product_totals, branch_id=branch_id)
             record_audit(
                 action="purchase_create",
                 entity="purchase_order",
@@ -249,7 +257,16 @@ def index():
         return redirect(url_for("purchases.index", company_id=company_id))
     suppliers = _company_scope(Supplier.query.filter_by(active=True), Supplier, company_id).order_by(Supplier.name).all()
     products = _company_scope(Product.query.filter_by(active=True), Product, company_id).order_by(Product.name).all()
-    purchases = _company_scope(PurchaseOrder.query, PurchaseOrder, company_id).order_by(PurchaseOrder.date.desc()).limit(20).all()
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        from stockarmobile.branch_inventory import available_stock
+        for product in products:
+            product.branch_stock_display = available_stock(product, branch_id)
+    purchases_query = _company_scope(PurchaseOrder.query, PurchaseOrder, company_id)
+    if branch_id is not None:
+        purchases_query = purchases_query.filter(PurchaseOrder.branch_id == branch_id)
+    purchases = purchases_query.order_by(PurchaseOrder.date.desc()).limit(20).all()
     return render_template("compras/index.html", suppliers=suppliers, products=products, purchases=purchases, selected_company_id=company_id, companies=_superadmin_companies() if getattr(current_user, "role", None) == "superadmin" else [], search="", status_filter="active", supplier_stats={}, company_required=False)
 
 
@@ -395,6 +412,10 @@ def supplier_purchases_pdf(supplier_id):
 
 def _supplier_purchases_query(PurchaseOrder, supplier, company_id, db):
     query = _company_scope(PurchaseOrder.query, PurchaseOrder, company_id).filter(PurchaseOrder.supplier_id == supplier.id)
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        query = query.filter(PurchaseOrder.branch_id == branch_id)
     search = (request.args.get("q") or "").strip(); status = (request.args.get("status") or "").strip().lower()
     if search:
         from app import Product, PurchaseItem
@@ -428,7 +449,12 @@ def edit_supplier_purchase(supplier_id, purchase_id):
     from app import Product, PurchaseItem, PurchaseOrder, Supplier, db, record_audit
     _purchase_access_guard(); company_id = _resolve_company_id(required=True); _require_company_context_or_forbid(company_id)
     supplier = _company_scope(db.session.query(Supplier), Supplier, company_id).filter(Supplier.id == supplier_id).first_or_404()
-    purchase = _company_scope(db.session.query(PurchaseOrder), PurchaseOrder, company_id).filter(PurchaseOrder.id == purchase_id, PurchaseOrder.supplier_id == supplier.id).first_or_404()
+    purchase_query = _company_scope(db.session.query(PurchaseOrder), PurchaseOrder, company_id).filter(PurchaseOrder.id == purchase_id, PurchaseOrder.supplier_id == supplier.id)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        purchase_query = purchase_query.filter(PurchaseOrder.branch_id == active_branch_id)
+    purchase = purchase_query.first_or_404()
     products = _company_scope(Product.query.filter_by(active=True), Product, company_id).order_by(Product.name).all()
     if request.method == "POST":
         try:
@@ -472,6 +498,19 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                     product_name=product.name,
                 )
                 product.stock = updated_stock
+                if purchase.branch_id is not None:
+                    from stockarmobile.branch_inventory import adjust_branch_stock
+                    adjust_branch_stock(
+                        product,
+                        purchase.branch_id,
+                        new_qty - old_qty,
+                        movement_type="purchase_edit",
+                        source_type="purchase",
+                        source_id=purchase.id,
+                        user_id=current_user.id,
+                        update_company_total=False,
+                        note="Ajuste por edición de compra",
+                    )
                 product.cost_price = updated_cost
                 product.margin = float(product.price or 0) - float(product.cost_price or 0)
                 product.profit_percent = product.margin / float(product.cost_price) * 100 if float(product.cost_price or 0) else 0
@@ -543,11 +582,13 @@ def import_supplier_purchases(supplier_id):
             totals[product.id][2] += quantity * unit_cost
         if not valid_lines: raise ValueError("No se encontraron filas válidas para importar.")
         subtotal = sum(quantity * unit_cost for _, quantity, unit_cost in valid_lines)
-        order = PurchaseOrder(supplier_id=supplier.id, company_id=company_id, date=utcnow(), status="recibida", subtotal=subtotal, total_amount=subtotal, note="Importada desde Excel")
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
+        order = PurchaseOrder(supplier_id=supplier.id, company_id=company_id, branch_id=branch_id, date=utcnow(), status="recibida", subtotal=subtotal, total_amount=subtotal, note="Importada desde Excel")
         db.session.add(order); db.session.flush()
         for product, quantity, unit_cost in valid_lines:
             db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=quantity, unit_cost=unit_cost))
-        _apply_product_purchase_totals(totals)
+        _apply_product_purchase_totals(totals, branch_id=branch_id)
         record_audit(action="purchase_import_excel", entity="supplier", entity_id=supplier.id, detail=f"Compra importada desde Excel id={order.id} productos={len(valid_lines)} total={subtotal:.2f}")
         db.session.commit(); flash(f"Se importó la compra #{order.id} con {len(valid_lines)} producto(s).", "success")
     except ValueError as exc:

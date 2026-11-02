@@ -234,6 +234,7 @@ def _default_billing_config(company):
             {
                 "number": "00001",
                 "description": "Casa central",
+                "branch": "Casa central",
                 "active": True,
             }
         ],
@@ -290,7 +291,12 @@ def _load_company_billing_config(company, company_preferences):
                 continue
             number = _normalize_pos_number(row.get("number"))
             description = (str(row.get("description") or "").strip() or f"Punto de venta {number}")[:80]
-            points_of_sale.append({"number": number, "description": description, "active": bool(row.get("active", True))})
+            points_of_sale.append({
+                "number": number,
+                "description": description,
+                "branch": (str(row.get("branch") or "Casa central").strip() or "Casa central")[:80],
+                "active": bool(row.get("active", True)),
+            })
     if not points_of_sale:
         points_of_sale = defaults["points_of_sale"]
 
@@ -4339,7 +4345,7 @@ def company_settings_user_delete(user_id):
 @bp.route("/company-settings/users/create", methods=["POST"])
 @company_admin_required
 def company_settings_user_create():
-    from app import User, db, record_audit
+    from app import Branch, User, UserBranchAccess, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4377,6 +4383,9 @@ def company_settings_user_create():
     user.must_change_password = True
     db.session.add(user)
     db.session.flush()
+    default_branch = Branch.query.filter_by(company_id=company.id, is_default=True, active=True).first()
+    if default_branch is not None:
+        db.session.add(UserBranchAccess(company_id=company.id, user_id=user.id, branch_id=default_branch.id))
     record_audit(action="company_user_create", entity="user", entity_id=user.id, detail=f"Alta de usuario {user.username}")
     db.session.commit()
     flash(f"Empleado creado correctamente. Contrasena temporal: {temp_password}", "success")
@@ -4625,7 +4634,8 @@ def company_settings_billing_pos_add():
         flash("Ese punto de venta ya existe.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="billing"))
 
-    points.append({"number": number, "description": description, "active": False})
+    branch_name = (request.form.get("branch") or "Casa central").strip()[:80] or "Casa central"
+    points.append({"number": number, "description": description, "branch": branch_name, "active": False})
     billing["points_of_sale"] = sorted(points, key=lambda item: item.get("number") or "00000")
 
     company_preferences["billing_business"] = billing
@@ -4998,11 +5008,20 @@ def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, CashSession, Quote, Sale, SaleItem, User
+    from app import AuditLog, Branch, CashSession, Product, Quote, Sale, SaleItem, User, UserBranchAccess
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
     settings_panel = (request.args.get("panel") or "").strip().lower()
+    from services.ai_agent.usage_service import can_use_commercial_feature
+    multi_branch_access = can_use_commercial_feature(company, "multi_branch").allowed
+    company_branches = Branch.query.filter_by(company_id=company.id).order_by(Branch.is_default.desc(), Branch.name.asc()).all()
+    branch_user_access = {
+        branch.id: {row.user_id for row in UserBranchAccess.query.filter_by(company_id=company.id, branch_id=branch.id).all()}
+        for branch in company_branches
+    }
+    branch_limit = max(1, int(getattr(PlanUsageService._active_plan_for_company(company.id)[1], "max_branches", 1) or 1))
+    active_branch_count = sum(1 for branch in company_branches if branch.active)
 
     pin_verified = _is_pin_verified(company.id)
     date_from_raw = request.args.get("from") or ""
@@ -5221,6 +5240,10 @@ def company_settings():
         billing_enabled_documents=billing_enabled_documents,
         billing_last_receipt=billing_last_receipt,
         billing_history_rows=billing_history_rows,
+        multi_branch_access=multi_branch_access,
+        company_branches=company_branches,
+        branch_user_access=branch_user_access,
+        branch_limit=branch_limit,
     )
 
 

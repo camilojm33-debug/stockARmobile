@@ -468,6 +468,9 @@ class BackupService:
     @staticmethod
     def _payload_for_company(company_id: int):
         from app import (
+            BranchStock,
+            BranchStockMovement,
+            BranchStockTransfer,
             CashMovement,
             CashSession,
             Client,
@@ -494,6 +497,15 @@ class BackupService:
             .all()
         )
         products = Product.query.filter_by(company_id=company_id).order_by(Product.id.asc()).all()
+        branch_stock_rows = BranchStock.query.filter_by(company_id=company_id).order_by(
+            BranchStock.branch_id.asc(), BranchStock.product_id.asc()
+        ).all()
+        branch_stock_movements = BranchStockMovement.query.filter_by(company_id=company_id).order_by(
+            BranchStockMovement.id.asc()
+        ).all()
+        branch_stock_transfers = BranchStockTransfer.query.filter_by(company_id=company_id).order_by(
+            BranchStockTransfer.id.asc()
+        ).all()
         clients = Client.query.filter_by(company_id=company_id).order_by(Client.id.asc()).all()
         suppliers = Supplier.query.filter_by(company_id=company_id).order_by(Supplier.id.asc()).all()
 
@@ -548,6 +560,9 @@ class BackupService:
             "company": base_payload["company"],
             "users": base_payload["users"],
             "products": base_payload["products"],
+            "branch_stock": [BackupService._row_to_dict(row) for row in branch_stock_rows],
+            "branch_stock_movements": [BackupService._row_to_dict(row) for row in branch_stock_movements],
+            "branch_stock_transfers": [BackupService._row_to_dict(row) for row in branch_stock_transfers],
             "categories": categories,
             "clients": [BackupService._row_to_dict(row) for row in clients],
             "suppliers": [BackupService._row_to_dict(row) for row in suppliers],
@@ -606,6 +621,9 @@ class BackupService:
             "cash_sessions",
             "cash_movements",
             "expenses",
+            "branch_stock",
+            "branch_stock_movements",
+            "branch_stock_transfers",
         )
         row_sections = tenant_sections + ("sale_items", "purchase_items")
         for section in row_sections:
@@ -886,6 +904,265 @@ class BackupService:
                     setattr(product, field, BackupService._deserialize_for_column(mapper.columns[field], payload.get(field)))
 
     @staticmethod
+    def _restore_branch_inventory(*, company_id: int, payload, product_id_map=None):
+        """Restore per-branch balances while preserving tenant-owned branch records.
+
+        Backups created before multisucursal did not carry branch_stock. For those
+        snapshots the legacy Product.stock is restored into Casa central, and
+        other branches are set to zero rather than silently duplicating inventory.
+        """
+        from decimal import Decimal, InvalidOperation
+        from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Product, User, db
+
+        company_id = int(company_id)
+        product_id_map = {int(key): int(value) for key, value in (product_id_map or {}).items()}
+        products = {
+            int(row.id): row
+            for row in Product.query.filter_by(company_id=company_id).all()
+        }
+        branches = {
+            int(row.id): row
+            for row in Branch.query.filter_by(company_id=company_id).all()
+        }
+        default_branch = next((row for row in branches.values() if row.is_default and row.active), None)
+        if default_branch is None:
+            # Older tenants and pre-multibranch backups may be restored before a
+            # branch row exists. Ensure one usable Casa central so a valid legacy
+            # Product.stock snapshot can be restored without duplicating stock.
+            default_branch = next(
+                (row for row in branches.values() if str(row.code or "").upper() == "CASA-CENTRAL"),
+                None,
+            )
+            if default_branch is None:
+                default_branch = Branch(
+                    company_id=company_id,
+                    name="Casa central",
+                    code="CASA-CENTRAL",
+                    active=True,
+                    is_default=True,
+                )
+                db.session.add(default_branch)
+                db.session.flush()
+                branches[int(default_branch.id)] = default_branch
+            else:
+                default_branch.active = True
+                default_branch.is_default = True
+
+        has_branch_snapshot = isinstance(payload, dict) and "branch_stock" in payload
+        snapshot_rows = (payload.get("branch_stock") or []) if has_branch_snapshot else []
+        if not isinstance(snapshot_rows, list):
+            raise ValueError("El respaldo contiene saldos de sucursal inválidos.")
+
+        current_rows = BranchStock.query.filter_by(company_id=company_id).all()
+        rows_by_key = {
+            (int(row.branch_id), int(row.product_id)): row
+            for row in current_rows
+        }
+        for row in current_rows:
+            row.stock = Decimal("0.000")
+            row.reserved_stock = Decimal("0.000")
+
+        if has_branch_snapshot:
+            for raw in snapshot_rows:
+                if not isinstance(raw, dict):
+                    raise ValueError("El respaldo contiene un saldo de sucursal inválido.")
+                try:
+                    row_company_id = int(raw.get("company_id") or company_id)
+                    branch_id = int(raw.get("branch_id"))
+                    source_product_id = int(raw.get("product_id"))
+                    product_id = product_id_map.get(source_product_id, source_product_id)
+                    stock = Decimal(str(raw.get("stock") or 0))
+                    minimum = Decimal(str(raw.get("min_stock") or 0))
+                    reserved = Decimal(str(raw.get("reserved_stock") or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene cantidades de stock inválidas.") from None
+                if row_company_id != company_id:
+                    raise ValueError("El saldo de sucursal pertenece a otra empresa.")
+                if branch_id not in branches or product_id not in products:
+                    raise ValueError("El respaldo contiene una sucursal o producto fuera de la empresa.")
+                if not stock.is_finite() or not minimum.is_finite() or not reserved.is_finite():
+                    raise ValueError("El respaldo contiene cantidades de stock no finitas.")
+                if stock < 0 or minimum < 0 or reserved < 0 or reserved > stock:
+                    raise ValueError("El respaldo contiene cantidades de stock inconsistentes.")
+                key = (branch_id, product_id)
+                row = rows_by_key.get(key)
+                if row is None:
+                    row = BranchStock(
+                        company_id=company_id,
+                        branch_id=branch_id,
+                        product_id=product_id,
+                        stock=Decimal("0.000"),
+                        min_stock=Decimal("0.000"),
+                        reserved_stock=Decimal("0.000"),
+                    )
+                    db.session.add(row)
+                    rows_by_key[key] = row
+                row.stock = stock
+                row.min_stock = minimum
+                row.reserved_stock = reserved
+        else:
+            # Compatibility path for backups produced before branch stock existed.
+            for product in products.values():
+                key = (int(default_branch.id), int(product.id))
+                row = rows_by_key.get(key)
+                if row is None:
+                    row = BranchStock(
+                        company_id=company_id,
+                        branch_id=int(default_branch.id),
+                        product_id=int(product.id),
+                        stock=Decimal("0.000"),
+                        min_stock=Decimal("0.000"),
+                        reserved_stock=Decimal("0.000"),
+                    )
+                    db.session.add(row)
+                    rows_by_key[key] = row
+                legacy_stock = Decimal(str(product.stock or 0))
+                legacy_minimum = Decimal(str(product.min_stock or 0))
+                if not legacy_stock.is_finite() or legacy_stock < 0:
+                    raise ValueError("El respaldo contiene stock histórico inválido.")
+                row.stock = legacy_stock
+                row.min_stock = legacy_minimum
+                row.reserved_stock = Decimal("0.000")
+
+        if has_branch_snapshot:
+            # Product.stock remains the company-wide aggregate for compatibility.
+            # Some legacy imports and older code paths update that aggregate without
+            # writing BranchStock. On restore, preserve the balances of secondary
+            # branches and reconcile only Casa central to the restored aggregate.
+            for product in products.values():
+                product_id = int(product.id)
+                try:
+                    aggregate_stock = Decimal(str(product.stock or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene stock agregado inválido.") from None
+                if not aggregate_stock.is_finite() or aggregate_stock < 0:
+                    raise ValueError("El respaldo contiene stock agregado inválido.")
+
+                secondary_stock = sum(
+                    (row.stock or Decimal("0.000"))
+                    for (branch_id, row_product_id), row in rows_by_key.items()
+                    if row_product_id == product_id and branch_id != int(default_branch.id)
+                )
+                central_key = (int(default_branch.id), product_id)
+                central_row = rows_by_key.get(central_key)
+                if central_row is None:
+                    central_row = BranchStock(
+                        company_id=company_id,
+                        branch_id=int(default_branch.id),
+                        product_id=product_id,
+                        stock=Decimal("0.000"),
+                        min_stock=Decimal("0.000"),
+                        reserved_stock=Decimal("0.000"),
+                    )
+                    db.session.add(central_row)
+                    rows_by_key[central_key] = central_row
+
+                central_target = max(Decimal("0.000"), aggregate_stock - secondary_stock)
+                # Never restore a central balance below an already reserved amount.
+                central_row.stock = max(central_target, central_row.reserved_stock or Decimal("0.000"))
+
+        # Keep the legacy aggregate as the sum of all physical locations.
+        totals = db.session.query(
+            BranchStock.product_id,
+            db.func.coalesce(db.func.sum(BranchStock.stock), 0),
+        ).filter(BranchStock.company_id == company_id).group_by(BranchStock.product_id).all()
+        total_by_product = {int(product_id): Decimal(str(total or 0)) for product_id, total in totals}
+        for product in products.values():
+            product.stock = float(total_by_product.get(int(product.id), Decimal("0.000")))
+
+        # Replace the movement/transfer ledger along with the restored balances.
+        # Backups created before multisucursal omit these collections and leave
+        # the existing ledger untouched for backwards compatibility.
+        has_history_snapshot = (
+            isinstance(payload, dict)
+            and "branch_stock_movements" in payload
+            and "branch_stock_transfers" in payload
+        )
+        if not has_history_snapshot:
+            # Older snapshots cannot describe the branch-aware movement ledger.
+            # Clear post-snapshot history rather than leave entries that disagree
+            # with the restored aggregate/central inventory.
+            BranchStockMovement.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            BranchStockTransfer.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            db.session.flush()
+        else:
+            raw_movements = payload.get("branch_stock_movements") or []
+            raw_transfers = payload.get("branch_stock_transfers") or []
+            if not isinstance(raw_movements, list) or not isinstance(raw_transfers, list):
+                raise ValueError("El respaldo contiene historiales de sucursal inválidos.")
+
+            BranchStockMovement.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            BranchStockTransfer.query.filter_by(company_id=company_id).delete(synchronize_session=False)
+            db.session.flush()
+
+            transfer_id_map = {}
+            for raw in raw_transfers:
+                if not isinstance(raw, dict):
+                    raise ValueError("El respaldo contiene una transferencia inválida.")
+                try:
+                    row_company = int(raw.get("company_id") or company_id)
+                    source_branch_id = int(raw.get("source_branch_id"))
+                    target_branch_id = int(raw.get("target_branch_id"))
+                    source_product_id = int(raw.get("product_id"))
+                    product_id = product_id_map.get(source_product_id, source_product_id)
+                    quantity = Decimal(str(raw.get("quantity") or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene datos de transferencia inválidos.") from None
+                if row_company != company_id or source_branch_id not in branches or target_branch_id not in branches:
+                    raise ValueError("La transferencia pertenece a otra empresa o sucursal.")
+                if source_branch_id == target_branch_id or product_id not in products or not quantity.is_finite() or quantity <= 0:
+                    raise ValueError("El respaldo contiene una transferencia inconsistente.")
+                candidate = BackupService._deserialize_rows(BranchStockTransfer, [raw])[0]
+                incoming_id = candidate.get("id")
+                if incoming_id is not None and db.session.get(BranchStockTransfer, int(incoming_id)) is not None:
+                    candidate.pop("id", None)
+                candidate["company_id"] = company_id
+                candidate["source_branch_id"] = source_branch_id
+                candidate["target_branch_id"] = target_branch_id
+                candidate["product_id"] = product_id
+                candidate["quantity"] = quantity
+                created_by = candidate.get("created_by_user_id")
+                if created_by is not None and User.query.filter_by(id=int(created_by), company_id=company_id).first() is None:
+                    candidate["created_by_user_id"] = None
+                transfer = BranchStockTransfer(**candidate)
+                db.session.add(transfer)
+                db.session.flush()
+                if incoming_id is not None:
+                    transfer_id_map[int(incoming_id)] = int(transfer.id)
+
+            for raw in raw_movements:
+                if not isinstance(raw, dict):
+                    raise ValueError("El respaldo contiene un movimiento inválido.")
+                try:
+                    row_company = int(raw.get("company_id") or company_id)
+                    branch_id = int(raw.get("branch_id"))
+                    source_product_id = int(raw.get("product_id"))
+                    product_id = product_id_map.get(source_product_id, source_product_id)
+                    delta = Decimal(str(raw.get("quantity_delta") or 0))
+                    stock_after = Decimal(str(raw.get("stock_after") or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    raise ValueError("El respaldo contiene un movimiento de inventario inválido.") from None
+                if row_company != company_id or branch_id not in branches or product_id not in products:
+                    raise ValueError("El movimiento pertenece a otra empresa, sucursal o producto.")
+                if not delta.is_finite() or not stock_after.is_finite() or stock_after < 0:
+                    raise ValueError("El respaldo contiene cantidades de movimiento inconsistentes.")
+                candidate = BackupService._deserialize_rows(BranchStockMovement, [raw])[0]
+                incoming_id = candidate.get("id")
+                if incoming_id is not None and db.session.get(BranchStockMovement, int(incoming_id)) is not None:
+                    candidate.pop("id", None)
+                candidate["company_id"] = company_id
+                candidate["branch_id"] = branch_id
+                candidate["product_id"] = product_id
+                candidate["quantity_delta"] = delta
+                candidate["stock_after"] = stock_after
+                if str(candidate.get("source_type") or "") == "branch_transfer" and candidate.get("source_id") is not None:
+                    candidate["source_id"] = transfer_id_map.get(int(candidate["source_id"]))
+                actor_id = candidate.get("user_id")
+                if actor_id is not None and User.query.filter_by(id=int(actor_id), company_id=company_id).first() is None:
+                    candidate["user_id"] = None
+                db.session.add(BranchStockMovement(**candidate))
+
+    @staticmethod
     def _restore_employee_rows(db_session, *, company_id: int, rows):
         """Restore profile data without restoring historical security decisions."""
         from app import User
@@ -962,6 +1239,7 @@ class BackupService:
     @staticmethod
     def restore_backup(backup_log, *, expected_company_id: int, restored_by_user_id: int | None, sections=None, sync_sequences: bool = True):
         from app import (
+            BranchStock,
             CashMovement,
             CashSession,
             Client,
@@ -1222,6 +1500,13 @@ class BackupService:
                 BackupService._restore_product_subset(current_products, payload.get("products") or [], ["stock", "min_stock"])
             if "categories" in sections:
                 BackupService._restore_product_subset(current_products, payload.get("products") or [], ["category"])
+
+        if "products" in sections or "inventory" in sections:
+            BackupService._restore_branch_inventory(
+                company_id=expected_company_id,
+                payload=payload,
+                product_id_map=product_id_map,
+            )
 
         if "clients" in sections:
             client_rows = BackupService._deserialize_rows(Client, payload.get("clients") or [])

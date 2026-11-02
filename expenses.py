@@ -21,14 +21,17 @@ def _record_cash_expense_movement(*, user, expense):
     from app import CashMovement, CashSession, db
 
     company_id = getattr(user, "company_id", None)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    open_session_query = CashSession.query.filter_by(
+        company_id=company_id,
+        user_id=user.id,
+        status="abierta",
+    )
+    if active_branch_id is not None:
+        open_session_query = open_session_query.filter(CashSession.branch_id == active_branch_id)
     open_session = (
-        CashSession.query
-        .filter_by(
-            company_id=company_id,
-            user_id=user.id,
-            status="abierta",
-        )
-        .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+        open_session_query.order_by(CashSession.opened_at.desc(), CashSession.id.desc())
         .with_for_update()
         .first()
     )
@@ -39,6 +42,7 @@ def _record_cash_expense_movement(*, user, expense):
         session_id=open_session.id,
         user_id=user.id,
         company_id=company_id,
+        branch_id=getattr(open_session, "branch_id", None),
         movement_type="egreso",
         category="gasto",
         amount=expense.amount,
@@ -67,6 +71,7 @@ def index():
             payment_method=request.form.get("payment_method"),
             user_id=current_user.id,
             company_id=getattr(current_user, "company_id", None),
+            branch_id=__import__("stockarmobile.branch_context", fromlist=["get_active_branch_id"]).get_active_branch_id(),
         )
         db.session.add(expense)
         db.session.flush()
@@ -79,6 +84,11 @@ def index():
         flash("Gasto registrado.", "success")
         return redirect(url_for("expenses.index"))
 
-    expenses = scope_query_to_company(Expense.query, Expense).order_by(Expense.date.desc()).limit(50).all()
+    expense_query = scope_query_to_company(Expense.query, Expense)
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        expense_query = expense_query.filter(Expense.branch_id == branch_id)
+    expenses = expense_query.order_by(Expense.date.desc()).limit(50).all()
     total = sum(float(item.amount or 0) for item in expenses)
     return render_template("gastos/index.html", expenses=expenses, total=total)

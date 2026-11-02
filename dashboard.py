@@ -419,7 +419,11 @@ def confirm_invoice(upload_id):
             invoice["status"] = "LISTA_PARA_CONFIRMAR"
             upload["invoice"] = invoice
             upload["status"] = "LISTA_PARA_CONFIRMAR"
-        result = InvoicePurchaseService.confirm(company_id=company_id, user_id=current_user.id, invoice=invoice, conversation=conversation)
+        from stockarmobile.branch_context import get_active_branch_id
+        result = InvoicePurchaseService.confirm(
+            company_id=company_id, user_id=current_user.id, invoice=invoice,
+            conversation=conversation, branch_id=get_active_branch_id(),
+        )
         upload["invoice"]["status"] = "APLICADA"
         upload["status"] = "APLICADA"
         upload["result"] = result

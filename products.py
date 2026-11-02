@@ -19,6 +19,13 @@ ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
 
+def _product_stock_for_context(product):
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    return available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
+
+
 def _product_to_dict(product):
     return {
         "id": product.id,
@@ -46,7 +53,7 @@ def _product_to_dict(product):
         "profit_percent": float(product.profit_percent or 0),
         "tax": float(product.tax or 0),
         "iva": float(product.tax or 0),
-        "stock": product.stock or 0,
+        "stock": _product_stock_for_context(product),
         "min_stock": product.min_stock or 0,
         "discount": float(product.discount or 0),
         "favorite": bool(product.favorite),
@@ -152,7 +159,7 @@ def product_image(filename):
 @bp.route("/")
 @tenant_required
 def index():
-    from app import Product, ProductForm, scope_query_to_company
+    from app import BranchStock, Product, ProductForm, db, scope_query_to_company
 
     query = scope_query_to_company(Product.query.filter_by(active=True), Product)
     search = request.args.get("q") or request.args.get("search")
@@ -163,10 +170,24 @@ def index():
         query = query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.category.ilike(like)))
     if category:
         query = query.filter(Product.category == category)
-    if low_stock:
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    if low_stock and branch_id is not None:
+        query = query.outerjoin(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == branch_id),
+        ).filter(
+            db.func.coalesce(BranchStock.stock, 0)
+            <= db.func.coalesce(BranchStock.min_stock, Product.min_stock)
+        )
+    elif low_stock:
         query = query.filter(Product.stock <= Product.min_stock)
 
     productos = query.order_by(Product.name).all()
+    for product in productos:
+        product.branch_stock_display = _product_stock_for_context(product)
     categorias = [c[0] for c in scope_query_to_company(Product.query.with_entities(Product.category), Product).distinct().all() if c[0]]
     return render_template(
         "productos/index.html",
@@ -213,6 +234,12 @@ def add():
         try:
             db.session.add(product)
             db.session.flush()
+            from stockarmobile.branch_context import get_active_branch_id
+            branch_id = get_active_branch_id()
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import set_branch_stock
+                set_branch_stock(product, branch_id, product.stock or 0, movement_type="initial",
+                                 user_id=current_user.id, note="Stock inicial del producto")
             db.session.add(
                 ProductModification(
                     product_id=product.id,
@@ -250,6 +277,11 @@ def edit(product_id=None, id=None):
         return redirect(url_for("products.index"))
 
     form = ProductForm(obj=product)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None and request.method == "GET":
+        from stockarmobile.branch_inventory import available_stock
+        form.stock.data = available_stock(product, active_branch_id)
     if form.validate_on_submit():
         barcode = (form.barcode.data or product.barcode or "").strip()
         duplicate = (
@@ -262,8 +294,22 @@ def edit(product_id=None, id=None):
             return redirect(url_for("products.edit", product_id=product.id))
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
+        old_company_stock = float(product.stock or 0)
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
+        old_branch_stock = 0.0
+        if branch_id is not None:
+            from stockarmobile.branch_inventory import get_branch_stock
+            branch_stock_row = get_branch_stock(product, branch_id, lock=True)
+            old_branch_stock = float(branch_stock_row.stock or 0) if branch_stock_row is not None else 0.0
         try:
             _apply_product_form(product, form)
+            if branch_id is not None:
+                new_branch_stock = float(product.stock or 0)
+                product.stock = old_company_stock + new_branch_stock - old_branch_stock
+                from stockarmobile.branch_inventory import set_branch_stock
+                set_branch_stock(product, branch_id, new_branch_stock, movement_type="manual_adjustment",
+                                 user_id=current_user.id, note="Ajuste manual desde ficha de producto")
         except ValueError as exc:
             flash(str(exc), "danger")
             return redirect(url_for("products.edit", product_id=product.id))
@@ -331,52 +377,64 @@ def delete(product_id=None, id=None):
 
 
 def _get_kardex_movements(product_id):
-    from app import Product, ProductModification, PurchaseItem, PurchaseOrder, Sale, SaleItem, db, scope_query_to_company
+    from app import BranchStockMovement, Product, ProductModification, PurchaseItem, PurchaseOrder, Sale, SaleItem, db, scope_query_to_company
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == product_id).first()
     if product is None:
         return None, []
 
     movements = []
-    sale_rows = (
-        scope_query_to_company(
-            db.session.query(Sale, SaleItem).join(SaleItem, Sale.id == SaleItem.sale_id),
-            Sale,
-        )
-        .filter(SaleItem.product_id == product.id)
-        .order_by(Sale.date.desc(), Sale.id.desc())
-        .all()
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    # Preserve existing sale/purchase history and use the branch movement ledger
+    # for adjustments and transfers, avoiding double-counting normal operations.
+    sale_query = scope_query_to_company(
+        db.session.query(Sale, SaleItem).join(SaleItem, Sale.id == SaleItem.sale_id), Sale
+    ).filter(SaleItem.product_id == product.id)
+    purchase_query = scope_query_to_company(
+        db.session.query(PurchaseOrder, PurchaseItem).join(PurchaseItem, PurchaseOrder.id == PurchaseItem.purchase_order_id), PurchaseOrder
+    ).filter(PurchaseItem.product_id == product.id)
+    if branch_id is not None:
+        sale_query = sale_query.filter(Sale.branch_id == branch_id)
+        purchase_query = purchase_query.filter(PurchaseOrder.branch_id == branch_id)
+    for sale, item in sale_query.order_by(Sale.date.desc(), Sale.id.desc()).limit(500).all():
+        movements.append({
+            "date": sale.date, "type": "Venta",
+            "detail": "Venta #{} - {}".format(sale.id, sale.customer or "Consumidor final"),
+            "quantity": -float(item.quantity or 0), "unit_value": float(item.price or 0),
+        })
+    for purchase, item in purchase_query.order_by(PurchaseOrder.date.desc(), PurchaseOrder.id.desc()).limit(500).all():
+        movements.append({
+            "date": purchase.date, "type": "Compra",
+            "detail": "Compra #{}".format(purchase.id),
+            "quantity": float(item.quantity or 0), "unit_value": float(item.unit_cost or 0),
+        })
+    branch_query = BranchStockMovement.query.filter(
+        BranchStockMovement.company_id == product.company_id,
+        BranchStockMovement.product_id == product.id,
     )
-    for sale, item in sale_rows:
-        movements.append(
-            {
-                "date": sale.date,
-                "type": "Venta",
-                "detail": "Venta #{} - {}".format(sale.id, sale.customer or "Consumidor final"),
-                "quantity": -float(item.quantity or 0),
-                "unit_value": float(item.price or 0),
-            }
-        )
-
-    purchase_rows = (
-        scope_query_to_company(
-            db.session.query(PurchaseOrder, PurchaseItem).join(PurchaseItem, PurchaseOrder.id == PurchaseItem.purchase_order_id),
-            PurchaseOrder,
-        )
-        .filter(PurchaseItem.product_id == product.id)
-        .order_by(PurchaseOrder.date.desc(), PurchaseOrder.id.desc())
-        .all()
-    )
-    for purchase, item in purchase_rows:
-        movements.append(
-            {
-                "date": purchase.date,
-                "type": "Compra",
-                "detail": "Compra #{}".format(purchase.id),
-                "quantity": float(item.quantity or 0),
-                "unit_value": float(item.unit_cost or 0),
-            }
-        )
+    if branch_id is not None:
+        branch_query = branch_query.filter(BranchStockMovement.branch_id == branch_id)
+    branch_movements = branch_query.filter(
+        ~db.func.coalesce(BranchStockMovement.source_type, "").in_(
+            ["sale", "sale_edit", "purchase", "vendor_ai_order"]
+        ),
+        ~BranchStockMovement.movement_type.in_(["sale", "purchase", "purchase_ai", "purchase_edit", "sale_reversal"]),
+    ).order_by(
+        BranchStockMovement.created_at.desc(), BranchStockMovement.id.desc()
+    ).limit(500).all()
+    for movement in branch_movements:
+        branch = movement.branch
+        movements.append({
+            "date": movement.created_at,
+            "type": (movement.movement_type or "Movimiento").replace("_", " ").capitalize(),
+            "detail": (
+                f"{branch.name if branch else 'Sucursal'} · "
+                f"{movement.note or (str(movement.source_type or '') + ' #' + str(movement.source_id or ''))}"
+            ),
+            "quantity": float(movement.quantity_delta or 0),
+            "unit_value": None,
+        })
 
     modifications = (
         scope_query_to_company(ProductModification.query.filter_by(product_id=product.id), ProductModification)
@@ -405,6 +463,12 @@ def kardex(product_id):
     if product is None:
         flash("Producto no encontrado.", "warning")
         return redirect(url_for("products.index"))
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock, get_branch_stock
+    branch_id = get_active_branch_id()
+    branch_row = get_branch_stock(product, branch_id) if branch_id is not None else None
+    product.branch_stock_display = float(branch_row.stock or 0) if branch_row is not None else (available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0))
+    product.branch_min_stock_display = float(branch_row.min_stock or 0) if branch_row is not None else float(product.min_stock or 0)
     return render_template("productos/kardex.html", product=product, movements=movements, auto_print=False)
 
 
@@ -766,6 +830,9 @@ def import_excel():
         price_changes = 0
         stock_changes = 0
 
+        from stockarmobile.branch_context import get_active_branch_id
+        from stockarmobile.branch_inventory import get_branch_stock, set_branch_stock
+        branch_id = get_active_branch_id()
         try:
             for data in records:
                 product = scope_query_to_company(
@@ -791,6 +858,8 @@ def import_excel():
                 old_price = float(product.price or 0)
                 old_cost = float(product.cost_price or 0)
                 old_stock = float(product.stock or 0)
+                branch_stock_row = get_branch_stock(product, branch_id, lock=True, create=True) if branch_id is not None else None
+                old_branch_stock = float(branch_stock_row.stock or 0) if branch_stock_row is not None else None
 
                 product.name = data["name"]
                 product.active = True
@@ -805,9 +874,16 @@ def import_excel():
                 if data["price"] is not None:
                     product.price = data["price"]
                 if data["stock"] is not None:
-                    product.stock = data["stock"]
+                    if branch_id is not None:
+                        product.stock = old_stock + float(data["stock"]) - float(old_branch_stock or 0)
+                        set_branch_stock(product, branch_id, data["stock"], movement_type="excel_import",
+                                         user_id=current_user.id, note="Stock actualizado desde Excel")
+                    else:
+                        product.stock = data["stock"]
                 if data["min_stock"] is not None:
                     product.min_stock = data["min_stock"]
+                if branch_stock_row is not None:
+                    branch_stock_row.min_stock = product.min_stock or 0
                 if data["sale_type"]:
                     product.sale_type = data["sale_type"]
                 if data["unit_measure"]:

@@ -11,6 +11,28 @@ from app import Client, Product, Sale, SaleItem
 from services.ai_agent.tools.base import AgentTool
 
 
+def _apply_sale_branch_scope(query, company_id):
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+
+    restricted, branch_id = employee_branch_scope(company_id)
+    return query.filter(Sale.branch_id == branch_id) if restricted else query
+
+
+def _stock_context(product, company_id):
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+
+    restricted, branch_id = employee_branch_scope(company_id)
+    if not restricted:
+        return float(product.stock or 0), float(product.min_stock or 0)
+    from app import BranchStock
+    row = BranchStock.query.filter_by(
+        company_id=int(company_id), branch_id=branch_id, product_id=product.id
+    ).first()
+    if row is None:
+        return 0.0, float(product.min_stock or 0)
+    return float(row.stock or 0), float(row.min_stock or product.min_stock or 0)
+
+
 def _safe_days(value: Any, default: int = 30, maximum: int = 365) -> int:
     try:
         return max(1, min(int(value or default), maximum))
@@ -30,11 +52,11 @@ class ResumenVentasTool(AgentTool):
     def execute(self, *, days=1, **kwargs: Any) -> Dict[str, Any]:
         days = _safe_days(days, 1)
         since = datetime.utcnow() - timedelta(days=days)
-        query = Sale.query.filter(
+        query = _apply_sale_branch_scope(Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        )
+        ), self.company_id)
         count, total = query.with_entities(
             func.count(Sale.id),
             func.coalesce(func.sum(Sale.total_amount), 0),
@@ -42,19 +64,21 @@ class ResumenVentasTool(AgentTool):
         count = int(count or 0)
         total = float(total or 0)
 
-        units = SaleItem.query.join(Sale).filter(
+        units_query = SaleItem.query.join(Sale).filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        ).with_entities(func.coalesce(func.sum(SaleItem.quantity), 0)).scalar()
+        )
+        units_query = _apply_sale_branch_scope(units_query, self.company_id)
+        units = units_query.with_entities(func.coalesce(func.sum(SaleItem.quantity), 0)).scalar()
 
         previous_start = since - timedelta(days=days)
-        previous_query = Sale.query.filter(
+        previous_query = _apply_sale_branch_scope(Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.date >= previous_start,
             Sale.date < since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        )
+        ), self.company_id)
         previous_count, previous_total = previous_query.with_entities(
             func.count(Sale.id),
             func.coalesce(func.sum(Sale.total_amount), 0),
@@ -63,12 +87,14 @@ class ResumenVentasTool(AgentTool):
         previous_total = float(previous_total or 0)
         variation = None if previous_total == 0 else round(((total - previous_total) / previous_total) * 100, 2)
 
-        categories = SaleItem.query.join(Sale).join(Product).filter(
+        category_query = SaleItem.query.join(Sale).join(Product).filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
             Product.company_id == self.company_id,
-        ).with_entities(
+        )
+        category_query = _apply_sale_branch_scope(category_query, self.company_id)
+        categories = category_query.with_entities(
             Product.category,
             func.coalesce(func.sum(SaleItem.quantity), 0).label("units"),
             func.coalesce(func.sum(SaleItem.quantity * SaleItem.price), 0).label("revenue"),
@@ -109,32 +135,54 @@ class StockCriticoTool(AgentTool):
             limit = max(1, min(int(limit or 20), 50))
         except (TypeError, ValueError):
             return {"success": False, "error": "limit debe ser un entero"}
-        products = (
-            Product.query.filter(
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        from app import BranchStock
+        restricted, branch_id = employee_branch_scope(self.company_id)
+        if restricted:
+            query = Product.query.outerjoin(
+                BranchStock,
+                (BranchStock.company_id == Product.company_id)
+                & (BranchStock.product_id == Product.id)
+                & (BranchStock.branch_id == branch_id),
+            ).filter(
                 Product.company_id == self.company_id,
                 Product.active.is_(True),
-                Product.stock <= Product.min_stock,
+                func.coalesce(BranchStock.stock, 0)
+                <= func.coalesce(BranchStock.min_stock, Product.min_stock),
             )
-            .order_by(Product.stock.asc(), Product.name.asc())
-            .limit(limit)
-            .all()
-        )
-        return {
-            "success": True,
-            "items": [
+            rows = query.add_columns(
+                func.coalesce(BranchStock.stock, 0).label("branch_stock"),
+                func.coalesce(BranchStock.min_stock, Product.min_stock).label("branch_min_stock"),
+            ).order_by(func.coalesce(BranchStock.stock, 0).asc(), Product.name.asc()).limit(limit).all()
+            items = [
                 {
-                    "id": p.id,
-                    "name": p.name,
-                    "stock": float(p.stock or 0),
-                    "min_stock": float(p.min_stock or 0),
+                    "id": product.id, "name": product.name,
+                    "stock": float(stock or 0), "min_stock": float(minimum or 0),
+                    "stock_gap": max(0.0, float(minimum or 0) - float(stock or 0)),
+                    "price": float(product.price or 0), "cost_price": float(product.cost_price or 0),
+                    "stock_value_at_cost": float(stock or 0) * float(product.cost_price or 0),
+                }
+                for product, stock, minimum in rows
+            ]
+        else:
+            products = (
+                Product.query.filter(
+                    Product.company_id == self.company_id,
+                    Product.active.is_(True),
+                    Product.stock <= Product.min_stock,
+                ).order_by(Product.stock.asc(), Product.name.asc()).limit(limit).all()
+            )
+            items = [
+                {
+                    "id": p.id, "name": p.name,
+                    "stock": float(p.stock or 0), "min_stock": float(p.min_stock or 0),
                     "stock_gap": max(0.0, float(p.min_stock or 0) - float(p.stock or 0)),
-                    "price": float(p.price or 0),
-                    "cost_price": float(p.cost_price or 0),
+                    "price": float(p.price or 0), "cost_price": float(p.cost_price or 0),
                     "stock_value_at_cost": float(p.stock or 0) * float(p.cost_price or 0),
                 }
                 for p in products
-            ],
-        }
+            ]
+        return {"success": True, "items": items}
 
 
 class ProductosMasVendidosTool(AgentTool):
@@ -156,7 +204,7 @@ class ProductosMasVendidosTool(AgentTool):
         except (TypeError, ValueError):
             return {"success": False, "error": "limit debe ser un entero"}
         since = datetime.utcnow() - timedelta(days=days)
-        rows = (
+        product_sales_query = (
             SaleItem.query.join(Sale).join(Product)
             .filter(
                 Sale.company_id == self.company_id,
@@ -165,7 +213,10 @@ class ProductosMasVendidosTool(AgentTool):
                 Product.company_id == self.company_id,
                 Product.active.is_(True),
             )
-            .with_entities(
+        )
+        product_sales_query = _apply_sale_branch_scope(product_sales_query, self.company_id)
+        rows = (
+            product_sales_query.with_entities(
                 Product.id,
                 Product.name,
                 Product.category,
@@ -203,11 +254,27 @@ class ContarProductosTool(AgentTool):
     def execute(self, **kwargs: Any) -> Dict[str, Any]:
         total_products = int(Product.query.filter(Product.company_id == self.company_id).count())
         active_products = int(Product.query.filter(Product.company_id == self.company_id, Product.active.is_(True)).count())
-        critical_products = int(Product.query.filter(
-            Product.company_id == self.company_id,
-            Product.active.is_(True),
-            Product.stock <= Product.min_stock,
-        ).count())
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        from app import BranchStock
+        restricted, branch_id = employee_branch_scope(self.company_id)
+        if restricted:
+            critical_products = int(Product.query.outerjoin(
+                BranchStock,
+                (BranchStock.company_id == Product.company_id)
+                & (BranchStock.product_id == Product.id)
+                & (BranchStock.branch_id == branch_id),
+            ).filter(
+                Product.company_id == self.company_id,
+                Product.active.is_(True),
+                func.coalesce(BranchStock.stock, 0)
+                <= func.coalesce(BranchStock.min_stock, Product.min_stock),
+            ).count())
+        else:
+            critical_products = int(Product.query.filter(
+                Product.company_id == self.company_id,
+                Product.active.is_(True),
+                Product.stock <= Product.min_stock,
+            ).count())
         return {
             "success": True,
             "total_products": total_products,
@@ -235,11 +302,13 @@ class ProductosSinVentasRecientesTool(AgentTool):
         except (TypeError, ValueError):
             return {"success": False, "error": "limit debe ser un entero"}
         since = datetime.utcnow() - timedelta(days=days)
-        sold_ids = SaleItem.query.join(Sale).filter(
+        sold_query = SaleItem.query.join(Sale).filter(
             Sale.company_id == self.company_id,
             Sale.date >= since,
             Sale.status.notin_(["cancelada", "anulada"]),
-        ).with_entities(SaleItem.product_id).distinct()
+        )
+        sold_query = _apply_sale_branch_scope(sold_query, self.company_id)
+        sold_ids = sold_query.with_entities(SaleItem.product_id).distinct()
         products = Product.query.filter(
             Product.company_id == self.company_id,
             Product.active.is_(True),
@@ -249,11 +318,15 @@ class ProductosSinVentasRecientesTool(AgentTool):
         last_sales = {}
         if products:
             ids = [product.id for product in products]
-            rows = SaleItem.query.join(Sale).filter(
+            last_sales_query = SaleItem.query.join(Sale).filter(
                 Sale.company_id == self.company_id,
                 Sale.status.notin_(["cancelada", "anulada"]),
                 SaleItem.product_id.in_(ids),
-            ).with_entities(SaleItem.product_id, func.max(Sale.date)).group_by(SaleItem.product_id).all()
+            )
+            last_sales_query = _apply_sale_branch_scope(last_sales_query, self.company_id)
+            rows = last_sales_query.with_entities(
+                SaleItem.product_id, func.max(Sale.date)
+            ).group_by(SaleItem.product_id).all()
             last_sales = {product_id: date for product_id, date in rows}
 
         now = datetime.utcnow()
@@ -264,10 +337,10 @@ class ProductosSinVentasRecientesTool(AgentTool):
                 "id": product.id,
                 "name": product.name,
                 "category": product.category or "Sin categoría",
-                "stock": float(product.stock or 0),
+                "stock": _stock_context(product, self.company_id)[0],
                 "price": float(product.price or 0),
                 "cost_price": float(product.cost_price or 0),
-                "stock_value_at_cost": float(product.stock or 0) * float(product.cost_price or 0),
+                "stock_value_at_cost": _stock_context(product, self.company_id)[0] * float(product.cost_price or 0),
                 "last_sale_at": last_sale.isoformat() if last_sale else None,
                 "days_since_last_sale": (now - last_sale).days if last_sale else None,
             })

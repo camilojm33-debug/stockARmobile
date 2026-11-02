@@ -184,6 +184,10 @@ def _current_open_cash_session():
     from app import CashSession, scope_query_to_company
 
     session_query = scope_query_to_company(CashSession.query.filter_by(status="abierta", user_id=current_user.id), CashSession)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        session_query = session_query.filter(CashSession.branch_id == active_branch_id)
     return session_query.order_by(CashSession.opened_at.desc()).first()
 
 
@@ -202,6 +206,11 @@ def _sale_accessible_query(query, model):
     from app import scope_query_to_company
 
     scoped_query = scope_query_to_company(query, model)
+    if hasattr(model, "branch_id"):
+        from stockarmobile.branch_context import get_active_branch_id
+        active_branch_id = get_active_branch_id()
+        if active_branch_id is not None:
+            scoped_query = scoped_query.filter(model.branch_id == active_branch_id)
     if getattr(current_user, "role", None) in {"admin", "superadmin"}:
         return scoped_query
     seller_id = getattr(current_user, "id", None)
@@ -317,7 +326,17 @@ def _save_cart(cart):
     session.modified = True
 
 
-def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None):
+def _branch_available_stock(product):
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    return available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
+
+
+def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None, branch_id=None):
+    if branch_id is None:
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
     from app import Product, db, scope_query_to_company
 
     product_ids = sorted(int(prod_id) for prod_id in items.keys())
@@ -335,6 +354,7 @@ def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None):
         current_user=current_user,
         fetch_products_func=_fetch_products,
         discount_overrides=discount_overrides,
+        branch_id=branch_id,
     )
 
 
@@ -378,20 +398,41 @@ def _json_dumps(value):
 @bp.route("/")
 @tenant_required
 def index():
-    from app import Client, Company, Product, Sale, db, scope_query_to_company
+    from app import BranchStock, Client, Company, Product, Sale, db, scope_query_to_company
 
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
     low_stock = request.args.get("low_stock")
     search = request.args.get("q") or request.args.get("search")
     category = request.args.get("category") or request.args.get("categoria")
     products_query = scope_query_to_company(Product.query.filter_by(active=True), Product)
+    if branch_id is not None:
+        products_query = products_query.outerjoin(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == branch_id),
+        )
     if search:
         like = f"%{search}%"
         products_query = products_query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.category.ilike(like)))
     if category:
         products_query = products_query.filter(Product.category == category)
     if low_stock:
-        products_query = products_query.filter(Product.stock <= Product.min_stock)
+        if branch_id is not None:
+            products_query = products_query.filter(
+                db.func.coalesce(BranchStock.stock, 0)
+                <= db.func.coalesce(BranchStock.min_stock, Product.min_stock)
+            )
+        else:
+            products_query = products_query.filter(Product.stock <= Product.min_stock)
     products = products_query.order_by(Product.favorite.desc(), Product.name).all()
+    for product in products:
+        if branch_id is not None:
+            from stockarmobile.branch_inventory import available_stock
+            product.branch_stock_display = available_stock(product, branch_id)
+        else:
+            product.branch_stock_display = float(product.stock or 0)
     categories = [c[0] for c in scope_query_to_company(Product.query.with_entities(Product.category), Product).filter(Product.active.is_(True)).distinct().order_by(Product.category).all() if c[0]]
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     quick_price_lists = []
@@ -435,10 +476,12 @@ def index():
         company_preferences = json.loads(getattr(company, "preferences_json", None) or "{}") if company else {}
     except Exception:
         company_preferences = {}
+    from stockarmobile.branch_context import get_active_branch
+    selected_physical_branch = get_active_branch()
     active_branch = (
-        (company_preferences.get("billing_business", {}).get("fiscal", {}) or {}).get("branch_name")
-        or getattr(company, "city", None)
-        or "Casa central"
+        selected_physical_branch.name
+        if selected_physical_branch is not None
+        else "Casa central"
     )
     return render_template(
         "ventas/index.html",
@@ -490,7 +533,7 @@ def api_pos_search_products():
             "category": product.category or "",
             "description": product.description or "",
             "price": float(product.price or 0),
-            "stock": float(product.stock or 0),
+            "stock": _branch_available_stock(product),
             "min_stock": float(product.min_stock or 0),
             "favorite": bool(product.favorite),
             "discount": float(product.discount or 0),
@@ -511,17 +554,17 @@ def api_pos_hints():
     if company_id is None:
         return jsonify({"recent": [], "top": []})
 
-    recent_rows = (
-        scope_query_to_company(
-            db.session.query(SaleItem.product_id, Sale.date)
-            .join(Sale, SaleItem.sale_id == Sale.id)
-            .filter(SaleItem.product_id.isnot(None)),
-            Sale,
-        )
-        .order_by(Sale.date.desc(), Sale.id.desc())
-        .limit(120)
-        .all()
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    recent_query = scope_query_to_company(
+        db.session.query(SaleItem.product_id, Sale.date)
+        .join(Sale, SaleItem.sale_id == Sale.id)
+        .filter(SaleItem.product_id.isnot(None)),
+        Sale,
     )
+    if active_branch_id is not None:
+        recent_query = recent_query.filter(Sale.branch_id == active_branch_id)
+    recent_rows = recent_query.order_by(Sale.date.desc(), Sale.id.desc()).limit(120).all()
     recent_ids = []
     seen_recent = set()
     for row in recent_rows:
@@ -537,6 +580,7 @@ def api_pos_hints():
         db.session.query(SaleItem.product_id, db.func.coalesce(db.func.sum(SaleItem.quantity), 0).label("qty"))
         .join(Sale, SaleItem.sale_id == Sale.id)
         .filter(Sale.company_id == company_id, SaleItem.product_id.isnot(None))
+        .filter(Sale.branch_id == active_branch_id if active_branch_id is not None else True)
         .group_by(SaleItem.product_id)
         .order_by(db.func.coalesce(db.func.sum(SaleItem.quantity), 0).desc())
         .limit(12)
@@ -562,7 +606,7 @@ def api_pos_hints():
             "brand": product.brand or "",
             "category": product.category or "",
             "price": float(product.price or 0),
-            "stock": float(product.stock or 0),
+            "stock": _branch_available_stock(product),
             "min_stock": float(product.min_stock or 0),
             "favorite": bool(product.favorite),
             "discount": float(product.discount or 0),
@@ -586,6 +630,8 @@ def new_sale():
         like = f"%{search}%"
         products_query = products_query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.category.ilike(like)))
     products = products_query.order_by(Product.name).all()
+    for product in products:
+        product.branch_stock_display = _branch_available_stock(product)
     cart = _get_cart()
     cart_items = []
     product_ids = [int(prod_id) for prod_id in cart["items"].keys()]
@@ -595,6 +641,7 @@ def new_sale():
     for prod_id, qty in cart["items"].items():
         product = products_by_id.get(int(prod_id))
         if product:
+            product.branch_stock_display = _branch_available_stock(product)
             cart_items.append({"product": product, "qty": qty})
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
     return render_template(
@@ -625,12 +672,16 @@ def add_to_cart(product_id):
     if qty <= 0:
         flash("La cantidad debe ser mayor a cero.", "danger")
         return redirect(url_for("sales.new_sale"))
-    if float(product.stock or 0) < qty:
-        flash(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g}.", "danger")
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    available = available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
+    if available < qty:
+        flash(f"Stock insuficiente para {product.name}. Disponible: {available:g}.", "danger")
         return redirect(url_for("sales.new_sale"))
     cart = _get_cart()
     current_qty = _to_float(cart["items"].get(str(product_id), 0))
-    cart["items"][str(product_id)] = min(current_qty + qty, float(product.stock or 0))
+    cart["items"][str(product_id)] = min(current_qty + qty, available)
     _save_cart(cart)
     flash(f"{product.name} agregado al carrito.", "success")
     return redirect(request.referrer or url_for("sales.new_sale"))
@@ -1521,6 +1572,12 @@ def edit(sale_id):
     sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     products = scope_query_to_company(Product.query.order_by(Product.name), Product).all()
+    from stockarmobile.branch_inventory import available_stock
+    for product in products:
+        product.branch_stock_display = (
+            available_stock(product, sale.branch_id)
+            if sale.branch_id is not None else float(product.stock or 0)
+        )
     existing_line_discount_total = sum(_to_decimal(item.discount or 0) for item in sale.items)
     order_discount_default = max(_to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
     payment_methods = [
@@ -1593,7 +1650,7 @@ def delete_sale(sale_id):
     if getattr(current_user, "role", None) != "admin":
         abort(403)
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
 
     service = SaleService(
         require_open_cash_session=_require_open_cash_session,

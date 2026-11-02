@@ -23,6 +23,29 @@ def _company_timezone_name():
     return (getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires").strip() or "America/Argentina/Buenos_Aires"
 
 
+def _branch_scope_requested():
+    if request.args.get("branch_scope") != "all" or getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+        return False
+    from stockarmobile.branch_context import multibranch_enabled
+    return bool(multibranch_enabled())
+
+
+def _apply_branch_scope(query, model):
+    if not hasattr(model, "branch_id") or _branch_scope_requested():
+        return query
+    from stockarmobile.branch_context import get_active_branch_id
+    branch_id = get_active_branch_id()
+    return query.filter(model.branch_id == branch_id) if branch_id is not None else query
+
+
+def _selected_report_scope():
+    if _branch_scope_requested():
+        return "all", "Todas las sucursales"
+    from stockarmobile.branch_context import get_active_branch
+    active = get_active_branch()
+    return (str(active.id), active.name) if active is not None else ("", "Consolidado")
+
+
 def _parse_requested_day(value, fallback=None):
     parsed = parse_date_yyyy_mm_dd(value)
     if parsed is not None:
@@ -55,14 +78,13 @@ def index():
     def _apply_date(q, col):
         return q.filter(col >= start_utc, col < end_utc)
 
-    sales_total = _apply_date(
-        scope_query_to_company(
-            db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale
-        ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)),
-        Sale.date,
-    ).scalar() or 0
-    purchases_total = _apply_date(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(PurchaseOrder.total_amount), 0)), PurchaseOrder), PurchaseOrder.date).scalar() or 0
-    expenses_total = _apply_date(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)), Expense), Expense.date).scalar() or 0
+    sales_query = scope_query_to_company(
+        db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale
+    ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES))
+    sales_query = _apply_branch_scope(sales_query, Sale)
+    sales_total = _apply_date(sales_query, Sale.date).scalar() or 0
+    purchases_total = _apply_date(_apply_branch_scope(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(PurchaseOrder.total_amount), 0)), PurchaseOrder), PurchaseOrder), PurchaseOrder.date).scalar() or 0
+    expenses_total = _apply_date(_apply_branch_scope(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)), Expense), Expense), Expense.date).scalar() or 0
     return render_template(
         "reportes/index.html",
         sales_total=sales_total,
@@ -71,6 +93,8 @@ def index():
         desde=start_day.isoformat(),
         hasta=end_day.isoformat(),
         report_timezone=tz_name,
+        report_branch_scope=_selected_report_scope()[0],
+        report_branch_label=_selected_report_scope()[1],
     )
 
 
@@ -82,6 +106,7 @@ def _balance_rows(start_value=None, end_value=None):
         query = scope_query_to_company(
             db.session.query(db.func.coalesce(db.func.sum(amount_column), 0)), model
         ).filter(date_column >= start_utc, date_column < end_utc)
+        query = _apply_branch_scope(query, model)
         if confirmed_sales_only:
             query = query.filter(
                 db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)
@@ -266,30 +291,39 @@ def _rows_for(kind):
     start_utc, end_utc, _, _, tz_name = _local_date_range(request.args.get("desde"), request.args.get("hasta"))
     if kind == "ventas":
         query = _date_filter(
-            scope_query_to_company(
+            _apply_branch_scope(scope_query_to_company(
                 Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)).order_by(Sale.date.desc()),
                 Sale,
-            ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)),
+            ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)), Sale),
             Sale.date,
             start_utc,
             end_utc,
         )
         return [["ID", "Cliente", "Total", "Fecha", "Unidades"]] + [[s.id, s.customer or "", s.total_amount or 0, format_local_datetime(s.date, tz_name), "; ".join(f"{item.product.name if item.product else f'Producto {item.product_id}'} ({item.product.unit_measure if item.product else 'u'}) x {item.quantity:g}" for item in s.items)] for s in query.all()], "ventas"
     if kind == "compras":
-        query = _date_filter(scope_query_to_company(PurchaseOrder.query.order_by(PurchaseOrder.date.desc()), PurchaseOrder), PurchaseOrder.date, start_utc, end_utc)
+        query = _date_filter(_apply_branch_scope(scope_query_to_company(PurchaseOrder.query.order_by(PurchaseOrder.date.desc()), PurchaseOrder), PurchaseOrder), PurchaseOrder.date, start_utc, end_utc)
         return [["ID", "Proveedor", "Total", "Fecha"]] + [[p.id, p.supplier.name if p.supplier else "", p.total_amount or 0, format_local_datetime(p.date, tz_name)] for p in query.all()], "compras"
     if kind == "gastos":
-        query = _date_filter(scope_query_to_company(Expense.query.order_by(Expense.date.desc()), Expense), Expense.date, start_utc, end_utc)
+        query = _date_filter(_apply_branch_scope(scope_query_to_company(Expense.query.order_by(Expense.date.desc()), Expense), Expense), Expense.date, start_utc, end_utc)
         return [["ID", "Categoria", "Descripcion", "Importe", "Fecha"]] + [[e.id, e.category, e.description, e.amount, format_local_datetime(e.date, tz_name)] for e in query.all()], "gastos"
     if kind == "caja":
-        query = _date_filter(scope_query_to_company(CashMovement.query.order_by(CashMovement.created_at.desc()), CashMovement), CashMovement.created_at, start_utc, end_utc)
+        query = _date_filter(_apply_branch_scope(scope_query_to_company(CashMovement.query.order_by(CashMovement.created_at.desc()), CashMovement), CashMovement), CashMovement.created_at, start_utc, end_utc)
         return [["ID", "Tipo", "Categoria", "Importe", "Fecha"]] + [[m.id, m.movement_type, m.category or "", m.amount, format_local_datetime(m.created_at, tz_name)] for m in query.all()], "caja"
     if kind == "clientes":
         return [["ID", "Nombre", "Email", "WhatsApp", "Saldo", "Credito"]] + [[c.id, c.name, c.email or "", c.whatsapp or "", c.balance or 0, c.credit_limit or 0] for c in scope_query_to_company(Client.query.order_by(Client.name), Client).all()], "clientes"
-    if kind == "productos":
-        return [["ID", "Codigo", "Nombre", "Marca", "Unidad", "Stock", "Precio", "Costo"]] + [[p.id, p.barcode, p.name, p.brand or "", p.unit_measure or "", p.stock or 0, p.price or 0, p.cost_price or 0] for p in scope_query_to_company(Product.query.order_by(Product.name), Product).all()], "productos"
-    if kind == "stock":
-        return [["Codigo", "Producto", "Stock", "Minimo", "Unidad", "Estado"]] + [[p.barcode, p.name, p.stock or 0, p.min_stock or 0, p.unit_measure or "", "critico" if (p.stock or 0) <= (p.min_stock or 0) else "ok"] for p in scope_query_to_company(Product.query.order_by(Product.name), Product).all()], "stock"
+    if kind in {"productos", "stock"}:
+        products = scope_query_to_company(Product.query.order_by(Product.name), Product).all()
+        from stockarmobile.branch_context import get_active_branch_id
+        from app import BranchStock
+        branch_id = get_active_branch_id() if not _branch_scope_requested() else None
+        stocks = {}
+        if branch_id is not None:
+            stocks = {row.product_id: row for row in BranchStock.query.filter_by(company_id=getattr(current_user, "company_id", None), branch_id=branch_id).all()}
+        def product_stock(product):
+            return float(stocks[product.id].stock or 0) if branch_id is not None and product.id in stocks else (0.0 if branch_id is not None else float(product.stock or 0))
+        if kind == "productos":
+            return [["ID", "Codigo", "Nombre", "Marca", "Unidad", "Stock", "Precio", "Costo"]] + [[p.id, p.barcode, p.name, p.brand or "", p.unit_measure or "", product_stock(p), p.price or 0, p.cost_price or 0] for p in products], "productos"
+        return [["Codigo", "Producto", "Stock", "Minimo", "Unidad", "Estado"]] + [[p.barcode, p.name, product_stock(p), p.min_stock or 0, p.unit_measure or "", "critico" if product_stock(p) <= (p.min_stock or 0) else "ok"] for p in products], "stock"
     return [["Error"], ["Reporte no reconocido"]], "reporte"
 
 

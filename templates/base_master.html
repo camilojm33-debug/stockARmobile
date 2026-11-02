@@ -950,6 +950,19 @@
       </div>
       {% endif %}
     {% endwith %}
+    {% if branch_switcher_enabled %}
+    <div class="container-fluid app-shell pt-3">
+      <form method="post" action="{{ url_for('branches.select_branch') }}" class="d-flex flex-wrap align-items-center gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="active-branch-select" class="small fw-semibold text-muted"><i class="bi bi-shop me-1"></i>Sucursal activa</label>
+        <select id="active-branch-select" name="branch_id" class="form-select form-select-sm" style="max-width:260px" onchange="this.form.submit()">
+          {% for branch_option in branch_switcher_options %}
+          <option value="{{ branch_option.id }}" {% if branch_option.id == active_branch_id %}selected{% endif %}>{{ branch_option.name }}</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
   <div class="app-loading" id="appLoading">

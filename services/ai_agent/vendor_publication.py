@@ -1101,6 +1101,17 @@ def recover_committed_order_reply(*, company, conversation, operation, incoming,
 
 
 def _product_payload(product) -> dict:
+    from services.ai_agent.vendor_order_service import _vendor_available_stock
+    public_branch_stock = getattr(product, "_public_branch_stock", None)
+    if public_branch_stock is not None:
+        available = public_branch_stock
+    else:
+        company_id = getattr(product, "company_id", None)
+        available = (
+            _vendor_available_stock(product, company_id)
+            if company_id is not None
+            else float(getattr(product, "stock", 0) or 0)
+        )
     return {
         "id": product.id,
         "name": product.name,
@@ -1111,10 +1122,10 @@ def _product_payload(product) -> dict:
         "photo": str(product.photo or "").strip(),
         "unit_measure": str(product.unit_measure or "u").strip(),
         "price": float(product.price or 0),
-        "stock": float(product.stock or 0),
+        "stock": float(available or 0),
         "discount": float(product.discount or 0),
         "favorite": bool(product.favorite),
-        "available": float(product.stock or 0) > 0,
+        "available": float(available or 0) > 0,
     }
 
 
@@ -1134,10 +1145,25 @@ def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CA
                 Product.category.ilike(like),
             )
         )
-    rows = (
-        base.order_by(Product.favorite.desc(), Product.stock.desc(), Product.name.asc())
-        .limit(limit)
-        .all()
+    rows = base.order_by(Product.favorite.desc(), Product.name.asc()).limit(limit).all()
+    from stockarmobile.branch_context import get_default_branch_id
+    from app import BranchStock
+    branch_id = get_default_branch_id(company.id)
+    if branch_id is not None:
+        stocks = {
+            int(row.product_id): float(row.stock or 0)
+            for row in BranchStock.query.filter_by(company_id=company.id, branch_id=branch_id).all()
+        }
+        for product in rows:
+            product._public_branch_stock = stocks.get(int(product.id), 0.0)
+            product._public_branch_company_id = int(company.id)
+    rows.sort(
+        key=lambda item: (
+            bool(item.favorite),
+            float(getattr(item, "_public_branch_stock", 0) or 0),
+            str(item.name or "").casefold(),
+        ),
+        reverse=True,
     )
     return [_product_payload(row) for row in rows]
 

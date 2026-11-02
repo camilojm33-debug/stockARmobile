@@ -63,6 +63,10 @@ def _base_session_query():
     from app import CashSession, scope_query_to_company
 
     query = scope_query_to_company(CashSession.query, CashSession)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(CashSession.branch_id == active_branch_id)
     if not _is_admin():
         query = query.filter(CashSession.user_id == current_user.id)
     return query
@@ -72,6 +76,10 @@ def _base_movement_query():
     from app import CashMovement, CashSession, scope_query_to_company
 
     query = scope_query_to_company(CashMovement.query, CashMovement)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(CashMovement.branch_id == active_branch_id)
     if not _is_admin():
         query = query.join(CashSession, CashSession.id == CashMovement.session_id).filter(CashSession.user_id == current_user.id)
     return query
@@ -169,12 +177,12 @@ def _get_session_or_404(session_id):
     # Lock the cash-session row during write operations so two computers cannot
     # close/reopen/void the same session concurrently. PostgreSQL enforces the
     # row lock until this request's transaction finishes.
-    session = (
-        scope_query_to_company(CashSession.query, CashSession)
-        .filter(CashSession.id == session_id)
-        .with_for_update()
-        .first_or_404()
-    )
+    session_query = scope_query_to_company(CashSession.query, CashSession).filter(CashSession.id == session_id)
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        session_query = session_query.filter(CashSession.branch_id == active_branch_id)
+    session = session_query.with_for_update().first_or_404()
     if not _is_admin() and session.user_id != current_user.id:
         abort(403)
     return session
@@ -251,6 +259,7 @@ def index():
                 target_session = CashSession(
                     user_id=current_user.id,
                     company_id=getattr(current_user, "company_id", None),
+                    branch_id=__import__("stockarmobile.branch_context", fromlist=["get_active_branch_id"]).get_active_branch_id(),
                     opened_by_user_id=current_user.id,
                     opening_amount=_to_decimal(request.form.get("opening_amount")),
                     note=request.form.get("note"),
@@ -275,6 +284,7 @@ def index():
                             session_id=target_session.id,
                             user_id=current_user.id,
                             company_id=getattr(current_user, "company_id", None),
+                            branch_id=getattr(target_session, "branch_id", None),
                             movement_type=movement_type,
                             category=request.form.get("category"),
                             amount=amount,
@@ -445,7 +455,7 @@ def export_cash_csv():
         "Cierre fecha",
         "Nota",
     ])
-    for session in scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all():
+    for session in _base_session_query().order_by(CashSession.opened_at.desc()).all():
         summary = _session_summary(session)
         totals["sales_cash"] += summary["sales_cash"]
         totals["sales_transfer"] += summary["sales_transfer"]
@@ -539,7 +549,7 @@ def export_cash_excel():
         "Cierre",
     ])
 
-    sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all()
+    sessions = _base_session_query().order_by(CashSession.opened_at.desc()).all()
     for session in sessions:
         summary = _session_summary(session)
         totals["sales_cash"] += summary["sales_cash"]
@@ -627,7 +637,7 @@ def export_cash_pdf():
         "sales_other": Decimal("0.00"),
     }
 
-    sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).limit(100).all()
+    sessions = _base_session_query().order_by(CashSession.opened_at.desc()).limit(100).all()
     for session in sessions:
         summary = _session_summary(session)
         totals["sales_cash"] += summary["sales_cash"]
@@ -641,7 +651,7 @@ def export_cash_pdf():
             f"EF ${summary['sales_cash']:.2f} | TR ${summary['sales_transfer']:.2f} | DB ${summary['sales_debit']:.2f} | "
             f"CR ${summary['sales_credit']:.2f} | MP ${summary['sales_mp']:.2f} | OT ${summary['sales_other']:.2f}"
         )
-        totals = f"Esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
+        totals_line = f"Esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
         if y < 40:
             pdf.showPage()
             y = page_h - 40
@@ -658,7 +668,7 @@ def export_cash_pdf():
             pdf.showPage()
             y = page_h - 40
             pdf.setFont("Helvetica", 9)
-        pdf.drawString(36, y, totals[:180])
+        pdf.drawString(36, y, totals_line[:180])
         y -= 18
 
     if y < 80:

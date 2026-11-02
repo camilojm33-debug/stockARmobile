@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app import Product
+from app import Branch, BranchStock, Product
 from services.ai_agent.tools.base import AgentTool
 from services.ai_agent.stock_quantity import normalized_stock_quantity
 
@@ -54,12 +54,31 @@ class ConsultarStockTool(AgentTool):
         if product is None:
             return {"success": False, "error": "product_not_found", "product": None}
 
+        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        restricted, visible_branch_id = employee_branch_scope(effective_company_id)
+        stock_query = BranchStock.query.filter_by(
+            company_id=int(effective_company_id), product_id=product.id
+        ).join(Branch, Branch.id == BranchStock.branch_id).filter(Branch.active.is_(True))
+        if restricted:
+            stock_query = stock_query.filter(BranchStock.branch_id == visible_branch_id)
+        branch_rows = stock_query.order_by(Branch.name.asc()).all()
+        current_stock = (
+            normalized_stock_quantity(branch_rows[0].stock)
+            if restricted and branch_rows
+            else 0.0 if restricted
+            else normalized_stock_quantity(product.stock)
+        )
         return {
             "success": True,
             "product": {
                 "id": product.id,
                 "name": product.name,
-                "stock": normalized_stock_quantity(product.stock),
+                "stock": current_stock,
+                "stock_by_branch": [
+                    {"branch_id": row.branch_id, "branch_name": row.branch.name,
+                     "stock": normalized_stock_quantity(row.stock)}
+                    for row in branch_rows
+                ],
                 "price": float(product.price) if getattr(product, "price", None) is not None else None,
             },
         }

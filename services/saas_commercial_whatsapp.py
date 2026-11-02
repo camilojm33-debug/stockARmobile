@@ -420,6 +420,9 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         user.role = "admin"
         user.active = True
 
+    from auth import _ensure_company_default_branch
+    _ensure_company_default_branch(company, user)
+
     plan = db.session.get(__import__("app").Plan, checkout.plan_id)
     if plan is None:
         raise RuntimeError("El plan contratado ya no está disponible.")

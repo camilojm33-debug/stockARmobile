@@ -36,20 +36,23 @@
         <p class="text-muted mb-0">Descargá información real de tu comercio en CSV, Excel o PDF.</p>
       </div>
       <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv', desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a>
-        <a class="btn btn-outline-success" href="{{ url_for('reports.balance_excel', desde=desde, hasta=hasta) }}"><i class="bi bi-file-earmark-excel me-1"></i>Balance Excel</a>
-        <a class="btn btn-primary" href="{{ url_for('reports.balance_pdf', desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv', desde=desde, hasta=hasta, branch_scope=report_branch_scope) }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a>
+        <a class="btn btn-outline-success" href="{{ url_for('reports.balance_excel', desde=desde, hasta=hasta, branch_scope=report_branch_scope) }}"><i class="bi bi-file-earmark-excel me-1"></i>Balance Excel</a>
+        <a class="btn btn-primary" href="{{ url_for('reports.balance_pdf', desde=desde, hasta=hasta, branch_scope=report_branch_scope) }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a>
       </div>
     </div>
   </section>
 
   <section class="filter-card mb-4">
     <form class="row g-2 align-items-end" method="get" action="{{ url_for('reports.index') }}">
-      <div class="col-lg-3"><label class="form-label small fw-semibold mb-1">Período del resumen</label><div class="small text-muted">La misma fecha se aplica a las exportaciones con información temporal.</div></div>
+      <div class="col-lg-3"><label class="form-label small fw-semibold mb-1">Período y alcance</label><div class="small text-muted">Elegí una sede o el consolidado de la empresa.</div></div>
       <div class="col-sm-6 col-lg-2"><label class="form-label small mb-1">Desde</label><input class="form-control" type="date" name="desde" value="{{ desde }}"></div>
       <div class="col-sm-6 col-lg-2"><label class="form-label small mb-1">Hasta</label><input class="form-control" type="date" name="hasta" value="{{ hasta }}"></div>
-      <div class="col-sm-6 col-lg-2 d-grid"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Aplicar período</button></div>
-      <div class="col-sm-6 col-lg-3 d-flex align-items-center"><span class="badge bg-primary-subtle text-primary period-badge"><i class="bi bi-calendar-range me-1"></i>{{ desde }}{% if desde != hasta %} → {{ hasta }}{% endif %}</span></div>
+      {% if current_user.role in ['admin', 'superadmin'] %}
+      <div class="col-sm-6 col-lg-2"><label class="form-label small mb-1">Sucursal</label><select class="form-select" name="branch_scope"><option value="active" {% if report_branch_scope != 'all' %}selected{% endif %}>Sucursal activa</option><option value="all" {% if report_branch_scope == 'all' %}selected{% endif %}>Todas</option></select></div>
+      {% endif %}
+      <div class="col-sm-6 col-lg-2 d-grid"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Aplicar</button></div>
+      <div class="col-sm-6 col-lg-3 d-flex align-items-center"><span class="badge bg-primary-subtle text-primary period-badge">{{ report_branch_label }} · {{ desde }}{% if desde != hasta %} → {{ hasta }}{% endif %}</span></div>
     </form>
   </section>
 
@@ -78,9 +81,9 @@
           <article class="report-card">
             <div class="d-flex align-items-start gap-3"><div class="tool-icon text-primary"><i class="bi {{ icon }}"></i></div><div><div class="report-card-title">{{ label }}</div><div class="report-card-help">{{ description }}</div></div></div>
             <div class="report-actions">
-              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('reports.export_csv', kind=kind, desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
-              <a class="btn btn-sm btn-outline-success" href="{{ url_for('reports.export_excel', kind=kind, desde=desde, hasta=hasta) }}"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
-              <a class="btn btn-sm btn-primary" href="{{ url_for('reports.export_pdf', kind=kind, desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('reports.export_csv', kind=kind, desde=desde, hasta=hasta, branch_scope=report_branch_scope) }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+              <a class="btn btn-sm btn-outline-success" href="{{ url_for('reports.export_excel', kind=kind, desde=desde, hasta=hasta, branch_scope=report_branch_scope) }}"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+              <a class="btn btn-sm btn-primary" href="{{ url_for('reports.export_pdf', kind=kind, desde=desde, hasta=hasta, branch_scope=report_branch_scope) }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
             </div>
           </article>
         </div>

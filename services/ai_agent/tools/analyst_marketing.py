@@ -22,14 +22,49 @@ def _date_limit(days: Any, default: int) -> datetime:
     return datetime.utcnow() - timedelta(days=_days(days, default))
 
 
+def _scope_sale_query(query, company_id: int):
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+    restricted, branch_id = employee_branch_scope(company_id)
+    return query.filter(Sale.branch_id == branch_id) if restricted else query
+
+
+def _product_stock(product, company_id: int) -> float:
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+    restricted, branch_id = employee_branch_scope(company_id)
+    if not restricted:
+        return float(product.stock or 0)
+    from stockarmobile.branch_inventory import available_stock
+    return available_stock(product, branch_id) if branch_id is not None else 0.0
+
+
+def _branch_stock_products(company_id: int, *, limit: int):
+    from services.ai_agent.tools.branch_scope import employee_branch_scope
+    restricted, branch_id = employee_branch_scope(company_id)
+    query = Product.query.filter(Product.company_id == int(company_id), Product.active.is_(True))
+    if restricted:
+        from app import BranchStock
+        rows = query.join(
+            BranchStock,
+            (BranchStock.company_id == Product.company_id)
+            & (BranchStock.product_id == Product.id)
+            & (BranchStock.branch_id == branch_id),
+        ).filter(BranchStock.stock > 0).order_by(BranchStock.stock.desc(), Product.name.asc()).limit(limit).all()
+        for product in rows:
+            product._branch_stock_for_ai = _product_stock(product, company_id)
+        return rows
+    return query.filter(Product.stock > 0).order_by(Product.stock.desc(), Product.name.asc()).limit(limit).all()
+
+
 def _category_period(company_id: int, start: datetime, end: datetime) -> Dict[str, Dict[str, float]]:
-    rows = SaleItem.query.join(Sale).join(Product).filter(
+    category_query = SaleItem.query.join(Sale).join(Product).filter(
         Sale.company_id == company_id,
         Sale.date >= start,
         Sale.date < end,
         Sale.status.notin_(["cancelada", "anulada"]),
         Product.company_id == company_id,
-    ).with_entities(
+    )
+    category_query = _scope_sale_query(category_query, company_id)
+    rows = category_query.with_entities(
         Product.category,
         func.coalesce(func.sum(SaleItem.quantity), 0).label("units"),
         func.coalesce(func.sum(SaleItem.quantity * SaleItem.price), 0).label("revenue"),
@@ -59,12 +94,12 @@ class VentasComparativaTool(AgentTool):
         previous_start = current_start - timedelta(days=days)
         result = []
         for label, start, end in (("actual", current_start, now), ("anterior", previous_start, current_start)):
-            query = Sale.query.filter(
+            query = _scope_sale_query(Sale.query.filter(
                 Sale.company_id == self.company_id,
                 Sale.date >= start,
                 Sale.date < end,
                 Sale.status.notin_(["cancelada", "anulada"]),
-            )
+            ), self.company_id)
             count, total = query.with_entities(
                 func.count(Sale.id),
                 func.coalesce(func.sum(Sale.total_amount), 0),
@@ -142,23 +177,23 @@ class ClientesInactivosTool(AgentTool):
         # Only completed/non-voided sales should establish history or recent activity.
         # Aggregate history once and rank eligible inactive customers by value and recency,
         # matching the priority rule returned to the agent.
-        valid_sales = Sale.query.filter(
+        valid_sales = _scope_sale_query(Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.client_id.isnot(None),
             Sale.status.notin_(["cancelada", "anulada"]),
-        )
+        ), self.company_id)
         history = valid_sales.with_entities(
             Sale.client_id.label("client_id"),
             func.max(Sale.date).label("last_purchase"),
             func.sum(Sale.total_amount).label("historical_revenue"),
             func.count(Sale.id).label("purchase_count"),
         ).group_by(Sale.client_id).subquery()
-        recent = Sale.query.filter(
+        recent = _scope_sale_query(Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.client_id.isnot(None),
             Sale.status.notin_(["cancelada", "anulada"]),
             Sale.date >= cutoff,
-        ).with_entities(Sale.client_id).distinct().subquery()
+        ), self.company_id).with_entities(Sale.client_id).distinct().subquery()
         base = (
             db.session.query(
                 Client,
@@ -221,21 +256,20 @@ class ProductosPromocionablesTool(AgentTool):
             limit = max(1, min(int(limit or 20), 50))
         except (TypeError, ValueError):
             return {"success": False, "error": "limit debe ser un entero"}
-        sold = SaleItem.query.join(Sale).filter(
+        sold = _scope_sale_query(SaleItem.query.join(Sale).filter(
             Sale.company_id == self.company_id,
             Sale.date >= cutoff,
             Sale.status.notin_(["cancelada", "anulada"]),
-        ).with_entities(SaleItem.product_id).distinct()
-        products = Product.query.filter(
-            Product.company_id == self.company_id,
-            Product.active.is_(True),
-            Product.stock > 0,
-            ~Product.id.in_(sold),
-        ).order_by(Product.stock.desc(), Product.name.asc()).limit(limit).all()
+        ), self.company_id).with_entities(SaleItem.product_id).distinct()
+        products = [
+            product for product in _branch_stock_products(self.company_id, limit=1000)
+            if product.id not in {int(row[0]) for row in sold.all()}
+        ][:limit]
+        products.sort(key=lambda product: _product_stock(product, self.company_id), reverse=True)
         items = []
         total_cost = 0.0
         for product in products:
-            stock = float(product.stock or 0)
+            stock = _product_stock(product, self.company_id)
             cost = float(product.cost_price or 0)
             stock_cost = stock * cost
             total_cost += stock_cost
@@ -303,6 +337,8 @@ class PrepararCampanaTool(AgentTool):
                 Product.active.is_(True),
                 Product.name.ilike(like),
             ).order_by(Product.name.asc()).first()
+            if product is not None:
+                product._branch_stock_for_ai = _product_stock(product, self.company_id)
             if product is None:
                 return {"success": False, "error": "No encontré un producto real con ese nombre."}
 
@@ -311,15 +347,15 @@ class PrepararCampanaTool(AgentTool):
         opportunity = "promoción general"
 
         if campaign_type == "recuperacion_clientes_inactivos":
-            historical = Sale.query.filter(
+            historical = _scope_sale_query(Sale.query.filter(
                 Sale.company_id == self.company_id,
                 Sale.client_id.isnot(None),
-            ).with_entities(Sale.client_id).distinct().subquery()
-            recent = Sale.query.filter(
+            ), self.company_id).with_entities(Sale.client_id).distinct().subquery()
+            recent = _scope_sale_query(Sale.query.filter(
                 Sale.company_id == self.company_id,
                 Sale.client_id.isnot(None),
                 Sale.date >= cutoff,
-            ).with_entities(Sale.client_id).distinct().subquery()
+            ), self.company_id).with_entities(Sale.client_id).distinct().subquery()
             audience_segment = "clientes inactivos"
             audience_count = int(Client.query.filter(
                 Client.company_id == self.company_id,
@@ -329,17 +365,17 @@ class PrepararCampanaTool(AgentTool):
             ).count())
             opportunity = "recuperación de clientes"
         elif campaign_type == "productos_sin_ventas":
-            sold = SaleItem.query.join(Sale).filter(
+            sold = _scope_sale_query(SaleItem.query.join(Sale).filter(
                 Sale.company_id == self.company_id,
                 Sale.date >= cutoff,
                 Sale.status.notin_(["cancelada", "anulada"]),
-            ).with_entities(SaleItem.product_id).distinct()
-            products = Product.query.filter(
-                Product.company_id == self.company_id,
-                Product.active.is_(True),
-                Product.stock > 0,
-                ~Product.id.in_(sold),
-            ).order_by(Product.stock.desc()).limit(20).all()
+            ), self.company_id).with_entities(SaleItem.product_id).distinct()
+            sold_ids = {int(row[0]) for row in sold.all()}
+            products = [
+                product for product in _branch_stock_products(self.company_id, limit=1000)
+                if product.id not in sold_ids
+            ][:20]
+            products.sort(key=lambda product: _product_stock(product, self.company_id), reverse=True)
             opportunity = "liquidar o activar productos sin movimiento"
             return {
                 "success": True,
@@ -354,8 +390,8 @@ class PrepararCampanaTool(AgentTool):
                             "name": row.name,
                             "price": float(row.price or 0),
                             "cost_price": float(row.cost_price or 0),
-                            "stock": float(row.stock or 0),
-                            "stock_value_at_cost": float(row.stock or 0) * float(row.cost_price or 0),
+                            "stock": _product_stock(row, self.company_id),
+                            "stock_value_at_cost": _product_stock(row, self.company_id) * float(row.cost_price or 0),
                         }
                         for row in products
                     ],
@@ -372,9 +408,9 @@ class PrepararCampanaTool(AgentTool):
                 "barcode": product.barcode,
                 "price": float(product.price or 0),
                 "cost_price": float(product.cost_price or 0),
-                "stock": float(product.stock or 0),
+                "stock": _product_stock(product, self.company_id),
                 "category": product.category,
-                "stock_value_at_cost": float(product.stock or 0) * float(product.cost_price or 0),
+                "stock_value_at_cost": _product_stock(product, self.company_id) * float(product.cost_price or 0),
             }
         return {
             "success": True,

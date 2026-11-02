@@ -157,7 +157,17 @@ class SaleService:
             if parsed_client_id and client is None:
                 raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
 
-            lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
+            from stockarmobile.branch_context import get_active_branch_id, get_default_branch_id
+            active_branch_id = get_active_branch_id()
+            quote_branch_id = int(quote_snapshot.branch_id) if quote_snapshot is not None and quote_snapshot.branch_id else None
+            if quote_branch_id is not None and active_branch_id is not None and quote_branch_id != int(active_branch_id):
+                raise ValueError("El presupuesto pertenece a otra sucursal. Cambiá la sucursal activa para convertirlo.")
+            operation_branch_id = quote_branch_id or active_branch_id or get_default_branch_id(company_id)
+            lines = self._calculate_lines(
+                items, lock_for_update=True,
+                discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}),
+                branch_id=operation_branch_id,
+            )
             if trusted_line_snapshots is not None:
                 from services.wholesale_pricing_service import apply_price_snapshot
                 lines = apply_price_snapshot(lines, trusted_line_snapshots)
@@ -309,6 +319,7 @@ class SaleService:
                 client_id=client.id if client else None,
                 seller_id=current_user.id,
                 company_id=company_id,
+                branch_id=(getattr(cash_session, "branch_id", None) or operation_branch_id),
                 cash_session_id=cash_session.id,
                 date=utcnow(),
             )
@@ -321,8 +332,9 @@ class SaleService:
                 db.session.add(
                     CashMovement(
                         session_id=cash_session.id,
-                        user_id=current_user.id,
+                        user_id=getattr(current_user, "id", None),
                         company_id=company_id,
+                        branch_id=sale.branch_id,
                         sale_id=sale.id,
                         movement_type="ingreso",
                         category="venta",
@@ -331,7 +343,7 @@ class SaleService:
                     )
                 )
 
-            InventoryService.apply_stock(lines=lines)
+            InventoryService.apply_stock(lines=lines, branch_id=sale.branch_id, source_type="sale", source_id=sale.id, user_id=getattr(current_user, "id", None))
             for idx, line in enumerate(lines):
                 product = line["product"]
                 calculated_line = sale_totals["lines"][idx]
@@ -422,7 +434,7 @@ class SaleService:
         def _resolve_product_for_sale_item(item):
             return item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
 
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item)
+        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item, branch_id=getattr(sale, "branch_id", None), source_id=sale.id, user_id=getattr(current_user, "id", None))
 
         product_ids = form.getlist("product_id")
         quantities = form.getlist("quantity")
@@ -462,10 +474,11 @@ class SaleService:
             products_by_id=products_by_id,
             to_decimal=self._to_decimal,
             is_truthy=ValidationService.is_truthy,
+            branch_id=getattr(sale, "branch_id", None),
         )
         ValidationService.validate_edit_lines(new_lines)
 
-        InventoryService.apply_stock(lines=new_lines)
+        InventoryService.apply_stock(lines=new_lines, branch_id=getattr(sale, "branch_id", None), source_type="sale_edit", source_id=sale.id, user_id=getattr(current_user, "id", None))
 
         sale_totals = TotalsService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
@@ -537,6 +550,7 @@ class SaleService:
                 cash_movement.session_id = sale.cash_session_id or cash_movement.session_id
                 cash_movement.user_id = current_user.id
                 cash_movement.company_id = sale.company_id
+                cash_movement.branch_id = sale.branch_id
                 cash_movement.description = f"Venta #{sale.id} editada"
             else:
                 db.session.delete(cash_movement)
@@ -546,8 +560,9 @@ class SaleService:
             db.session.add(
                 CashMovement(
                     session_id=sale.cash_session_id or (open_cash_session.id if open_cash_session else None),
-                    user_id=current_user.id,
+                    user_id=getattr(current_user, "id", None),
                     company_id=sale.company_id,
+                    branch_id=sale.branch_id,
                     sale_id=sale.id,
                     movement_type="ingreso",
                     category="venta",
@@ -588,7 +603,7 @@ class SaleService:
             SaleModificationHistory(
                 sale_id=sale.id,
                 company_id=sale.company_id,
-                user_id=current_user.id,
+                user_id=getattr(current_user, "id", None),
                 reason=reason,
                 previous_data=json_dumps(previous_snapshot),
                 new_data=json_dumps(new_snapshot),
@@ -638,7 +653,13 @@ class SaleService:
             comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
         )
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
+        InventoryService.reverse_stock(
+            sale_items=sale.items,
+            resolve_product_func=resolve_product_for_item,
+            branch_id=getattr(sale, "branch_id", None),
+            source_id=sale.id,
+            user_id=getattr(current_user, "id", None),
+        )
         sale.status = "anulada"
         self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(
@@ -658,7 +679,13 @@ class SaleService:
                 "Las ventas confirmadas no se eliminan físicamente. Deben anularse para conservar el historial."
             )
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
+        InventoryService.reverse_stock(
+            sale_items=sale.items,
+            resolve_product_func=resolve_product_for_item,
+            branch_id=getattr(sale, "branch_id", None),
+            source_id=sale.id,
+            user_id=getattr(current_user, "id", None),
+        )
         AuditService.record_delete(record_audit, sale_id=sale.id, total_amount=sale.total_amount)
         db.session.delete(sale)
         db.session.commit()

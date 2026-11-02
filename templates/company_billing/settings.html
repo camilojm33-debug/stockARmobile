@@ -1018,16 +1018,17 @@
             </div>
             <div class="table-responsive mb-3">
               <table class="table table-sm table-hover align-middle mb-0">
-                <thead><tr><th>Número</th><th>Descripción</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Número</th><th>Descripción</th><th>Sucursal asociada</th><th>Estado</th></tr></thead>
                 <tbody>
                   {% for pos in billing_config.points_of_sale %}
                   <tr>
                     <td>{{ pos.number }}</td>
                     <td>{{ pos.description }}</td>
+                    <td>{{ pos.branch or 'Casa central' }}</td>
                     <td><span class="badge {{ 'text-bg-success' if pos.number == billing_config.active_pos else 'text-bg-secondary' }}">{{ 'Activo' if pos.number == billing_config.active_pos else 'Inactivo' }}</span></td>
                   </tr>
                   {% else %}
-                  <tr><td colspan="3" class="text-center text-muted py-3">Sin puntos de venta configurados.</td></tr>
+                  <tr><td colspan="4" class="text-center text-muted py-3">Sin puntos de venta configurados.</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
@@ -1036,8 +1037,9 @@
               <div class="col-md-4"><label class="form-label">Punto de venta activo</label><select class="form-select" name="active_pos">{% for pos in billing_config.points_of_sale %}<option value="{{ pos.number }}" {% if pos.number == billing_config.active_pos %}selected{% endif %}>{{ pos.number }} · {{ pos.description }}</option>{% endfor %}</select></div>
               <div class="col-md-8">
                 <div class="row g-2">
-                  <div class="col-md-4"><label class="form-label">Número</label><input class="form-control" name="pos_number" placeholder="00002"></div>
-                  <div class="col-md-6"><label class="form-label">Descripción</label><input class="form-control" name="pos_description" placeholder="Sucursal Centro"></div>
+                  <div class="col-md-3"><label class="form-label">Número</label><input class="form-control" name="pos_number" placeholder="00002"></div>
+                  <div class="col-md-4"><label class="form-label">Descripción</label><input class="form-control" name="pos_description" placeholder="Punto de venta Sucursal Centro"></div>
+                  <div class="col-md-3"><label class="form-label">Sucursal</label><select class="form-select" name="branch">{% for branch in company_branches %}<option value="{{ branch.name }}">{{ branch.name }}</option>{% endfor %}</select></div>
                   <div class="col-md-2 d-grid"><label class="form-label d-none d-md-block">&nbsp;</label><button class="btn btn-outline-primary" type="submit" formaction="{{ url_for('company_billing.company_settings_billing_pos_add') }}" formmethod="post">Agregar punto de venta</button></div>
                 </div>
               </div>
@@ -1153,17 +1155,86 @@
   {% elif panel == 'branches' %}
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Sucursales</span>
+      <span>Gestión de sucursales</span>
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver a Mi Empresa</a>
     </div>
     <div class="card-body p-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-        <div>
-          <div class="fw-bold h5 mb-1">Este módulo estará disponible próximamente.</div>
-          <p class="text-muted mb-0">La gestión de sucursales se habilitará en una próxima versión sin afectar tu operación actual.</p>
+      {% if not multi_branch_access %}
+        <div class="alert alert-info mb-0">
+          <strong>Disponible desde Premium.</strong>
+          <p class="mb-2">Administrá varias sedes desde una única empresa, con stock, ventas y cajas diferenciadas.</p>
+          <a class="btn btn-primary" href="{{ url_for('company_billing.subscription_portal') }}">Ver planes y actualizar</a>
         </div>
-        <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
-      </div>
+      {% else %}
+        {% if not pin_verified %}
+        <div class="alert alert-warning mb-0">
+          <strong>Validación de seguridad requerida.</strong>
+          <p class="mb-2">Validá el PIN de Mi Empresa antes de administrar sucursales o asignar personal.</p>
+          <a class="btn btn-outline-primary" href="{{ url_for('company_billing.company_settings', panel='security') }}">Ir a Seguridad y validar PIN</a>
+        </div>
+        {% else %}
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+          <div><div class="h5 mb-1">{{ active_branch_count }} de {{ branch_limit }} sucursales activas/permitidas</div><div class="text-muted small">La facturación y el catálogo siguen perteneciendo a la empresa matriz.</div></div>
+        </div>
+        <form method="post" action="{{ url_for('branches.create_branch') }}" class="row g-2 border rounded-3 p-3 mb-4">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" required maxlength="120" placeholder="Sucursal Norte"></div>
+          <div class="col-md-2"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="NORTE"></div>
+          <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" maxlength="255"></div>
+          <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" maxlength="120"></div>
+          <div class="col-md-2"><label class="form-label">Provincia</label><input class="form-control" name="province" maxlength="120"></div>
+          <div class="col-md-3"><label class="form-label">Teléfono</label><input class="form-control" name="phone" maxlength="40"></div>
+          <div class="col-md-3"><label class="form-label">WhatsApp</label><input class="form-control" name="whatsapp" maxlength="40"></div>
+          <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if active_branch_count >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
+        </form>
+        <div class="row g-3">
+          {% for branch in company_branches %}
+          <div class="col-12">
+            <div class="border rounded-3 p-3">
+              <form method="post" action="{{ url_for('branches.update_branch', branch_id=branch.id) }}" class="row g-2 align-items-end">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" value="{{ branch.name }}" required maxlength="120"></div>
+                <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" value="{{ branch.address or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" value="{{ branch.city or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Provincia</label><input class="form-control" name="province" value="{{ branch.province or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Teléfono</label><input class="form-control" name="phone" value="{{ branch.phone or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">WhatsApp</label><input class="form-control" name="whatsapp" value="{{ branch.whatsapp or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Estado</label><select class="form-select" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
+                <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Guardar</button></div>
+              </form>
+              {% if branch.is_default %}<span class="badge text-bg-primary mt-2">Casa central</span>{% endif %}
+              <form method="post" action="{{ url_for('branches.assign_users', branch_id=branch.id) }}" class="mt-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="fw-semibold small mb-2">Personal habilitado</div>
+                <div class="row g-2">
+                  {% for employee in active_employees %}
+                  <div class="col-sm-6 col-lg-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, set()) %}checked{% endif %}> <span class="form-check-label">{{ employee.name }}</span></label></div>
+                  {% endfor %}
+                </div>
+                <button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Guardar accesos</button>
+              </form>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% if active_branch_count > 1 %}
+        <div class="border rounded-3 p-3 mt-4">
+          <h3 class="h6 fw-bold mb-3">Transferir stock entre sucursales</h3>
+          <p class="small text-muted">La transferencia descuenta del origen y acredita el destino en una sola operación. El stock consolidado de la empresa no cambia.</p>
+          <form method="post" action="{{ url_for('branches.transfer_stock') }}" class="row g-2 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-3"><label class="form-label">Origen</label><select class="form-select" name="source_branch_id" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
+            <div class="col-md-3"><label class="form-label">Destino</label><select class="form-select" name="target_branch_id" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}" {% if loop.index == 2 %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}</select></div>
+            <div class="col-md-3"><label class="form-label">Producto / código de barras</label><input class="form-control" name="product_code" maxlength="50" autocomplete="off" placeholder="Escaneá o ingresá el código" required></div>
+            <div class="col-md-1"><label class="form-label">Cant.</label><input class="form-control" name="quantity" type="number" min="0.001" step="0.001" required></div>
+            <div class="col-md-2"><label class="form-label">Referencia</label><input class="form-control" name="note" maxlength="255"></div>
+            <div class="col-12"><button class="btn btn-primary" type="submit" {% if company_branches|selectattr('active')|list|length < 2 %}disabled{% endif %}>Confirmar transferencia</button></div>
+          </form>
+        </div>
+        {% endif %}
+        <p class="small text-muted mt-3 mb-0">El acceso se valida en el servidor. Desactivar una sucursal conserva sus ventas, movimientos e historial.</p>
+        {% endif %}
+      {% endif %}
     </div>
   </div>
   {% elif panel == 'general' %}
