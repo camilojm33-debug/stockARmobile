@@ -749,14 +749,18 @@ def _create_initial_company_membership(mapper, connection, target):
 
 @event.listens_for(User, "after_update")
 def _sync_primary_company_membership(mapper, connection, target):
-    """Keep the legacy primary-company role synchronized without touching other tenants."""
+    """Keep legacy primary-company role/permissions in sync with their membership."""
     state = sa_inspect(target)
-    company_history = state.attrs.company_id.history
-    if not company_history.has_changes():
-        return
     company_id = getattr(target, "company_id", None)
     if company_id is None or (getattr(target, "role", None) or "").strip().lower() == "superadmin":
         return
+
+    company_changed = state.attrs.company_id.history.has_changes()
+    role_changed = state.attrs.role.history.has_changes()
+    permissions_changed = state.attrs.permissions_json.history.has_changes()
+    if not (company_changed or role_changed or permissions_changed):
+        return
+
     membership_table = CompanyMembership.__table__
     existing = connection.execute(
         select(membership_table.c.id).where(
@@ -774,6 +778,20 @@ def _sync_primary_company_membership(mapper, connection, target):
             status="active" if target.active else "revoked",
             created_at=target.created_at or utcnow(),
         ))
+        return
+
+    updates = {}
+    if company_changed or role_changed:
+        updates["role"] = target.role or "user"
+    if company_changed or permissions_changed:
+        updates["permissions_json"] = target.permissions_json or "[]"
+    if updates:
+        connection.execute(
+            membership_table.update().where(
+                membership_table.c.user_id == target.id,
+                membership_table.c.company_id == company_id,
+            ).values(**updates)
+        )
 
 
 class NotificationReadState(db.Model):
