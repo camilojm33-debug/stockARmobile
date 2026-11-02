@@ -906,6 +906,26 @@
         </div>
       </div>
       {% endif %}
+      {% if available_company_choices|length > 1 %}
+      <div class="dropdown mb-2">
+        <button class="btn btn-outline-primary w-100 dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-buildings me-1"></i>Cambiar empresa
+        </button>
+        <div class="dropdown-menu w-100 p-2" style="max-height: 280px; overflow-y: auto;">
+          <div class="small text-muted px-2 pb-2">Esta cuenta tiene acceso a varias empresas.</div>
+          {% for company_option in available_company_choices %}
+          <form method="post" action="{{ url_for('auth.switch_company') }}" class="mb-1">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="company_id" value="{{ company_option.id }}">
+            <button class="dropdown-item rounded-2 d-flex justify-content-between align-items-center {% if company_option.current %}active{% endif %}" type="submit">
+              <span class="text-truncate">{{ company_option.name }}</span>
+              <span class="badge text-bg-secondary">{{ 'Administrador' if company_option.role == 'admin' else 'Empleado' }}</span>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       <div class="d-flex gap-2">
         <button class="btn btn-outline-primary flex-shrink-0" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" title="Buscar Ctrl+K"><i class="bi bi-search"></i></button>
         <button class="btn btn-outline-secondary flex-shrink-0 position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter" title="Notificaciones"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
@@ -1184,7 +1204,7 @@
           clearOfflineQueue();
         });
       });
-      document.querySelectorAll('form[action*="/auth/switch-user"]').forEach(function(form) {
+      document.querySelectorAll('form[action*="/auth/switch-user"], form[action*="/auth/switch-company"]').forEach(function(form) {
         form.addEventListener('submit', function(event) {
           if (form.dataset.privateCacheCleared === 'true') return;
           event.preventDefault();
