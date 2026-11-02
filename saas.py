@@ -3960,7 +3960,7 @@ def ai_subscriptions_action(company_id):
 @bp.route("/companies")
 @superadmin_required
 def companies_panel():
-    from app import Client, Company, Plan, Product, Sale, Subscription, User, db
+    from app import Client, Company, Plan, Product, Sale, Subscription, User, UserCompanyMembership, db
     from services.subscription_service import SubscriptionService
     from services.ai_agent.subscription_service import AISubscriptionService
 
@@ -4010,7 +4010,13 @@ def companies_panel():
     effective_states = {}
 
     if company_ids:
-        user_counts = {row[0]: int(row[1] or 0) for row in db.session.query(User.company_id, db.func.count(User.id)).filter(User.company_id.in_(company_ids)).group_by(User.company_id).all()}
+        user_counts = {
+            row[0]: int(row[1] or 0)
+            for row in db.session.query(
+                UserCompanyMembership.company_id, db.func.count(UserCompanyMembership.user_id)
+            ).filter(UserCompanyMembership.company_id.in_(company_ids))
+            .group_by(UserCompanyMembership.company_id).all()
+        }
         product_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Product.company_id, db.func.count(Product.id)).filter(Product.company_id.in_(company_ids), Product.active.is_(True)).group_by(Product.company_id).all()}
         client_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Client.company_id, db.func.count(Client.id)).filter(Client.company_id.in_(company_ids), Client.active.is_(True)).group_by(Client.company_id).all()}
         sale_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Sale.company_id, db.func.count(Sale.id)).filter(Sale.company_id.in_(company_ids)).group_by(Sale.company_id).all()}
@@ -4049,7 +4055,7 @@ def companies_panel():
 @bp.route("/companies/<int:company_id>")
 @superadmin_required
 def company_detail(company_id):
-    from app import AuditLog, Client, Company, Payment, Product, Sale, Subscription, User, db
+    from app import AuditLog, Client, Company, Payment, Product, Sale, Subscription, User, UserCompanyMembership, db
     from services.subscription_service import SubscriptionService
 
     _require_superadmin()
@@ -4063,8 +4069,8 @@ def company_detail(company_id):
     payments_standard_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, standard_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
     payments_ai_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, ai_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
     stats = {
-        "users": User.query.filter_by(company_id=company.id).count(),
-        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "users": UserCompanyMembership.query.filter_by(company_id=company.id).count(),
+        "active_users": UserCompanyMembership.query.filter_by(company_id=company.id, active=True).join(User, User.id == UserCompanyMembership.user_id).filter(User.active.is_(True)).count(),
         "products": Product.query.filter_by(company_id=company.id, active=True).count(),
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
@@ -4104,7 +4110,7 @@ def company_detail(company_id):
 @superadmin_required
 def company_360(company_id):
     """Read-only operational 360 view; preserves the existing company detail route."""
-    from app import AuditLog, BackupLog, Client, Company, Payment, Product, Sale, Subscription, SupportTicket, User, db, model_table_exists
+    from app import AuditLog, BackupLog, Client, Company, Payment, Product, Sale, Subscription, SupportTicket, User, UserCompanyMembership, db, model_table_exists
 
     company = Company.query.filter_by(id=company_id).first_or_404()
     subscription = (
