@@ -59,6 +59,28 @@ def ensure_membership(
     return membership
 
 
+def ensure_legacy_company_memberships(db_session, company_id: int):
+    """Backfill ORM/test-created legacy users without reviving explicit revocations."""
+    from app import User
+
+    company_id = int(company_id)
+    users = User.query.filter(User.company_id == company_id).all()
+    created = 0
+    for user in users:
+        existing = get_membership(user.id, company_id, active_only=False)
+        if existing is None:
+            ensure_membership(
+                db_session,
+                user,
+                company_id,
+                role=getattr(user, "role", None),
+                permissions_json=getattr(user, "permissions_json", None),
+                active=bool(getattr(user, "active", True)),
+            )
+            created += 1
+    return created
+
+
 def membership_for_current_company(user=None):
     from flask_login import current_user
 
