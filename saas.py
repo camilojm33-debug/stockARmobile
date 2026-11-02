@@ -5466,7 +5466,7 @@ def subscriptions_action(subscription_id):
 @superadmin_required
 def users_panel():
     from types import SimpleNamespace
-    from app import Company, User, UserCompanyMembership, db
+    from app import Company, User, UserCompanyMembership, db, utcnow
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -5577,7 +5577,7 @@ def users_panel():
 @bp.route("/users/<int:user_id>/role", methods=["POST"])
 @superadmin_required
 def users_update_role(user_id):
-    from app import AuditLog, User, UserCompanyMembership, db
+    from app import AuditLog, User, UserCompanyMembership, db, utcnow
 
     _require_superadmin()
     if not _require_superadmin_step_up():
