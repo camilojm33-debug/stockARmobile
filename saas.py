@@ -5629,7 +5629,7 @@ def users_update_role(user_id):
 @bp.route("/users/<int:user_id>/status", methods=["POST"])
 @superadmin_required
 def users_update_status(user_id):
-    from app import AuditLog, User, UserCompanyMembership, db
+    from app import AuditLog, Branch, User, UserBranchAccess, UserCompanyMembership, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5654,6 +5654,10 @@ def users_update_status(user_id):
             return _redirect_back("saas.users_panel")
         membership.invitation_token_hash = None
         membership.invitation_expires_at = None
+        membership.invited_email = None
+        UserBranchAccess.query.filter_by(
+            company_id=company_id, user_id=user_id
+        ).delete(synchronize_session=False)
         db.session.add(AuditLog(
             user_id=current_user.id,
             company_id=company_id,
@@ -5687,6 +5691,20 @@ def users_update_status(user_id):
 
     previous = bool(membership.active)
     membership.active = new_active
+    if new_active and membership.accepted_at is not None:
+        default_branch = Branch.query.filter_by(
+            company_id=company_id, is_default=True, active=True
+        ).first()
+        if default_branch is not None and UserBranchAccess.query.filter_by(
+            company_id=company_id, user_id=user_id, branch_id=default_branch.id
+        ).first() is None:
+            db.session.add(UserBranchAccess(
+                company_id=company_id, user_id=user_id, branch_id=default_branch.id
+            ))
+    elif not new_active:
+        UserBranchAccess.query.filter_by(
+            company_id=company_id, user_id=user_id
+        ).delete(synchronize_session=False)
     db.session.add(AuditLog(
         user_id=current_user.id,
         company_id=company_id,
