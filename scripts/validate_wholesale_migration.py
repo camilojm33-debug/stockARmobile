@@ -352,6 +352,7 @@ def main() -> None:
         from branches import _lock_company_for_branch_limit
         first_acquired = threading.Event()
         release_first = threading.Event()
+        second_started = threading.Event()
         second_acquired = threading.Event()
         lock_errors = []
 
@@ -372,6 +373,7 @@ def main() -> None:
         def _wait_for_company_lock():
             with app.app_context():
                 try:
+                    second_started.set()
                     _lock_company_for_branch_limit(expected_company_id)
                     second_acquired.set()
                     db.session.rollback()
@@ -388,6 +390,9 @@ def main() -> None:
             release_first.set()
             raise AssertionError("First branch-limit operation did not acquire the company row lock.")
         second_thread.start()
+        if not second_started.wait(5):
+            release_first.set()
+            raise AssertionError("Second branch-limit operation did not start.")
         try:
             if second_acquired.wait(0.35):
                 raise AssertionError("A concurrent branch-limit operation bypassed the company row lock.")
