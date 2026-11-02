@@ -376,8 +376,8 @@ def _hard_delete_company(company):
     purchase_order_ids = _safe_ids_by_company(PurchaseOrder)
 
     seller_ids = []
-    if user_ids and _has_column(ReferralSeller, "id") and _has_column(ReferralSeller, "user_id"):
-        seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids)).all()]
+    if user_ids_to_delete and _has_column(ReferralSeller, "id") and _has_column(ReferralSeller, "user_id"):
+        seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids_to_delete)).all()]
 
     payout_ids = []
     if seller_ids and _has_column(ReferralPayout, "id") and _has_column(ReferralPayout, "seller_id"):
