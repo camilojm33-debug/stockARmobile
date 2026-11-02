@@ -129,7 +129,7 @@ def test_revoked_membership_does_not_allow_tenant_switch(app):
 
 
 def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity(app):
-    from flask import url_for
+    from flask import g, url_for
 
     with app.app_context():
         first = _company("Empresa de origen")
@@ -163,6 +163,9 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
     assert switched.status_code in {302, 303}
     with client.session_transaction() as active_session:
         assert active_session.get(ACTIVE_COMPANY_SESSION_KEY) == second_id
+    # The app fixture keeps one app context around the whole test. Flask-Login
+    # normally gets a fresh g per request, so drop its cached user before the next request.
+    g.pop("_login_user", None)
     second_response = client.get(dashboard_url)
     assert second_response.status_code == 200
     second_html = second_response.get_data(as_text=True)
@@ -181,7 +184,7 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
 
 
 def test_user_without_active_membership_can_only_accept_new_company_invitation(app):
-    from flask import url_for
+    from flask import g, url_for
 
     with app.app_context():
         old_company = _company("Empresa anterior")
@@ -223,6 +226,8 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(a
 
     accepted = client.post(f"/auth/company-invitations/{token}/accept")
     assert accepted.status_code in {302, 303}
+    # Refresh Flask-Login cached identity to emulate a new request app context.
+    g.pop("_login_user", None)
     dashboard = client.get(dashboard_url)
     assert dashboard.status_code == 200
     html = dashboard.get_data(as_text=True)
