@@ -339,9 +339,8 @@ def _hard_delete_company(company):
         .filter(
             UserCompanyMembership.user_id.in_(company_user_ids or {-1}),
             UserCompanyMembership.company_id != company_id,
-            UserCompanyMembership.active.is_(True),
         )
-        .order_by(UserCompanyMembership.company_id.asc())
+        .order_by(UserCompanyMembership.active.desc(), UserCompanyMembership.company_id.asc())
         .all()
     )
     remaining_by_user = {}
@@ -460,7 +459,6 @@ def _hard_delete_company(company):
         "products",
         "clients",
         "suppliers",
-        "users",
     ]:
         _raw_delete_company_rows(table_name)
 
