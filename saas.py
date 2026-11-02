@@ -406,6 +406,9 @@ def _hard_delete_company(company):
     _safe_delete_company_rows(Product)
     _safe_delete_company_rows(Client)
     _safe_delete_company_rows(Supplier)
+    # Remove only the memberships belonging to the company being deleted;
+    # identities with another membership remain intact.
+    _safe_delete_company_rows(UserCompanyMembership)
 
     _safe_delete_in(NotificationReadState, "user_id", user_ids)
     _safe_delete_in(PasswordResetToken, "user_id", user_ids)
@@ -459,6 +462,7 @@ def _hard_delete_company(company):
         "products",
         "clients",
         "suppliers",
+        "user_company_memberships",
     ]:
         _raw_delete_company_rows(table_name)
 
