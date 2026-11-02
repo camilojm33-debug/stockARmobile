@@ -1807,6 +1807,12 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
                 and memberships_by_user_id[int(user.id)].invitation_expires_at
                 and memberships_by_user_id[int(user.id)].invitation_expires_at <= utcnow()
             ),
+            "invitation_cancelled": bool(
+                memberships_by_user_id.get(int(user.id))
+                and memberships_by_user_id[int(user.id)].invitation_acceptance_required
+                and not memberships_by_user_id[int(user.id)].invitation_token_hash
+                and not memberships_by_user_id[int(user.id)].active
+            ),
         })
     result_rows.sort(key=lambda item: (-item["total_sold"], item["user"].created_at or datetime.min, item["user"].id))
     for index, row in enumerate(result_rows, start=1):
