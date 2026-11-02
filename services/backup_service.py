@@ -1284,6 +1284,7 @@ class BackupService:
             SaleItem,
             Supplier,
             User,
+            UserCompanyMembership,
             db,
             utcnow,
         )
@@ -1799,6 +1800,7 @@ class BackupService:
             SaleItem,
             Supplier,
             User,
+            UserCompanyMembership,
             db,
         )
         from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
