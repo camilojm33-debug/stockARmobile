@@ -68,15 +68,17 @@ class CompanyMembershipInvitationService:
         return membership, invitation_url, email_sent
 
     @classmethod
-    def get_valid(cls, raw_token: str):
+    def get_valid(cls, raw_token: str, *, for_update: bool = False):
         from app import UserCompanyMembership
 
-        return (
+        query = (
             UserCompanyMembership.query
             .filter_by(invitation_token_hash=cls._hash(raw_token), active=False)
             .filter(UserCompanyMembership.invitation_expires_at > cls._now())
-            .first()
         )
+        if for_update:
+            query = query.with_for_update()
+        return query.first()
 
     @staticmethod
     def send_invitation_email(
