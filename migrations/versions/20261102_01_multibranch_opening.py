@@ -57,8 +57,6 @@ def upgrade():
                 "product_id": balance["product_id"],
             },
         ).scalar_one()
-        opening_balance = sa.types.Numeric(18, 3).python_type  # retain a Decimal-safe path
-        del opening_balance
         opening_quantity = balance["stock"] - recorded_delta
         if opening_quantity < 0:
             raise RuntimeError(
