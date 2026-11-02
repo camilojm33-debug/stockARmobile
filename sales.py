@@ -476,10 +476,12 @@ def index():
         company_preferences = json.loads(getattr(company, "preferences_json", None) or "{}") if company else {}
     except Exception:
         company_preferences = {}
+    from stockarmobile.branch_context import get_active_branch
+    selected_physical_branch = get_active_branch()
     active_branch = (
-        (company_preferences.get("billing_business", {}).get("fiscal", {}) or {}).get("branch_name")
-        or getattr(company, "city", None)
-        or "Casa central"
+        selected_physical_branch.name
+        if selected_physical_branch is not None
+        else "Casa central"
     )
     return render_template(
         "ventas/index.html",
@@ -552,17 +554,17 @@ def api_pos_hints():
     if company_id is None:
         return jsonify({"recent": [], "top": []})
 
-    recent_rows = (
-        scope_query_to_company(
-            db.session.query(SaleItem.product_id, Sale.date)
-            .join(Sale, SaleItem.sale_id == Sale.id)
-            .filter(SaleItem.product_id.isnot(None)),
-            Sale,
-        )
-        .order_by(Sale.date.desc(), Sale.id.desc())
-        .limit(120)
-        .all()
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    recent_query = scope_query_to_company(
+        db.session.query(SaleItem.product_id, Sale.date)
+        .join(Sale, SaleItem.sale_id == Sale.id)
+        .filter(SaleItem.product_id.isnot(None)),
+        Sale,
     )
+    if active_branch_id is not None:
+        recent_query = recent_query.filter(Sale.branch_id == active_branch_id)
+    recent_rows = recent_query.order_by(Sale.date.desc(), Sale.id.desc()).limit(120).all()
     recent_ids = []
     seen_recent = set()
     for row in recent_rows:
@@ -578,6 +580,7 @@ def api_pos_hints():
         db.session.query(SaleItem.product_id, db.func.coalesce(db.func.sum(SaleItem.quantity), 0).label("qty"))
         .join(Sale, SaleItem.sale_id == Sale.id)
         .filter(Sale.company_id == company_id, SaleItem.product_id.isnot(None))
+        .filter(Sale.branch_id == active_branch_id if active_branch_id is not None else True)
         .group_by(SaleItem.product_id)
         .order_by(db.func.coalesce(db.func.sum(SaleItem.quantity), 0).desc())
         .limit(12)
