@@ -282,3 +282,62 @@ def test_ai_sales_metrics_only_aggregate_employee_active_branch(app, monkeypatch
             assert result["sales_count"] == 1
             assert result["sales_total"] == 100.0
         db.session.rollback()
+
+
+
+def test_backup_inventory_restore_preserves_branch_balances_and_aggregate(app):
+    from services.backup_service import BackupService
+
+    with app.app_context():
+        company = _company("Empresa backup multisucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="BKP-MS-001", name="Producto backup",
+            stock=12, min_stock=2, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        set_branch_stock(product, north.id, Decimal("5"))
+        db.session.flush()
+
+        snapshot = {
+            "company_id": company.id,
+            "branch_stock": [
+                {"company_id": company.id, "branch_id": central.id, "product_id": product.id,
+                 "stock": "7.000", "min_stock": "2.000", "reserved_stock": "0.000"},
+                {"company_id": company.id, "branch_id": north.id, "product_id": product.id,
+                 "stock": "5.000", "min_stock": "2.000", "reserved_stock": "0.000"},
+            ],
+        }
+        set_branch_stock(product, central.id, Decimal("1"))
+        set_branch_stock(product, north.id, Decimal("2"))
+        BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
+        db.session.flush()
+        assert available_stock(product, central.id) == 7.0
+        assert available_stock(product, north.id) == 5.0
+        assert float(product.stock) == 12.0
+        db.session.rollback()
+
+
+def test_legacy_backup_inventory_restores_into_casa_central(app):
+    from services.backup_service import BackupService
+
+    with app.app_context():
+        company = _company("Empresa backup legacy")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(company_id=company.id, barcode="BKP-OLD-001", name="Legacy", stock=9, active=True)
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, north.id, Decimal("4"))
+        BackupService._restore_branch_inventory(
+            company_id=company.id,
+            payload={"company_id": company.id, "products": [{"id": product.id, "stock": 9}]},
+        )
+        db.session.flush()
+        assert available_stock(product, central.id) == 9.0
+        assert available_stock(product, north.id) == 0.0
+        assert float(product.stock) == 9.0
+        db.session.rollback()
