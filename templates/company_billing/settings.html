@@ -527,6 +527,8 @@
               <td>
                 {% if row.invitation_pending %}
                 <span class="badge text-bg-warning">Invitación pendiente</span>
+                {% elif row.invitation_expired %}
+                <span class="badge text-bg-secondary">Invitación vencida</span>
                 {% else %}
                 <span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span>
                 {% endif %}
@@ -555,7 +557,7 @@
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_toggle', user_id=user.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    {% if row.invitation_pending %}
+                    {% if row.invitation_pending or row.invitation_expired %}
                     <input type="hidden" name="action" value="cancel_invitation">
                     <button class="btn btn-sm btn-outline-warning" type="submit">Cancelar invitación</button>
                     {% else %}
