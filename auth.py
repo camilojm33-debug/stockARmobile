@@ -628,6 +628,81 @@ def register():
     return render_template("auth/register.html", form=form, selected_plan=selected_plan_code, registration_mode=registration_mode)
 
 
+@bp.route("/accept-company-invitation/<token>", methods=["GET", "POST"])
+def accept_company_invitation(token):
+    from app import Branch, Company, User, UserBranchAccess, UserCompanyMembership, db, record_audit, utcnow
+    from stockarmobile.company_memberships import ACTIVE_COMPANY_SESSION_KEY
+    from services.company_membership_invitation_service import CompanyMembershipInvitationService
+
+    membership = CompanyMembershipInvitationService.get_valid(token)
+    if membership is None:
+        flash("La invitación es inválida, ya fue utilizada o venció.", "warning")
+        return redirect(url_for("auth.login"))
+
+    company = Company.query.filter_by(id=membership.company_id, active=True).first()
+    user = db.session.get(User, membership.user_id)
+    invited_email = (membership.invited_email or "").strip().lower()
+    if (
+        company is None
+        or user is None
+        or not user.active
+        or not invited_email
+        or invited_email != (user.email or "").strip().lower()
+    ):
+        flash("La invitación ya no es válida. Pedí al administrador que envíe una nueva.", "warning")
+        return redirect(url_for("auth.login"))
+
+    if not current_user.is_authenticated:
+        return redirect(url_for("auth.login", next=request.path))
+    if int(current_user.id) != int(user.id):
+        abort(403)
+
+    if request.method == "POST":
+        # Recheck the invitation under the current transaction before granting access.
+        membership = CompanyMembershipInvitationService.get_valid(token)
+        if membership is None or int(membership.user_id) != int(current_user.id):
+            abort(403)
+        membership.active = True
+        membership.invitation_token_hash = None
+        membership.invitation_expires_at = None
+        membership.accepted_at = utcnow()
+
+        default_branch = Branch.query.filter_by(
+            company_id=company.id, is_default=True, active=True
+        ).first()
+        if default_branch is not None and UserBranchAccess.query.filter_by(
+            company_id=company.id,
+            user_id=user.id,
+            branch_id=default_branch.id,
+        ).first() is None:
+            db.session.add(UserBranchAccess(
+                company_id=company.id,
+                user_id=user.id,
+                branch_id=default_branch.id,
+            ))
+
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(company.id)
+        session.pop("stockarmobile_active_branch_id", None)
+        record_audit(
+            action="company_membership_accepted",
+            entity="user",
+            entity_id=user.id,
+            user_id=user.id,
+            company_id=company.id,
+            detail=f"El usuario aceptó la invitación para {company.name}.",
+        )
+        db.session.commit()
+        flash(f"Invitación aceptada. Ya podés trabajar en {company.name}.", "success")
+        return redirect(url_for("dashboard.index"))
+
+    return render_template(
+        "auth/accept_company_invitation.html",
+        company=company,
+        membership=membership,
+        invitation_token=token,
+    )
+
+
 @bp.route("/switch-company", methods=["POST"])
 @login_required
 def switch_company():
