@@ -4183,8 +4183,12 @@ def company_360(company_id):
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(12).all()
 
     stats = {
-        "users": User.query.filter_by(company_id=company.id).count(),
-        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "users": UserCompanyMembership.query.filter_by(company_id=company.id).count(),
+        "active_users": UserCompanyMembership.query.filter_by(
+            company_id=company.id, active=True
+        ).join(User, User.id == UserCompanyMembership.user_id).filter(
+            User.active.is_(True)
+        ).count(),
         "products": Product.query.filter_by(company_id=company.id, active=True).count(),
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
@@ -5699,7 +5703,8 @@ def users_update_status(user_id):
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
-    from app import Company, PasswordRecoveryRequest, User, db
+    from types import SimpleNamespace
+    from app import Company, PasswordRecoveryRequest, User, UserCompanyMembership, db
 
     _require_superadmin()
     status = (request.args.get("status") or "all").strip().lower()
@@ -5707,17 +5712,37 @@ def password_recovery_panel():
     if status in {"pendiente", "atendida", "cerrada"}:
         query = query.filter(PasswordRecoveryRequest.status == status)
     items = query.order_by(PasswordRecoveryRequest.requested_at.desc()).all()
-    company_users = (
+    membership_user_rows = (
         db.session.query(User, Company.name)
-        .join(Company, Company.id == User.company_id)
+        .join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .join(Company, Company.id == UserCompanyMembership.company_id)
         .filter(
-            User.company_id.isnot(None),
+            UserCompanyMembership.active.is_(True),
+            Company.active.is_(True),
             User.role != "superadmin",
             User.active.is_(True),
         )
-        .order_by(User.company_id.asc(), User.username.asc())
+        .order_by(User.username.asc(), Company.name.asc())
         .all()
     )
+    companies_by_user = {}
+    users_by_id = {}
+    for linked_user, company_name in membership_user_rows:
+        users_by_id[int(linked_user.id)] = linked_user
+        companies_by_user.setdefault(int(linked_user.id), set()).add(company_name)
+    company_users = [
+        (
+            users_by_id[user_id],
+            " / ".join(sorted(company_names)),
+        )
+        for user_id, company_names in sorted(
+            companies_by_user.items(),
+            key=lambda item: (
+                (users_by_id[item[0]].username or "").lower(),
+                item[0],
+            ),
+        )
+    ]
     from services.one_time_secret_service import OneTimeSecretService
 
     reveal_user_id = session.pop("password_recovery_temp_password_user_id", None)
@@ -5745,7 +5770,7 @@ def password_recovery_panel():
 @bp.route("/password-recovery/company-user/reset", methods=["POST"])
 @superadmin_required
 def password_recovery_company_user_reset():
-    from app import User, db, record_audit
+    from app import User, UserCompanyMembership, db, record_audit
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5758,9 +5783,12 @@ def password_recovery_company_user_reset():
         return _redirect_back("saas.password_recovery_panel")
 
     user = (
-        User.query.filter(
+        User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+        .join(Company, Company.id == UserCompanyMembership.company_id)
+        .filter(
             User.id == user_id,
-            User.company_id.isnot(None),
+            UserCompanyMembership.active.is_(True),
+            Company.active.is_(True),
             User.role != "superadmin",
             User.active.is_(True),
         )
