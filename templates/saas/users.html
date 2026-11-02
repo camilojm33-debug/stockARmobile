@@ -68,7 +68,18 @@
           <span class="text-muted">Global</span>
           {% endif %}
         </td>
-        <td><span class="badge {{ 'text-bg-success' if user.account_active else 'text-bg-secondary' }}">{{ 'Activa' if user.account_active else 'Desactivada' }}</span></td>
+        <td>
+          <span class="badge {{ 'text-bg-success' if user.account_active else 'text-bg-secondary' }}">{{ 'Activa' if user.account_active else 'Desactivada' }}</span>
+          {% if user.can_manage_membership %}
+          <form method="post" action="{{ url_for('saas.users_update_account_status', user_id=user.id) }}" class="mt-1" onsubmit="return confirm('{{ '¿Desactivar esta cuenta en todas sus empresas?' if user.account_active else '¿Reactivar esta cuenta global?' }}')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="active" value="{{ '0' if user.account_active else '1' }}">
+            <input type="password" name="step_up_password" class="form-control form-control-sm mb-1" autocomplete="current-password" placeholder="Contraseña si venció">
+            <button class="btn btn-sm {{ 'btn-outline-danger' if user.account_active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar cuenta global' if user.account_active else 'Reactivar cuenta global' }}</button>
+          </form>
+          {% endif %}
+        </td>
         <td>
           {% if user.can_manage_membership %}
           {% if user.invitation_pending %}
