@@ -20,7 +20,7 @@
 
   <div class="row g-3 mb-4">
     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Stock actual</div><div class="metric-value fw-bold">{{ "%.3g"|format(product.branch_stock_display if product.branch_stock_display is defined else product.stock or 0) }}</div><div class="text-muted small">{{ product.unit_measure or 'u' }}</div></div></div></div>
-    <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Stock minimo</div><div class="metric-value fw-bold">{{ "%.3g"|format(product.min_stock or 0) }}</div><div class="text-muted small">Alerta critica</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Stock minimo</div><div class="metric-value fw-bold">{{ "%.3g"|format(product.branch_min_stock_display if product.branch_min_stock_display is defined else product.min_stock or 0) }}</div><div class="text-muted small">Alerta critica</div></div></div></div>
     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Costo</div><div class="metric-value fw-bold">${{ "%.2f"|format(product.cost_price or 0) }}</div><div class="text-muted small">Promedio actual</div></div></div></div>
     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Precio</div><div class="metric-value fw-bold">${{ "%.2f"|format(product.price or 0) }}</div><div class="text-muted small">Venta</div></div></div></div>
   </div>
