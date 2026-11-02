@@ -506,6 +506,12 @@ def edit_supplier_purchase(supplier_id, purchase_id):
             for product_id in sorted(affected_ids):
                 old_qty = old_totals.get(product_id, [None, 0.0, 0.0])[1]
                 new_qty = new_totals.get(product_id, [None, 0.0, 0.0])[1]
+                branch_stock_delta = None
+                if purchase.branch_id is not None:
+                    from decimal import Decimal, ROUND_HALF_UP
+                    branch_stock_delta = (
+                        Decimal(str(new_qty)) - Decimal(str(old_qty))
+                    ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
                 new_value = new_totals.get(product_id, [None, 0.0, 0.0])[2]
                 product = (new_totals.get(product_id) or old_totals.get(product_id))[0]
                 if purchase.branch_id is not None:
@@ -529,7 +535,7 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                     adjust_branch_stock(
                         product,
                         purchase.branch_id,
-                        new_qty - old_qty,
+                        branch_stock_delta,
                         movement_type="purchase_edit",
                         source_type="purchase",
                         source_id=purchase.id,
