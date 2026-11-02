@@ -778,7 +778,7 @@ def _health_check_snapshot(db_session, now):
 
 
 def _build_attention_queue(now):
-    from app import BackupLog, Company, MercadoPagoConnection, Payment, Sale, Subscription, User, db, model_table_exists
+    from app import BackupLog, Company, MercadoPagoConnection, Payment, Sale, Subscription, User, UserCompanyMembership, db, model_table_exists
 
     queue = []
 
@@ -884,9 +884,19 @@ def _build_attention_queue(now):
 
     no_active_users = (
         db.session.query(Company)
-        .outerjoin(User, User.company_id == Company.id)
+        .outerjoin(
+            UserCompanyMembership,
+            UserCompanyMembership.company_id == Company.id,
+        )
+        .outerjoin(User, User.id == UserCompanyMembership.user_id)
         .group_by(Company.id)
-        .having(db.func.coalesce(db.func.sum(db.case((User.active.is_(True), 1), else_=0)), 0) == 0)
+        .having(db.func.coalesce(db.func.sum(db.case((
+            db.and_(
+                UserCompanyMembership.active.is_(True),
+                User.active.is_(True),
+            ),
+            1,
+        ), else_=0)), 0) == 0)
         .limit(20)
         .all()
     )
@@ -5526,7 +5536,8 @@ def users_panel():
         if role == "superadmin":
             global_query = global_query.filter(User.role == "superadmin")
         elif role == "all":
-            global_query = global_query.filter(User.role == "superadmin")
+            # Include global identities such as referral sellers and SuperAdmins.
+            pass
         for user in global_query.order_by(User.created_at.desc(), User.id.desc()).limit(100).all():
             users.append(SimpleNamespace(
                 id=int(user.id),
