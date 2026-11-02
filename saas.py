@@ -5643,7 +5643,7 @@ def users_update_role(user_id):
 @bp.route("/users/<int:user_id>/status", methods=["POST"])
 @superadmin_required
 def users_update_status(user_id):
-    from app import AuditLog, Branch, User, UserBranchAccess, UserCompanyMembership, db
+    from app import AuditLog, Branch, Company, User, UserBranchAccess, UserCompanyMembership, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5709,6 +5709,12 @@ def users_update_status(user_id):
             return _redirect_back("saas.users_panel")
 
     if new_active:
+        company = (
+            Company.query.filter_by(id=company_id, active=True)
+            .with_for_update()
+            .populate_existing()
+            .first_or_404()
+        )
         from services.plan_usage_service import PlanUsageService
         allowed, limit_message = PlanUsageService.can_create(
             company_id, PlanUsageService.RESOURCE_USERS
@@ -5771,10 +5777,15 @@ def users_update_account_status(user_id):
         return _redirect_back("saas.users_panel")
 
     if new_active:
-        from services.plan_usage_service import PlanUsageService
         active_memberships = UserCompanyMembership.query.filter_by(
             user_id=user.id, active=True
-        ).all()
+        ).order_by(UserCompanyMembership.company_id.asc()).all()
+        company_ids = sorted({int(item.company_id) for item in active_memberships})
+        if company_ids:
+            Company.query.filter(Company.id.in_(company_ids)).order_by(
+                Company.id.asc()
+            ).with_for_update().all()
+        from services.plan_usage_service import PlanUsageService
         for membership in active_memberships:
             allowed, limit_message = PlanUsageService.can_create(
                 membership.company_id, PlanUsageService.RESOURCE_USERS
