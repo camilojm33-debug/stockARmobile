@@ -828,7 +828,7 @@ def _health_check_snapshot(db_session, now):
 
 
 def _build_attention_queue(now):
-    from app import BackupLog, Company, MercadoPagoConnection, Payment, Sale, Subscription, User, db, model_table_exists
+    from app import BackupLog, Company, CompanyMembership, MercadoPagoConnection, Payment, Sale, Subscription, User, db, model_table_exists
 
     queue = []
 
