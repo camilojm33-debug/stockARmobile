@@ -215,6 +215,7 @@ def test_company_invitation_remains_pending_until_user_accepts(app, monkeypatch)
 
         db.session.commit()
         assert membership.active is False
+        assert membership.invitation_acceptance_required is True
         assert membership.invitation_token_hash
         assert membership.invitation_expires_at is not None
 
@@ -242,6 +243,7 @@ def test_company_invitation_remains_pending_until_user_accepts(app, monkeypatch)
         assert refreshed_membership.active is True
         assert refreshed_membership.accepted_at is not None
         assert refreshed_membership.invitation_token_hash is None
+        assert refreshed_membership.invitation_acceptance_required is False
         assert UserBranchAccess.query.filter_by(
             user_id=user.id, company_id=company_b.id, branch_id=default_branch.id
         ).first() is not None
@@ -367,6 +369,7 @@ def test_new_invited_account_sets_password_from_link_without_existing_login(app,
         assert refreshed.must_change_password is False
         assert refreshed_membership.active is True
         assert refreshed_membership.invitation_password_setup_required is False
+        assert refreshed_membership.invitation_acceptance_required is False
 
         with client.session_transaction() as session_data:
             assert session_data[ACTIVE_COMPANY_SESSION_KEY] == company_id
