@@ -25,6 +25,58 @@ def available_stock(product, branch_id):
     return float(row.stock or 0) if row is not None else 0.0
 
 
+def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None):
+    """Move units between branches atomically; company aggregate stock is unchanged."""
+    from decimal import Decimal, InvalidOperation
+    from app import Branch, BranchStockTransfer, db
+
+    try:
+        amount = Decimal(str(quantity))
+    except (TypeError, ValueError, InvalidOperation):
+        raise ValueError("La cantidad de transferencia no es válida.") from None
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("La cantidad de transferencia debe ser mayor que cero.")
+    if amount != amount.quantize(Decimal("0.001")):
+        raise ValueError("La cantidad debe tener como máximo tres decimales.")
+
+    company_id = int(getattr(product, "company_id", 0) or 0)
+    source = Branch.query.filter_by(id=int(source_branch_id), company_id=company_id, active=True).first()
+    target = Branch.query.filter_by(id=int(target_branch_id), company_id=company_id, active=True).first()
+    if source is None or target is None or source.id == target.id:
+        raise ValueError("El origen y destino deben ser sucursales activas de la misma empresa.")
+
+    # Lock rows in stable order so concurrent inverse transfers do not deadlock.
+    locked_rows = {}
+    for branch_id in sorted((int(source.id), int(target.id))):
+        locked_rows[branch_id] = get_branch_stock(product, branch_id, lock=True, create=True)
+    source_stock = locked_rows[int(source.id)]
+    if Decimal(str(source_stock.stock or 0)) < amount:
+        raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {source_stock.stock}.")
+
+    transfer = BranchStockTransfer(
+        company_id=company_id,
+        source_branch_id=source.id,
+        target_branch_id=target.id,
+        product_id=product.id,
+        quantity=amount,
+        note=(str(note or "").strip()[:255] or None),
+        created_by_user_id=user_id,
+    )
+    db.session.add(transfer)
+    db.session.flush()
+    adjust_branch_stock(
+        product, source.id, -amount, movement_type="transfer_out",
+        source_type="branch_transfer", source_id=transfer.id, user_id=user_id,
+        update_company_total=False, note=f"Transferencia hacia {target.name}",
+    )
+    adjust_branch_stock(
+        product, target.id, amount, movement_type="transfer_in",
+        source_type="branch_transfer", source_id=transfer.id, user_id=user_id,
+        update_company_total=False, note=f"Transferencia desde {source.name}",
+    )
+    return transfer
+
+
 def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", user_id=None, note=None):
     row = get_branch_stock(product, branch_id, lock=True, create=True)
     old = Decimal(str(row.stock or 0))
