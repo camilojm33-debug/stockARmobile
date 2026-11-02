@@ -1182,7 +1182,10 @@
           <div class="col-md-2"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="NORTE"></div>
           <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" maxlength="255"></div>
           <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" maxlength="120"></div>
-          <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if active_branch_count >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
+          <div class="col-md-2"><label class="form-label">Provincia</label><input class="form-control" name="province" maxlength="120"></div>
+          <div class="col-md-3"><label class="form-label">Teléfono</label><input class="form-control" name="phone" maxlength="40"></div>
+          <div class="col-md-3"><label class="form-label">WhatsApp</label><input class="form-control" name="whatsapp" maxlength="40"></div>
+          <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if active_branch_count >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
         </form>
         <div class="row g-3">
           {% for branch in company_branches %}
@@ -1193,6 +1196,9 @@
                 <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" value="{{ branch.name }}" required maxlength="120"></div>
                 <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" value="{{ branch.address or '' }}"></div>
                 <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" value="{{ branch.city or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Provincia</label><input class="form-control" name="province" value="{{ branch.province or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">Teléfono</label><input class="form-control" name="phone" value="{{ branch.phone or '' }}"></div>
+                <div class="col-md-2"><label class="form-label">WhatsApp</label><input class="form-control" name="whatsapp" value="{{ branch.whatsapp or '' }}"></div>
                 <div class="col-md-2"><label class="form-label">Estado</label><select class="form-select" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
                 <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Guardar</button></div>
               </form>
