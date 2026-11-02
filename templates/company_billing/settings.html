@@ -529,6 +529,8 @@
                 <span class="badge text-bg-warning">Invitación pendiente</span>
                 {% elif row.invitation_expired %}
                 <span class="badge text-bg-secondary">Invitación vencida</span>
+                {% elif row.invitation_cancelled %}
+                <span class="badge text-bg-secondary">Invitación cancelada</span>
                 {% else %}
                 <span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span>
                 {% endif %}
@@ -560,6 +562,8 @@
                     {% if row.invitation_pending or row.invitation_expired %}
                     <input type="hidden" name="action" value="cancel_invitation">
                     <button class="btn btn-sm btn-outline-warning" type="submit">Cancelar invitación</button>
+                    {% elif row.invitation_cancelled %}
+                    <span class="small text-muted align-self-center">Reenviá la invitación desde el formulario superior.</span>
                     {% else %}
                     <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar acceso' if user.active else 'Reactivar acceso' }}</button>
                     {% endif %}
