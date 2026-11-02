@@ -7,6 +7,7 @@ def _active_ai_reservations(
     company_id: int,
     product_ids: Iterable[int],
     exclude_quote_id: int | None = None,
+    branch_id: int | None = None,
 ) -> Dict[int, Decimal]:
     """Return quantities held by other active Vendedor IA checkouts."""
     from app import Payment, Quote, QuoteItem
@@ -35,13 +36,14 @@ def _active_ai_reservations(
     if not quote_ids:
         return {}
 
-    quotes = (
-        Quote.query.filter(
-            Quote.company_id == int(company_id),
-            Quote.id.in_(sorted(quote_ids)),
-            Quote.status.notin_(["ANULADO", "RECHAZADO", "CONVERTIDO", "VENCIDO"]),
-        ).all()
+    quote_query = Quote.query.filter(
+        Quote.company_id == int(company_id),
+        Quote.id.in_(sorted(quote_ids)),
+        Quote.status.notin_(["ANULADO", "RECHAZADO", "CONVERTIDO", "VENCIDO"]),
     )
+    if branch_id is not None:
+        quote_query = quote_query.filter(Quote.branch_id == int(branch_id))
+    quotes = quote_query.all()
     active_quote_ids = {
         int(quote.id)
         for quote in quotes
@@ -1515,6 +1517,7 @@ class VendorOrderService:
         reservations = _active_ai_reservations(
             company_id=company_id,
             product_ids=product_ids,
+            branch_id=fulfillment_branch_id,
         )
         line_inputs = []
         for item in cart["items"]:
