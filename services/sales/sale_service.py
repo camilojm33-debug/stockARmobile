@@ -157,11 +157,12 @@ class SaleService:
             if parsed_client_id and client is None:
                 raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
 
-            from stockarmobile.branch_context import get_active_branch_id
+            from stockarmobile.branch_context import get_active_branch_id, get_default_branch_id
             active_branch_id = get_active_branch_id()
-            if quote_snapshot is not None and active_branch_id is not None and quote_snapshot.branch_id and int(quote_snapshot.branch_id) != int(active_branch_id):
+            quote_branch_id = int(quote_snapshot.branch_id) if quote_snapshot is not None and quote_snapshot.branch_id else None
+            if quote_branch_id is not None and active_branch_id is not None and quote_branch_id != int(active_branch_id):
                 raise ValueError("El presupuesto pertenece a otra sucursal. Cambiá la sucursal activa para convertirlo.")
-            operation_branch_id = int(quote_snapshot.branch_id) if quote_snapshot is not None and active_branch_id is not None and quote_snapshot.branch_id else active_branch_id
+            operation_branch_id = quote_branch_id or active_branch_id or get_default_branch_id(company_id)
             lines = self._calculate_lines(
                 items, lock_for_update=True,
                 discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}),
