@@ -715,6 +715,7 @@ def accept_company_invitation(token):
         membership.invitation_expires_at = None
         membership.invited_email = None
         membership.invitation_password_setup_required = False
+        membership.invitation_acceptance_required = False
         membership.accepted_at = utcnow()
 
         default_branch = Branch.query.filter_by(
