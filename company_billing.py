@@ -4409,6 +4409,7 @@ def company_settings_user_create():
 
     user = User.query.filter(db.func.lower(User.email) == email).first()
     is_existing_account = user is not None
+    password_setup_required = not is_existing_account
     if is_existing_account:
         if user.role in {"superadmin", "seller"} or not user.active:
             flash("La cuenta existente no puede recibir esta invitación. Las cuentas SuperAdmin y de vendedores de referidos mantienen su acceso separado.", "warning")
@@ -4423,6 +4424,15 @@ def company_settings_user_create():
         if membership is not None and membership.active:
             flash("Esta cuenta ya tiene acceso activo a la empresa.", "info")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
+        if (
+            membership is not None
+            and membership.invitation_password_setup_required
+            and membership.accepted_at is None
+            and user.must_change_password
+        ):
+            # A previously cancelled/expired new-account invitation must be
+            # resent with password setup, not converted into a login-only invite.
+            password_setup_required = True
     else:
         if not username:
             flash("Para crear una cuenta nueva, completá el nombre de usuario. Si la persona ya tiene cuenta, alcanza con su email.", "danger")
@@ -4460,7 +4470,7 @@ def company_settings_user_create():
         company=company,
         role=role,
         permissions_json="[]",
-        password_setup_required=not is_existing_account,
+        password_setup_required=password_setup_required,
     )
     record_audit(
         action="company_membership_invited",
