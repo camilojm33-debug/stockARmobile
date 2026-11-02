@@ -30,6 +30,10 @@ class InventoryService:
                 raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 
             quantity_dec = safe_decimal(qty)
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import validate_stock_quantity
+                quantity_dec = validate_stock_quantity(quantity_dec, label="La cantidad de venta")
+                qty = float(quantity_dec)
             unit_price = safe_decimal(product.price)
             unit_discount = safe_decimal(product.discount)
             override_value = DiscountService.line_discount_override(discount_overrides, prod_id)
@@ -48,8 +52,11 @@ class InventoryService:
             if product is not None:
                 if branch_id is not None:
                     from stockarmobile.branch_inventory import adjust_branch_stock
-                    adjust_branch_stock(product, branch_id, item.quantity or 0, movement_type="sale_reversal",
-                                        source_type="sale", source_id=source_id, user_id=user_id)
+                    adjust_branch_stock(
+                        product, branch_id, item.quantity or 0,
+                        movement_type="sale_reversal", source_type="sale",
+                        source_id=source_id, user_id=user_id, allow_legacy_precision=True,
+                    )
                 else:
                     product.stock = float(product.stock or 0) + float(item.quantity or 0)
 
@@ -100,6 +107,9 @@ class InventoryService:
             quantity = to_decimal(raw_quantity)
             if quantity <= 0:
                 raise ValueError("La cantidad debe ser mayor a cero.")
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import validate_stock_quantity
+                quantity = validate_stock_quantity(quantity, label="La cantidad de venta")
             price = to_decimal(raw_price)
             if price < 0:
                 raise ValueError("El precio no puede ser negativo.")
