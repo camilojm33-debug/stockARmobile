@@ -1464,11 +1464,19 @@ class VendorOrderService:
                         )
                         return preference
 
-        actor = None
-        if actor_user_id:
-            actor = User.query.filter_by(id=int(actor_user_id), company_id=company_id, active=True).first()
+        from app import UserCompanyMembership
+        actor_query = (
+            User.query.join(UserCompanyMembership, UserCompanyMembership.user_id == User.id)
+            .filter(
+                UserCompanyMembership.company_id == company_id,
+                UserCompanyMembership.active.is_(True),
+                User.active.is_(True),
+                UserCompanyMembership.role.in_(["admin", "user"]),
+            )
+        )
+        actor = actor_query.filter(User.id == int(actor_user_id)).first() if actor_user_id else None
         if actor is None:
-            actor = User.query.filter(User.company_id == company_id, User.active.is_(True), User.role.in_(["admin", "user"])).order_by(User.id.asc()).first()
+            actor = actor_query.order_by(User.id.asc()).first()
         if actor is None:
             raise ValueError("No hay un usuario activo para registrar el pedido.")
 
