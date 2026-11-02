@@ -661,16 +661,44 @@ def accept_company_invitation(token):
         flash("La invitación ya no es válida. Pedí al administrador que envíe una nueva.", "warning")
         return redirect(url_for("auth.login"))
 
-    if not current_user.is_authenticated:
-        return redirect(url_for("auth.login", next=request.path))
-    if int(current_user.id) != int(user.id):
+    password_setup_required = bool(membership.invitation_password_setup_required)
+    if current_user.is_authenticated and int(current_user.id) != int(user.id):
         abort(403)
+    if not current_user.is_authenticated and not password_setup_required:
+        return redirect(url_for("auth.login", next=request.path))
 
     if request.method == "POST":
-        # Recheck the invitation under the current transaction before granting access.
+        # Recheck the invitation before changing the account or granting access.
         membership = CompanyMembershipInvitationService.get_valid(token)
-        if membership is None or int(membership.user_id) != int(current_user.id):
+        if membership is None or int(membership.user_id) != int(user.id):
             abort(403)
+
+        if password_setup_required:
+            new_password = str(request.form.get("new_password") or "")
+            confirm_password = str(request.form.get("confirm_password") or "")
+            if len(new_password) < 8:
+                flash("La contraseña debe tener al menos 8 caracteres.", "danger")
+                return render_template(
+                    "auth/accept_company_invitation.html",
+                    company=company,
+                    membership=membership,
+                    invitation_token=token,
+                    password_setup_required=True,
+                ), 400
+            if new_password != confirm_password:
+                flash("Las contraseñas no coinciden.", "danger")
+                return render_template(
+                    "auth/accept_company_invitation.html",
+                    company=company,
+                    membership=membership,
+                    invitation_token=token,
+                    password_setup_required=True,
+                ), 400
+            user.set_password(new_password)
+            user.must_change_password = False
+        elif not current_user.is_authenticated or int(current_user.id) != int(user.id):
+            abort(403)
+
         from services.plan_usage_service import PlanUsageService
         allowed, limit_message = PlanUsageService.can_create(
             company.id, PlanUsageService.RESOURCE_USERS
@@ -681,9 +709,12 @@ def accept_company_invitation(token):
                 "warning",
             )
             return redirect(url_for("auth.accept_company_invitation", token=token))
+
         membership.active = True
         membership.invitation_token_hash = None
         membership.invitation_expires_at = None
+        membership.invited_email = None
+        membership.invitation_password_setup_required = False
         membership.accepted_at = utcnow()
 
         default_branch = Branch.query.filter_by(
@@ -711,6 +742,8 @@ def accept_company_invitation(token):
             detail=f"El usuario aceptó la invitación para {company.name}.",
         )
         db.session.commit()
+        if password_setup_required:
+            _login_user_and_bind_company(user, remember=True, preserve_active_company=True)
         flash(f"Invitación aceptada. Ya podés trabajar en {company.name}.", "success")
         return redirect(url_for("dashboard.index"))
 
@@ -719,8 +752,8 @@ def accept_company_invitation(token):
         company=company,
         membership=membership,
         invitation_token=token,
+        password_setup_required=password_setup_required,
     )
-
 
 @bp.route("/switch-company", methods=["POST"])
 @login_required
