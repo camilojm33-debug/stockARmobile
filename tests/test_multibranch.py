@@ -302,6 +302,14 @@ def test_backup_inventory_restore_preserves_branch_balances_and_aggregate(app):
         set_branch_stock(product, north.id, Decimal("5"))
         db.session.flush()
 
+        from app import BranchStockMovement, BranchStockTransfer
+        transfer = BranchStockTransfer(
+            company_id=company.id, source_branch_id=central.id,
+            target_branch_id=north.id, product_id=product.id,
+            quantity=Decimal("1"), note="Transferencia backup",
+        )
+        db.session.add(transfer)
+        db.session.flush()
         snapshot = {
             "company_id": company.id,
             "branch_stock": [
@@ -309,6 +317,13 @@ def test_backup_inventory_restore_preserves_branch_balances_and_aggregate(app):
                  "stock": "7.000", "min_stock": "2.000", "reserved_stock": "0.000"},
                 {"company_id": company.id, "branch_id": north.id, "product_id": product.id,
                  "stock": "5.000", "min_stock": "2.000", "reserved_stock": "0.000"},
+            ],
+            "branch_stock_movements": [
+                BackupService._row_to_dict(row)
+                for row in BranchStockMovement.query.filter_by(company_id=company.id).order_by(BranchStockMovement.id).all()
+            ],
+            "branch_stock_transfers": [
+                BackupService._row_to_dict(transfer)
             ],
         }
         set_branch_stock(product, central.id, Decimal("1"))
@@ -318,6 +333,11 @@ def test_backup_inventory_restore_preserves_branch_balances_and_aggregate(app):
         assert available_stock(product, central.id) == 7.0
         assert available_stock(product, north.id) == 5.0
         assert float(product.stock) == 12.0
+        assert BranchStockTransfer.query.filter_by(company_id=company.id).count() == 1
+        restored_transfer = BranchStockTransfer.query.filter_by(company_id=company.id).one()
+        restored_movements = BranchStockMovement.query.filter_by(company_id=company.id).count()
+        assert restored_transfer.note == "Transferencia backup"
+        assert restored_movements == 2
         db.session.rollback()
 
 
