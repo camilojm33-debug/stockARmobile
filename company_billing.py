@@ -5244,6 +5244,7 @@ def company_settings():
         company_branches=company_branches,
         branch_user_access=branch_user_access,
         branch_limit=branch_limit,
+        active_branch_count=active_branch_count,
     )
 
 
