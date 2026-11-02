@@ -1148,6 +1148,14 @@ def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CA
         for product in rows:
             product._public_branch_stock = stocks.get(int(product.id), 0.0)
             product._public_branch_company_id = int(company.id)
+    rows.sort(
+        key=lambda item: (
+            bool(item.favorite),
+            float(getattr(item, "_public_branch_stock", 0) or 0),
+            str(item.name or "").casefold(),
+        ),
+        reverse=True,
+    )
     return [_product_payload(row) for row in rows]
 
 
