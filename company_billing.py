@@ -4790,11 +4790,8 @@ def business_billing_hub():
     dashboard = BusinessBillingService.build_dashboard(company.id, config)
     reports = BusinessBillingService.report_summary(rows)
 
-    users = (
-        User.query.filter_by(company_id=company.id, active=True)
-        .order_by(User.username.asc())
-        .all()
-    )
+    from stockarmobile.company_memberships import get_company_users
+    users = get_company_users(company.id, active_only=True)
     selected_tab = (request.args.get("tab") or "dashboard").strip().lower()
     if selected_tab not in {
         "dashboard",
