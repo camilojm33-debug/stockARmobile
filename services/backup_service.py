@@ -1224,6 +1224,10 @@ class BackupService:
                     by_email = User.query.filter_by(email=email).first() if email else None
                     if by_username is not None and by_email is not None and by_username.id != by_email.id:
                         raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
+                    if by_username is not None and str(by_username.email or "").strip().lower() != email:
+                        raise ValueError("El nombre de usuario del backup coincide con una cuenta cuyo correo es diferente.")
+                    if by_email is not None and str(by_email.username or "").strip().lower() != username.lower():
+                        raise ValueError("El correo del backup coincide con una cuenta cuyo usuario es diferente.")
                     user = by_username or by_email
                 membership = (
                     UserCompanyMembership.query.filter_by(user_id=user.id, company_id=company_id).first()
