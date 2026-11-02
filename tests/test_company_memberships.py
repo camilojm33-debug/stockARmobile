@@ -161,6 +161,8 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
 
     switched = client.post("/auth/switch-company", data={"company_id": str(second_id)})
     assert switched.status_code in {302, 303}
+    with client.session_transaction() as active_session:
+        assert active_session.get(ACTIVE_COMPANY_SESSION_KEY) == second_id
     second_response = client.get(dashboard_url)
     assert second_response.status_code == 200
     second_html = second_response.get_data(as_text=True)
@@ -179,6 +181,8 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
 
 
 def test_user_without_active_membership_can_only_accept_new_company_invitation(app):
+    from flask import url_for
+
     with app.app_context():
         old_company = _company("Empresa anterior")
         new_company = _company("Nueva empresa")
@@ -202,6 +206,8 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(a
         user_id = user.id
         old_company_id = old_company.id
         new_company_id = new_company.id
+        with app.test_request_context():
+            dashboard_url = url_for("dashboard.index")
 
     client = app.test_client()
     login_response = client.post(
@@ -217,7 +223,7 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(a
 
     accepted = client.post(f"/auth/company-invitations/{token}/accept")
     assert accepted.status_code in {302, 303}
-    dashboard = client.get("/dashboard")
+    dashboard = client.get(dashboard_url)
     assert dashboard.status_code == 200
     html = dashboard.get_data(as_text=True)
     assert f'data-company-id="{new_company_id}"' in html
