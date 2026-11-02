@@ -662,6 +662,16 @@ def accept_company_invitation(token):
         membership = CompanyMembershipInvitationService.get_valid(token)
         if membership is None or int(membership.user_id) != int(current_user.id):
             abort(403)
+        from services.plan_usage_service import PlanUsageService
+        allowed, limit_message = PlanUsageService.can_create(
+            company.id, PlanUsageService.RESOURCE_USERS
+        )
+        if not allowed:
+            flash(
+                f"No se puede aceptar la invitación porque la empresa alcanzó el límite de usuarios. {limit_message}",
+                "warning",
+            )
+            return redirect(url_for("auth.accept_company_invitation", token=token))
         membership.active = True
         membership.invitation_token_hash = None
         membership.invitation_expires_at = None
