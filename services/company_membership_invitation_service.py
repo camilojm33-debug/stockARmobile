@@ -23,7 +23,11 @@ class CompanyMembershipInvitationService:
         return hashlib.sha256(str(raw_token or "").encode("utf-8")).hexdigest()
 
     @classmethod
-    def create_or_refresh(cls, db_session, *, user, company, role: str, permissions_json: str = "[]"):
+    def create_or_refresh(
+        cls, db_session, *, user, company, role: str,
+        permissions_json: str = "[]",
+        password_setup_required: bool = False,
+    ):
         from stockarmobile.company_memberships import ensure_membership
 
         now = cls._now()
@@ -38,6 +42,7 @@ class CompanyMembershipInvitationService:
         raw_token = secrets.token_urlsafe(48)
         membership.invitation_token_hash = cls._hash(raw_token)
         membership.invitation_expires_at = now + timedelta(days=cls.TTL_DAYS)
+        membership.invitation_password_setup_required = bool(password_setup_required)
         membership.invited_email = (user.email or "").strip().lower()
         membership.invited_at = now
         membership.accepted_at = None
