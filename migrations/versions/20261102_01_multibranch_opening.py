@@ -33,7 +33,8 @@ def upgrade():
             sa.text(
                 "SELECT id FROM branch_stock_movements "
                 "WHERE company_id=:company_id AND branch_id=:branch_id "
-                "AND product_id=:product_id AND movement_type='opening' LIMIT 1"
+                "AND product_id=:product_id AND movement_type='opening' "
+                "AND source_type='multibranch_opening_backfill' LIMIT 1"
             ),
             {
                 "company_id": balance["company_id"],
