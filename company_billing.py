@@ -5930,6 +5930,10 @@ def business_billing_issue_sale_document(sale_id):
             ip_address=request.remote_addr,
         )
         db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
     except IntegrityError:
         db.session.rollback()
         flash("No se pudo emitir el comprobante por conflicto de numeración. Reintenta.", "danger")
