@@ -1134,6 +1134,8 @@ class BranchStockMovement(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
     note = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    branch = db.relationship("Branch")
+    product = db.relationship("Product")
 
 
 class BranchStockTransfer(db.Model):
