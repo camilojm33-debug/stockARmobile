@@ -71,5 +71,23 @@ def get_active_branch():
     return Branch.query.filter_by(id=branch_id, company_id=getattr(current_user, "company_id", None), active=True).first()
 
 
+def get_default_branch_id(company_id):
+    """Return the company's active default fulfillment branch without user context."""
+    from app import Branch
+
+    try:
+        company_id = int(company_id)
+    except (TypeError, ValueError):
+        return None
+    branch = Branch.query.filter_by(
+        company_id=company_id, is_default=True, active=True
+    ).order_by(Branch.id.asc()).first()
+    if branch is None:
+        branch = Branch.query.filter_by(
+            company_id=company_id, active=True
+        ).order_by(Branch.id.asc()).first()
+    return int(branch.id) if branch is not None else None
+
+
 def branch_id_for_record():
     return get_active_branch_id()
