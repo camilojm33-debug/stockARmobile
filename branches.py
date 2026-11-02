@@ -146,34 +146,15 @@ def transfer_stock():
     source = Branch.query.filter_by(id=source_id, company_id=company_id, active=True).first()
     target = Branch.query.filter_by(id=target_id, company_id=company_id, active=True).first()
     product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
-    if source is None or target is None or product is None or source.id == target.id or not quantity.is_finite() or quantity <= 0:
-        flash("Revisá origen, destino, producto y cantidad de la transferencia.", "danger")
-        return redirect(url_for("company_billing.company_settings", panel="branches"))
-    if quantity != quantity.quantize(Decimal("0.001")):
-        flash("La cantidad debe tener como máximo tres decimales.", "danger")
+    if source is None or target is None or product is None:
+        flash("Revisá origen, destino y producto de la transferencia.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="branches"))
     try:
-        from stockarmobile.branch_inventory import adjust_branch_stock, get_branch_stock
-        # Lock both stock rows in a stable order to prevent transfer deadlocks.
-        for locked_branch_id in sorted((source.id, target.id)):
-            get_branch_stock(product, locked_branch_id, lock=True, create=True)
-        source_stock = get_branch_stock(product, source.id, lock=True, create=True)
-        if Decimal(str(source_stock.stock or 0)) < quantity:
-            raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {source_stock.stock}.")
-        transfer = BranchStockTransfer(
-            company_id=company_id, source_branch_id=source.id, target_branch_id=target.id,
-            product_id=product.id, quantity=quantity,
-            note=(request.form.get("note") or "").strip()[:255] or None,
-            created_by_user_id=current_user.id,
+        from stockarmobile.branch_inventory import transfer_branch_stock
+        transfer = transfer_branch_stock(
+            product, source.id, target.id, quantity,
+            user_id=current_user.id, note=request.form.get("note"),
         )
-        db.session.add(transfer)
-        db.session.flush()
-        adjust_branch_stock(product, source.id, -quantity, movement_type="transfer_out",
-            source_type="branch_transfer", source_id=transfer.id, user_id=current_user.id,
-            update_company_total=False, note=f"Transferencia hacia {target.name}")
-        adjust_branch_stock(product, target.id, quantity, movement_type="transfer_in",
-            source_type="branch_transfer", source_id=transfer.id, user_id=current_user.id,
-            update_company_total=False, note=f"Transferencia desde {source.name}")
         db.session.commit()
         flash(f"Transferencia #{transfer.id}: {quantity} {product.unit_measure or 'u'} de {source.name} a {target.name}.", "success")
     except ValueError as exc:
