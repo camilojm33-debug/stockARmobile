@@ -138,14 +138,17 @@ def transfer_stock():
         return pin_blocked
     source_id = request.form.get("source_branch_id", type=int)
     target_id = request.form.get("target_branch_id", type=int)
-    product_id = request.form.get("product_id", type=int)
+    product_reference = (request.form.get("product_code") or request.form.get("product_id") or "").strip()
     try:
         quantity = Decimal((request.form.get("quantity") or "0").replace(",", "."))
     except (InvalidOperation, AttributeError):
         quantity = Decimal("0")
     source = Branch.query.filter_by(id=source_id, company_id=company_id, active=True).first()
     target = Branch.query.filter_by(id=target_id, company_id=company_id, active=True).first()
-    product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
+    product_query = Product.query.filter_by(company_id=company_id, active=True)
+    product = product_query.filter_by(barcode=product_reference).first() if product_reference else None
+    if product is None and product_reference.isdigit():
+        product = Product.query.filter_by(id=int(product_reference), company_id=company_id, active=True).first()
     if source is None or target is None or product is None:
         flash("Revisá origen, destino y producto de la transferencia.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="branches"))
