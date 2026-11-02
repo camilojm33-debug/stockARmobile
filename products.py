@@ -416,7 +416,10 @@ def _get_kardex_movements(product_id):
     if branch_id is not None:
         branch_query = branch_query.filter(BranchStockMovement.branch_id == branch_id)
     branch_movements = branch_query.filter(
-        ~BranchStockMovement.movement_type.in_(["sale", "purchase", "purchase_ai"])
+        ~db.func.coalesce(BranchStockMovement.source_type, "").in_(
+            ["sale", "sale_edit", "purchase", "vendor_ai_order"]
+        ),
+        ~BranchStockMovement.movement_type.in_(["sale", "purchase", "purchase_ai", "purchase_edit", "sale_reversal"]),
     ).order_by(
         BranchStockMovement.created_at.desc(), BranchStockMovement.id.desc()
     ).limit(500).all()
