@@ -2909,6 +2909,7 @@ def offline_page():
 def create_admin_user():
     from services.plan_service import PlanService
     from services.subscription_service import SubscriptionService
+    from stockarmobile.company_memberships import ensure_membership
 
     admin_created = False
     company = Company.query.first()
@@ -2947,6 +2948,13 @@ def create_admin_user():
         SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
     from auth import _ensure_company_default_branch
     owner_user = User.query.filter_by(company_id=company.id, role="admin", active=True).order_by(User.id.asc()).first()
+    if owner_user is not None:
+        ensure_membership(
+            db.session, owner_user, company.id,
+            role=owner_user.role,
+            permissions_json=owner_user.permissions_json or "[]",
+            active=owner_user.active,
+        )
     _ensure_company_default_branch(company, owner_user)
     db.session.commit()
     if admin_created:
