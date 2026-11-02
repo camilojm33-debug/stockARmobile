@@ -246,17 +246,21 @@ class InvoicePurchaseService:
                 previous_cost = Decimal(str(product.cost_price or 0))
                 if not previous_stock.is_finite() or previous_stock < 0:
                     raise InvoicePurchaseError("El stock existente no permite aplicar esta compra de forma segura.")
+                if branch is not None:
+                    from stockarmobile.branch_inventory import validate_stock_quantity
+                    quantity = validate_stock_quantity(quantity, label="La cantidad de la factura")
                 new_stock = previous_stock + quantity
                 average_cost = ((previous_stock * previous_cost) + (quantity * unit_cost)) / new_stock if new_stock else unit_cost
 
                 product.stock = float(new_stock)
                 if branch is not None:
-                    from stockarmobile.branch_inventory import adjust_branch_stock
+                    from stockarmobile.branch_inventory import adjust_branch_stock, reconcile_company_stock_total
                     adjust_branch_stock(
                         product, branch.id, quantity, movement_type="purchase_ai",
                         source_type="purchase", source_id=order.id, user_id=user_id,
                         update_company_total=False, note="Ingreso desde factura procesada con IA",
                     )
+                    reconcile_company_stock_total(product)
                 product.cost_price = average_cost
                 product.supplier_id = supplier.id if supplier else product.supplier_id
                 product.margin = Decimal(str(product.price or 0)) - average_cost
