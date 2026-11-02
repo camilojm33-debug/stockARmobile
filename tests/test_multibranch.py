@@ -439,3 +439,51 @@ def test_employees_only_see_assigned_active_branches(app):
             visible = accessible_branches(company.id)
             assert [row.id for row in visible] == [north.id]
         db.session.rollback()
+
+
+
+def test_ai_marketing_tools_use_employee_branch_inventory_and_sales(app):
+    from datetime import datetime
+    from flask_login import login_user
+    from app import BranchStock, Sale
+    from services.ai_agent.business_intelligence import ProductRecommendationTool, InventoryTurnoverTool
+    from services.ai_agent.tools.analyst_marketing import _branch_stock_products, _scope_sale_query
+
+    with app.app_context():
+        company = _company("Empresa IA por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="branch-ai-user", email="branch-ai-user@example.test",
+            password_hash="test-hash", role="user", active=True, company_id=company.id,
+            permissions_json='["ai_access"]',
+        )
+        product = Product(
+            company_id=company.id, barcode="AI-BR-001", name="Producto IA",
+            stock=15, min_stock=1, active=True,
+        )
+        db.session.add_all([employee, product])
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("12"))
+        set_branch_stock(product, north.id, Decimal("3"))
+        db.session.add_all([
+            Sale(company_id=company.id, branch_id=central.id, total_amount=100, date=datetime.utcnow(), status="confirmada"),
+            Sale(company_id=company.id, branch_id=north.id, total_amount=40, date=datetime.utcnow(), status="confirmada"),
+        ])
+        db.session.add(UserBranchAccess(company_id=company.id, user_id=employee.id, branch_id=north.id))
+        db.session.commit()
+
+        with app.test_request_context("/"):
+            login_user(employee)
+            recommended = ProductRecommendationTool(company_id=company.id).execute()
+            assert recommended["success"] is True
+            assert recommended["items"][0]["stock"] == 3.0
+            local_rows = _branch_stock_products(company.id, limit=20)
+            assert [row.id for row in local_rows] == [product.id]
+            local_sales = _scope_sale_query(Sale.query.filter_by(company_id=company.id), company.id).all()
+            assert len(local_sales) == 1
+            assert local_sales[0].branch_id == north.id
+            turnover = InventoryTurnoverTool(company_id=company.id).execute(days=30)
+            assert turnover["success"] is True
+            assert turnover["items"][0]["stock"] == 3.0
+        db.session.rollback()
