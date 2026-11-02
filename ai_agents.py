@@ -235,7 +235,27 @@ def _context():
     sales_total = float(sales_month.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     previous_total = float(sales_previous.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     sales_change = None if previous_total == 0 else round(((sales_total - previous_total) / previous_total) * 100, 1)
-    critical_stock = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), Product.stock <= Product.min_stock).count()
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        from app import BranchStock
+        critical_stock = Product.query.outerjoin(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == active_branch_id),
+        ).filter(
+            Product.company_id == company_id,
+            Product.active.is_(True),
+            db.func.coalesce(BranchStock.stock, 0)
+            <= db.func.coalesce(BranchStock.min_stock, Product.min_stock),
+        ).count()
+    else:
+        critical_stock = Product.query.filter(
+            Product.company_id == company_id,
+            Product.active.is_(True),
+            Product.stock <= Product.min_stock,
+        ).count()
     sold_product_ids = db.session.query(SaleItem.product_id).join(Sale).filter(Sale.company_id == company_id, Sale.created_at >= now - timedelta(days=90), Sale.status.notin_(["cancelada", "anulada"])).distinct()
     low_rotation = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), ~Product.id.in_(sold_product_ids)).count()
     vendor_metrics = _vendor_dashboard_metrics(company_id, month_start)
