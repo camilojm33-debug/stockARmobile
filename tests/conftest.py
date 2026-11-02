@@ -33,12 +33,23 @@ def _drop_migration_only_wholesale_foreign_keys():
 
 @pytest.fixture
 def app():
-    """Isolate the schema while preserving Flask's real per-request app contexts.
+    stock_app.app.config["TESTING"] = True
+    stock_app.app.config["WTF_CSRF_ENABLED"] = False
 
-    Keeping one app_context pushed across yield makes Flask-Login's g cache survive
-    between test-client requests. That does not match production and can hide bugs
-    in session-based company switching. Restrict contexts to setup and teardown.
-    """
+    with stock_app.app.app_context():
+        db.session.remove()
+        _drop_migration_only_wholesale_foreign_keys()
+        db.drop_all()
+        db.create_all()
+        yield stock_app.app
+        db.session.remove()
+        _drop_migration_only_wholesale_foreign_keys()
+        db.drop_all()
+
+
+@pytest.fixture
+def company_membership_app():
+    """Give tenant-switch tests normal, independent Flask contexts per request."""
     stock_app.app.config["TESTING"] = True
     stock_app.app.config["WTF_CSRF_ENABLED"] = False
 
