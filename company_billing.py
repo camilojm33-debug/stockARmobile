@@ -4501,7 +4501,7 @@ def company_settings_user_create():
 @bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
 @company_admin_required
 def company_settings_user_toggle(user_id):
-    from app import Branch, User, UserBranchAccess, UserCompanyMembership, db, record_audit, utcnow
+    from app import Branch, Company, User, UserBranchAccess, UserCompanyMembership, db, record_audit, utcnow
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4560,6 +4560,12 @@ def company_settings_user_toggle(user_id):
         if not user.active:
             flash("La cuenta global está desactivada. No se puede habilitar una membresía.", "warning")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
+        company = (
+            Company.query.filter_by(id=company_id, active=True)
+            .with_for_update()
+            .populate_existing()
+            .first_or_404()
+        )
         allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
         if not allowed:
             flash(message, "danger")
