@@ -383,7 +383,7 @@ class BusinessBillingService:
                     "Activá ese punto de venta antes de emitir comprobantes de la sucursal."
                 )
         else:
-            if branch is not None and not branch.is_default:
+            if branch is not None and (not branch.is_default or not branch.active):
                 raise ValueError(
                     f"No hay un punto de venta fiscal asignado a {branch.name}. "
                     "Configurá un punto de venta con el nombre de esa sucursal antes de emitir comprobantes."
