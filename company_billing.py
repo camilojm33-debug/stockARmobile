@@ -4397,9 +4397,13 @@ def company_settings_user_create():
     user = User.query.filter(db.func.lower(User.email) == email).first()
     is_existing_account = user is not None
     if is_existing_account:
-        if user.role == "superadmin" or not user.active:
-            flash("La cuenta existente no puede recibir esta invitación.", "warning")
+        if user.role in {"superadmin", "seller"} or not user.active:
+            flash("La cuenta existente no puede recibir esta invitación. Las cuentas SuperAdmin y de vendedores de referidos mantienen su acceso separado.", "warning")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
+        if user.company_id is None:
+            # Give a previously unassigned login a stable starting tenant so
+            # legacy tenant decorators can resolve its first accepted membership.
+            user.company_id = company.id
         membership = UserCompanyMembership.query.filter_by(
             user_id=user.id, company_id=company.id
         ).first()
