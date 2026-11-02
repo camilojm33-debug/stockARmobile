@@ -69,6 +69,9 @@ def create_branch():
     branch = Branch(company_id=company.id, name=name, code=code,
         address=(request.form.get("address") or "").strip()[:255] or None,
         city=(request.form.get("city") or "").strip()[:120] or None,
+        province=(request.form.get("province") or "").strip()[:120] or None,
+        phone=(request.form.get("phone") or "").strip()[:40] or None,
+        whatsapp=(request.form.get("whatsapp") or "").strip()[:40] or None,
         active=True, is_default=False)
     try:
         db.session.add(branch)
@@ -118,6 +121,9 @@ def update_branch(branch_id):
     branch.name = name
     branch.address = (request.form.get("address") or "").strip()[:255] or None
     branch.city = (request.form.get("city") or "").strip()[:120] or None
+    branch.province = (request.form.get("province") or "").strip()[:120] or None
+    branch.phone = (request.form.get("phone") or "").strip()[:40] or None
+    branch.whatsapp = (request.form.get("whatsapp") or "").strip()[:40] or None
     branch.active = active
     db.session.commit()
     flash("Sucursal actualizada.", "success")
