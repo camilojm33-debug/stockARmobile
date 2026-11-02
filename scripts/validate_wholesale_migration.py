@@ -17,6 +17,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
+LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
 HEAD_REVISION = "20261102_01_multibranch_opening"
 
 
@@ -116,7 +117,49 @@ def main() -> None:
         db.session.remove()
         _progress(f"Stamping baseline revision {BASE_REVISION}")
         stamp(directory="migrations", revision=BASE_REVISION)
-        _progress(f"Baseline stamped; applying migrations through {HEAD_REVISION}")
+        _progress(f"Applying already-released multisucursal revision {LEGACY_MULTIBRANCH_REVISION}")
+        upgrade(directory="migrations", revision=LEGACY_MULTIBRANCH_REVISION)
+        db.session.remove()
+
+        # Simulate a real sale recorded after the first multisucursal migration but
+        # before the additive opening-ledger migration is deployed.
+        with db.engine.begin() as connection:
+            migrated_branch_id = connection.execute(
+                text("SELECT id FROM branches WHERE company_id=:company_id AND is_default=TRUE"),
+                {"company_id": expected_company_id},
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "UPDATE branch_stock SET stock=14.000 "
+                    "WHERE company_id=:company_id AND branch_id=:branch_id AND product_id=:product_id"
+                ),
+                {
+                    "company_id": expected_company_id,
+                    "branch_id": migrated_branch_id,
+                    "product_id": expected_product_id,
+                },
+            )
+            connection.execute(
+                text("UPDATE products SET stock=14.0 WHERE company_id=:company_id AND id=:product_id"),
+                {"company_id": expected_company_id, "product_id": expected_product_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO branch_stock_movements("
+                    "company_id,branch_id,product_id,movement_type,quantity_delta,stock_after,"
+                    "source_type,source_id,user_id,note,created_at"
+                    ") VALUES(:company_id,:branch_id,:product_id,'sale',-3.000,14.000,"
+                    "'sale',9001,:user_id,'Venta posterior a la migración original',CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "company_id": expected_company_id,
+                    "branch_id": migrated_branch_id,
+                    "product_id": expected_product_id,
+                    "user_id": expected_user_id,
+                },
+            )
+
+        _progress(f"Applying additive opening-ledger revision {HEAD_REVISION}")
         upgrade(directory="migrations", revision="head")
         _progress("Alembic upgrade returned successfully")
         db.session.remove()
@@ -187,10 +230,23 @@ def main() -> None:
             ),
             {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
         ).one_or_none()
-        if int(migrated_access) != 1 or float(migrated_stock) != 17.0:
+        migrated_company_stock = db.session.execute(
+            text("SELECT stock FROM products WHERE company_id=:company_id AND id=:product_id"),
+            {"company_id": expected_company_id, "product_id": expected_product_id},
+        ).scalar_one()
+        movement_total = db.session.execute(
+            text(
+                "SELECT COALESCE(SUM(quantity_delta),0) FROM branch_stock_movements "
+                "WHERE company_id=:company_id AND branch_id=:branch_id AND product_id=:product_id"
+            ),
+            {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
+        ).scalar_one()
+        if int(migrated_access) != 1 or float(migrated_stock) != 14.0:
             raise AssertionError("Existing employee access or product stock was not migrated to Casa central.")
+        if float(migrated_company_stock) != 14.0 or float(movement_total) != 14.0:
+            raise AssertionError("The consolidated stock does not reconcile with the branch movement ledger.")
         if migrated_opening is None or float(migrated_opening.quantity_delta) != 17.0 or float(migrated_opening.stock_after) != 17.0:
-            raise AssertionError("The migrated opening balance is missing from branch_stock_movements.")
+            raise AssertionError("The migrated opening balance was not reconstructed before post-migration movements.")
         premium_limit = db.session.execute(
             text("SELECT max_branches FROM plans WHERE code = 'premium'")
         ).scalar_one()
