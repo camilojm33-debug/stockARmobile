@@ -29,6 +29,7 @@ def upgrade():
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.current_timestamp()),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.current_timestamp()),
         sa.UniqueConstraint("user_id", "company_id", name="uq_user_company_membership"),
+        sa.UniqueConstraint("invitation_token_hash", name="uq_user_company_membership_invitation_token_hash"),
     )
     op.create_index(
         "ix_user_company_memberships_company_active",
