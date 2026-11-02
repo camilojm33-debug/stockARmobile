@@ -360,13 +360,23 @@ def load_user(user_id):
         return user
 
     # An explicit revoked/suspended primary membership must never fall through
-    # to the legacy primary-company compatibility path.
+    # to the legacy primary-company compatibility path. Keep the identity
+    # authenticated without tenant privileges so it can accept a new invitation.
     primary_membership = (
         get_membership(user.id, primary_company_id)
         if primary_company_id is not None else None
     )
-    if primary_membership is not None:
-        return None
+    from app import CompanyMembership
+    has_any_membership = CompanyMembership.query.filter_by(user_id=user.id).first() is not None
+    if primary_membership is not None or has_any_membership:
+        from sqlalchemy.orm.attributes import set_committed_value
+        set_committed_value(user, "company_id", None)
+        set_committed_value(user, "role", "user")
+        set_committed_value(user, "permissions_json", "[]")
+        user.company_membership_active = False
+        user.company_membership_missing = True
+        session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
+        return user
 
     # Compatibility for legacy tenant accounts that have not yet received a
     # membership row (e.g. an app bootstrapped without running Alembic).
@@ -589,6 +599,27 @@ def enforce_password_change_if_required():
     if is_api_request():
         return api_error("Debes actualizar tu contraseña para continuar.", 403)
     return redirect(url_for("auth.force_password_change"))
+
+
+@app.before_request
+def enforce_membership_required_for_tenant_users():
+    """Users without an active tenant may only accept invitations or manage credentials."""
+    if not current_user.is_authenticated or not getattr(current_user, "company_membership_missing", False):
+        return None
+    endpoint = request.endpoint or ""
+    allowed = {
+        "auth.accept_company_invitation",
+        "auth.logout",
+        "auth.force_password_change",
+        "static",
+    }
+    if endpoint in allowed:
+        return None
+    from flask_login import logout_user
+    logout_user()
+    session.clear()
+    flash("Tu cuenta no tiene empresas activas. Iniciá sesión desde el enlace de una invitación vigente o contactá al administrador.", "warning")
+    return redirect(url_for("auth.login"))
 
 
 @app.before_request
