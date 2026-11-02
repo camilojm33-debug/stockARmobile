@@ -182,10 +182,11 @@ def _apply_product_purchase_totals(product_totals, *, branch_id=None):
         new_stock = previous_stock + purchase_quantity_float
         product.stock = new_stock
         if branch_id is not None:
-            from stockarmobile.branch_inventory import adjust_branch_stock
+            from stockarmobile.branch_inventory import adjust_branch_stock, reconcile_company_stock_total
             adjust_branch_stock(product, branch_id, purchase_quantity, movement_type="purchase",
                                 source_type="purchase", user_id=getattr(current_user, "id", None),
                                 update_company_total=False)
+            reconcile_company_stock_total(product)
         product.cost_price = (
             ((previous_stock * previous_cost) + purchase_value) / new_stock
             if new_stock
@@ -491,8 +492,18 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                 old_totals[product.id][1] += float(item.quantity or 0)
                 old_totals[product.id][2] += float(item.quantity or 0) * float(item.unit_cost or 0)
 
+            if purchase.branch_id is not None:
+                from decimal import Decimal, ROUND_HALF_UP
+                for totals in (old_totals, new_totals):
+                    for values in totals.values():
+                        values[1] = float(
+                            Decimal(str(values[1])).quantize(
+                                Decimal("0.001"), rounding=ROUND_HALF_UP
+                            )
+                        )
+
             affected_ids = set(old_totals) | set(new_totals)
-            for product_id in affected_ids:
+            for product_id in sorted(affected_ids):
                 old_qty = old_totals.get(product_id, [None, 0.0, 0.0])[1]
                 new_qty = new_totals.get(product_id, [None, 0.0, 0.0])[1]
                 new_value = new_totals.get(product_id, [None, 0.0, 0.0])[2]
