@@ -758,6 +758,8 @@ def accept_company_invitation(token):
         abort(404)
     if int(invited_user.id) != int(current_user.id) or (invited_user.email or "").strip().lower() != (current_user.email or "").strip().lower():
         abort(403)
+    if request.method == "GET":
+        return render_template("auth/company_invitation.html", company=company, invited_email=invited_user.email, token=token)
 
     membership.status = "active"
     membership.active = True
