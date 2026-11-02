@@ -417,3 +417,26 @@ def test_revoking_company_membership_also_revokes_branch_access(app):
         assert UserBranchAccess.query.filter_by(
             company_id=company.id, user_id=user.id
         ).count() == 0
+
+
+
+def test_tenant_employee_selectors_use_memberships_not_legacy_company_id(app):
+    from stockarmobile.company_memberships import users_for_company_query
+
+    with app.app_context():
+        company_a = _company("Empresa primaria del usuario")
+        company_b = _company("Empresa secundaria del usuario")
+        user = _user(company_a, username="shared-selector-user")
+        _membership(user, company_a, role="admin", permissions='["billing"]')
+        _membership(user, company_b, role="user", permissions='["sales"]')
+        disabled_user = _user(company_a, username="revoked-selector-user")
+        _membership(
+            disabled_user, company_b, role="user",
+            permissions='["sales"]', active=False,
+        )
+        db.session.commit()
+
+        selected = users_for_company_query(company_b.id).all()
+
+        assert [item.id for item in selected] == [user.id]
+        assert selected[0].company_id == company_a.id
