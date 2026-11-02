@@ -24,7 +24,6 @@ def upgrade():
             "SELECT bs.company_id,bs.branch_id,bs.product_id,bs.stock "
             "FROM branch_stock bs "
             "JOIN branches b ON b.id=bs.branch_id AND b.company_id=bs.company_id "
-            "WHERE b.is_default=TRUE "
             "ORDER BY bs.company_id,bs.branch_id,bs.product_id"
         )
     ).mappings().all()
