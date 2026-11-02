@@ -5243,7 +5243,6 @@ def company_settings():
         multi_branch_access=multi_branch_access,
         company_branches=company_branches,
         branch_user_access=branch_user_access,
-        branch_transfer_products=branch_transfer_products,
         branch_limit=branch_limit,
     )
 
