@@ -179,8 +179,18 @@ def main() -> None:
             text("SELECT stock FROM branch_stock WHERE company_id = :company_id AND branch_id = :branch_id AND product_id = :product_id"),
             {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
         ).scalar_one()
+        migrated_opening = db.session.execute(
+            text(
+                "SELECT quantity_delta,stock_after FROM branch_stock_movements "
+                "WHERE company_id=:company_id AND branch_id=:branch_id AND product_id=:product_id "
+                "AND movement_type='opening' AND source_type='multibranch_migration'"
+            ),
+            {"company_id": expected_company_id, "branch_id": migrated_branch, "product_id": expected_product_id},
+        ).one_or_none()
         if int(migrated_access) != 1 or float(migrated_stock) != 17.0:
             raise AssertionError("Existing employee access or product stock was not migrated to Casa central.")
+        if migrated_opening is None or float(migrated_opening.quantity_delta) != 17.0 or float(migrated_opening.stock_after) != 17.0:
+            raise AssertionError("The migrated opening balance is missing from branch_stock_movements.")
         premium_limit = db.session.execute(
             text("SELECT max_branches FROM plans WHERE code = 'premium'")
         ).scalar_one()
@@ -211,6 +221,7 @@ def main() -> None:
         print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.", flush=True)
         print("PASS: existing Negocio plan gains wholesale_pricing; Premium keeps a configurable limit of five branches.", flush=True)
         print("PASS: existing tenants, users and product stock are migrated to Casa central.", flush=True)
+        print("PASS: each migrated product balance has an idempotent opening movement in the branch Kardex.", flush=True)
         _progress("END: PostgreSQL migration validation passed")
 
 
