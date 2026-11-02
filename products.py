@@ -463,6 +463,10 @@ def kardex(product_id):
     if product is None:
         flash("Producto no encontrado.", "warning")
         return redirect(url_for("products.index"))
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    branch_id = get_active_branch_id()
+    product.branch_stock_display = available_stock(product, branch_id) if branch_id is not None else float(product.stock or 0)
     return render_template("productos/kardex.html", product=product, movements=movements, auto_print=False)
 
 
