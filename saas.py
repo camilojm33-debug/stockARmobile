@@ -5686,7 +5686,7 @@ def users_update_status(user_id):
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
-    from app import Company, PasswordRecoveryRequest, User, db
+    from app import Company, CompanyMembership, PasswordRecoveryRequest, User, db
 
     _require_superadmin()
     status = (request.args.get("status") or "all").strip().lower()
@@ -5696,13 +5696,16 @@ def password_recovery_panel():
     items = query.order_by(PasswordRecoveryRequest.requested_at.desc()).all()
     company_users = (
         db.session.query(User, Company.name)
-        .join(Company, Company.id == User.company_id)
+        .join(CompanyMembership, CompanyMembership.user_id == User.id)
+        .join(Company, Company.id == CompanyMembership.company_id)
         .filter(
-            User.company_id.isnot(None),
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
+            Company.active.is_(True),
             User.role != "superadmin",
             User.active.is_(True),
         )
-        .order_by(User.company_id.asc(), User.username.asc())
+        .order_by(Company.name.asc(), User.username.asc())
         .all()
     )
     from services.one_time_secret_service import OneTimeSecretService
