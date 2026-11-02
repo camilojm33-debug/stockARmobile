@@ -5565,7 +5565,7 @@ def users_panel():
 @bp.route("/users/<int:user_id>/role", methods=["POST"])
 @superadmin_required
 def users_update_role(user_id):
-    from app import AuditLog, User, db
+    from app import AuditLog, CompanyMembership, User, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5593,6 +5593,12 @@ def users_update_role(user_id):
         return _redirect_back("saas.users_panel")
 
     user.role = new_role
+    primary_membership = CompanyMembership.query.filter_by(
+        user_id=user.id,
+        company_id=user.company_id,
+    ).first()
+    if primary_membership is not None:
+        primary_membership.role = new_role
     db.session.add(
         AuditLog(
             user_id=current_user.id,
@@ -5611,7 +5617,7 @@ def users_update_role(user_id):
 @bp.route("/users/<int:user_id>/status", methods=["POST"])
 @superadmin_required
 def users_update_status(user_id):
-    from app import AuditLog, User, db
+    from app import AuditLog, CompanyMembership, User, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5636,16 +5642,29 @@ def users_update_status(user_id):
         flash("El usuario ya tiene ese estado.", "info")
         return _redirect_back("saas.users_panel")
 
-    if not new_active and user.role == "admin":
-        remaining_admins = User.query.filter(
-            User.company_id == user.company_id,
-            User.role == "admin",
-            User.active.is_(True),
-            User.id != user.id,
-        ).count()
-        if remaining_admins == 0:
-            flash("No se puede desactivar al único administrador activo de la empresa.", "warning")
-            return _redirect_back("saas.users_panel")
+    if not new_active:
+        admin_memberships = CompanyMembership.query.filter_by(
+            user_id=user.id,
+            role="admin",
+            active=True,
+            status="active",
+        ).all()
+        for membership in admin_memberships:
+            remaining_admins = (
+                CompanyMembership.query.join(User, User.id == CompanyMembership.user_id)
+                .filter(
+                    CompanyMembership.company_id == membership.company_id,
+                    CompanyMembership.role == "admin",
+                    CompanyMembership.active.is_(True),
+                    CompanyMembership.status == "active",
+                    User.active.is_(True),
+                    User.id != user.id,
+                )
+                .count()
+            )
+            if remaining_admins == 0:
+                flash("No se puede desactivar la cuenta global: dejaría una empresa sin administrador activo.", "warning")
+                return _redirect_back("saas.users_panel")
 
     previous = bool(user.active)
     user.active = new_active
