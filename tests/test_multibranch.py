@@ -762,6 +762,9 @@ def test_ai_invoice_purchase_and_ai_sale_reject_excess_branch_precision(app):
         db.session.add_all([user, supplier, product])
         db.session.flush()
         set_branch_stock(product, branch.id, Decimal("10"))
+        # The service owns and rolls back its transaction on validation failure;
+        # commit the fixture so that rollback only removes the attempted purchase.
+        db.session.commit()
 
         invoice = {
             "status": "LISTA_PARA_CONFIRMAR",
