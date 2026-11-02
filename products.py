@@ -294,23 +294,23 @@ def edit(product_id=None, id=None):
             return redirect(url_for("products.edit", product_id=product.id))
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
-        old_company_stock = float(product.stock or 0)
         from stockarmobile.branch_context import get_active_branch_id
         branch_id = get_active_branch_id()
-        old_branch_stock = 0.0
         if branch_id is not None:
-            from stockarmobile.branch_inventory import get_branch_stock
-            branch_stock_row = get_branch_stock(product, branch_id, lock=True)
-            old_branch_stock = float(branch_stock_row.stock or 0) if branch_stock_row is not None else 0.0
+            from stockarmobile.branch_inventory import lock_product_stock_row
+            lock_product_stock_row(product)
+            db.session.refresh(product, attribute_names=["stock"])
         try:
             _apply_product_form(product, form)
             if branch_id is not None:
                 new_branch_stock = float(product.stock or 0)
-                product.stock = old_company_stock + new_branch_stock - old_branch_stock
-                from stockarmobile.branch_inventory import set_branch_stock
-                set_branch_stock(product, branch_id, new_branch_stock, movement_type="manual_adjustment",
-                                 user_id=current_user.id, note="Ajuste manual desde ficha de producto")
+                from stockarmobile.branch_inventory import set_branch_stock_and_reconcile
+                set_branch_stock_and_reconcile(
+                    product, branch_id, new_branch_stock, movement_type="manual_adjustment",
+                    user_id=current_user.id, note="Ajuste manual desde ficha de producto",
+                )
         except ValueError as exc:
+            db.session.rollback()
             flash(str(exc), "danger")
             return redirect(url_for("products.edit", product_id=product.id))
         upload = request.files.get("photo_file")
@@ -831,7 +831,7 @@ def import_excel():
         stock_changes = 0
 
         from stockarmobile.branch_context import get_active_branch_id
-        from stockarmobile.branch_inventory import get_branch_stock, set_branch_stock
+        from stockarmobile.branch_inventory import get_branch_stock
         branch_id = get_active_branch_id()
         try:
             for data in records:
@@ -855,11 +855,14 @@ def import_excel():
                     updated += 1
                     action = "actualizacion_importacion"
 
+                if branch_id is not None:
+                    from stockarmobile.branch_inventory import lock_product_stock_row
+                    lock_product_stock_row(product)
+                    db.session.refresh(product, attribute_names=["stock"])
                 old_price = float(product.price or 0)
                 old_cost = float(product.cost_price or 0)
                 old_stock = float(product.stock or 0)
                 branch_stock_row = get_branch_stock(product, branch_id, lock=True, create=True) if branch_id is not None else None
-                old_branch_stock = float(branch_stock_row.stock or 0) if branch_stock_row is not None else None
 
                 product.name = data["name"]
                 product.active = True
@@ -875,9 +878,11 @@ def import_excel():
                     product.price = data["price"]
                 if data["stock"] is not None:
                     if branch_id is not None:
-                        product.stock = old_stock + float(data["stock"]) - float(old_branch_stock or 0)
-                        set_branch_stock(product, branch_id, data["stock"], movement_type="excel_import",
-                                         user_id=current_user.id, note="Stock actualizado desde Excel")
+                        from stockarmobile.branch_inventory import set_branch_stock_and_reconcile
+                        set_branch_stock_and_reconcile(
+                            product, branch_id, data["stock"], movement_type="excel_import",
+                            user_id=current_user.id, note="Stock actualizado desde Excel",
+                        )
                     else:
                         product.stock = data["stock"]
                 if data["min_stock"] is not None:

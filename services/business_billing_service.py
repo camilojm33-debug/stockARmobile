@@ -360,9 +360,15 @@ class BusinessBillingService:
             return existing
 
         doc_type = ((getattr(sale, "tipo_comprobante", None) or "factura_b") or "factura_b").strip().lower()
+        sale_branch_id = getattr(sale, "branch_id", None)
         branch = Branch.query.filter_by(
-            id=getattr(sale, "branch_id", None), company_id=company.id, active=True
-        ).first() if getattr(sale, "branch_id", None) else None
+            id=sale_branch_id, company_id=company.id
+        ).first() if sale_branch_id else None
+        if sale_branch_id and branch is None:
+            raise ValueError(
+                "La sucursal original de esta venta ya no pertenece a la empresa. "
+                "No se emitió el comprobante para evitar perder su atribución."
+            )
         points = config.get("points_of_sale") or []
         matching_points = [
             row for row in points
@@ -370,10 +376,14 @@ class BusinessBillingService:
             and str(row.get("branch") or "").strip().casefold() == branch.name.strip().casefold()
         ]
         if matching_points:
-            selected_pos = next((row for row in matching_points if row.get("active")), matching_points[0])
+            selected_pos = next((row for row in matching_points if row.get("active")), None)
+            if selected_pos is None:
+                raise ValueError(
+                    f"El punto de venta fiscal asignado a {branch.name} está inactivo. "
+                    "Activá ese punto de venta antes de emitir comprobantes de la sucursal."
+                )
         else:
-            active_branch_count = Branch.query.filter_by(company_id=company.id, active=True).count()
-            if branch is not None and not branch.is_default and active_branch_count > 1:
+            if branch is not None and (not branch.is_default or not branch.active):
                 raise ValueError(
                     f"No hay un punto de venta fiscal asignado a {branch.name}. "
                     "Configurá un punto de venta con el nombre de esa sucursal antes de emitir comprobantes."

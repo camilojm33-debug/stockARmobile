@@ -2,6 +2,7 @@
 import re
 from flask import Blueprint, abort, current_app, flash, redirect, request, session, url_for
 from flask_login import current_user
+from sqlalchemy import func
 from app import Branch, Company, User, UserBranchAccess, db, tenant_required, company_admin_required
 from stockarmobile.branch_context import SESSION_KEY
 
@@ -9,6 +10,37 @@ bp = Blueprint("branches", __name__, url_prefix="/sucursales")
 
 def _company_id():
     return int(getattr(current_user, "company_id", 0) or 0)
+
+
+def _lock_company_for_branch_limit(company_id):
+    """Serialize branch creation/reactivation for a company on databases with row locks."""
+    return (
+        Company.query.filter_by(id=company_id, active=True)
+        .with_for_update()
+        .populate_existing()
+        .first_or_404()
+    )
+
+
+def _has_pending_invoice_sales(company_id, branch_id):
+    from app import Sale
+
+    cancelled_statuses = (
+        "anulada", "anulado", "cancelada", "cancelado",
+        "rechazada", "cancelled", "canceled", "void", "voided",
+    )
+    return (
+        Sale.query.filter_by(
+            company_id=company_id,
+            branch_id=branch_id,
+            requiere_comprobante=True,
+            comprobante_emitido=False,
+        )
+        .filter(func.lower(func.coalesce(Sale.status, "")).notin_(cancelled_statuses))
+        .first()
+        is not None
+    )
+
 
 def _require_company_pin(company):
     from company_billing import _pin_guard
@@ -51,6 +83,7 @@ def create_branch():
     pin_blocked = _require_company_pin(company)
     if pin_blocked:
         return pin_blocked
+    company = _lock_company_for_branch_limit(company.id)
     from services.plan_usage_service import PlanUsageService
     _subscription, plan = PlanUsageService._active_plan_for_company(company.id)
     limit = max(1, int(getattr(plan, "max_branches", 1) or 1))
@@ -76,8 +109,10 @@ def create_branch():
     try:
         db.session.add(branch)
         db.session.flush()
-        session[SESSION_KEY] = int(branch.id)
+        created_branch_id = int(branch.id)
         db.session.commit()
+        session[SESSION_KEY] = created_branch_id
+        session.modified = True
         flash(f"Sucursal {branch.name} creada. Asigná el personal que tendrá acceso.", "success")
     except Exception:
         db.session.rollback()
@@ -96,6 +131,7 @@ def update_branch(branch_id):
     pin_blocked = _require_company_pin(company)
     if pin_blocked:
         return pin_blocked
+    company = _lock_company_for_branch_limit(company_id)
     branch = Branch.query.filter_by(id=branch_id, company_id=company_id).first_or_404()
     name = (request.form.get("name") or "").strip()[:120]
     if len(name) < 2:
@@ -117,6 +153,12 @@ def update_branch(branch_id):
         from app import CashSession
         if CashSession.query.filter_by(branch_id=branch.id, status="abierta").first() is not None:
             flash("Cerrá las cajas abiertas de esta sucursal antes de desactivarla.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+        if _has_pending_invoice_sales(company_id, branch.id):
+            flash(
+                "Emití los comprobantes pendientes o anulá esas ventas antes de desactivar la sucursal.",
+                "warning",
+            )
             return redirect(url_for("company_billing.company_settings", panel="branches"))
     branch.name = name
     branch.address = (request.form.get("address") or "").strip()[:255] or None
