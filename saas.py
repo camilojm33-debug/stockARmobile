@@ -5516,8 +5516,16 @@ def users_panel():
             account_active=bool(user.active),
             invitation_pending=bool(
                 membership.invitation_token_hash
+                and (
+                    membership.invitation_expires_at is None
+                    or membership.invitation_expires_at > utcnow()
+                )
+                and not membership.active
+            ),
+            invitation_expired=bool(
+                membership.invitation_token_hash
                 and membership.invitation_expires_at
-                and membership.invitation_expires_at > utcnow()
+                and membership.invitation_expires_at <= utcnow()
                 and not membership.active
             ),
             can_manage_membership=True,
@@ -5558,6 +5566,7 @@ def users_panel():
                 membership_active=None,
                 account_active=bool(user.active),
                 invitation_pending=False,
+                invitation_expired=False,
                 can_manage_membership=False,
             ))
 
@@ -5634,12 +5643,7 @@ def users_update_status(user_id):
         flash("Estado inválido.", "danger")
         return _redirect_back("saas.users_panel")
     new_active = desired == "1"
-    invitation_pending = bool(
-        membership.invitation_token_hash
-        and membership.invitation_expires_at
-        and membership.invitation_expires_at > utcnow()
-        and not membership.active
-    )
+    invitation_pending = bool(membership.invitation_token_hash and not membership.active)
     if invitation_pending:
         if new_active:
             flash("La persona debe aceptar la invitación antes de habilitar su acceso.", "warning")
