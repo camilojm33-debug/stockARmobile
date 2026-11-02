@@ -65,6 +65,13 @@ def _company_quotes_enabled(company):
     return bool(preferences.get("quotes_module_enabled"))
 
 
+def _quote_branch_stock(product, branch_id=None):
+    from stockarmobile.branch_context import get_active_branch_id
+    from stockarmobile.branch_inventory import available_stock
+    effective_branch_id = branch_id or get_active_branch_id()
+    return available_stock(product, effective_branch_id) if effective_branch_id is not None else float(product.stock or 0)
+
+
 def _next_quote_number(company_id):
     try:
         from services.ai_agent.quote_creation_service import next_quote_number
@@ -432,7 +439,7 @@ def _quote_cart_prefill_item(quote_item, product, *, quantity=None):
         "wholesaleReferencePrice": float(reference_price) if reference_price is not None else None,
         "wholesaleDiscountAmount": float(wholesale_saving),
         "quantity": float(quantity_value),
-        "stock": max(float(getattr(product, "stock", 0) or 0), 0.0),
+        "stock": max(_quote_branch_stock(product, getattr(getattr(quote_item, "quote", None), "branch_id", None)), 0.0),
         "barcode": str(getattr(product, "barcode", None) or "")[:80],
         "unitMeasure": str(getattr(product, "unit_measure", None) or "u")[:20],
     }
@@ -1033,7 +1040,7 @@ def _build_product_catalog(products):
                 "name": name,
                 "category": category,
                 "barcode": code,
-                "stock": float(getattr(product, "stock", 0) or 0),
+                "stock": _quote_branch_stock(product),
                 "price": float(getattr(product, "price", 0) or 0),
                 "price_lists": price_tiers.get(int(product.id), {}),
                 "discount": float(getattr(product, "discount", 0) or 0),
