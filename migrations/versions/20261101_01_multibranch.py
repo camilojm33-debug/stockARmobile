@@ -117,56 +117,8 @@ def upgrade():
         if _has_table(bind,"products"):
             products=bind.execute(sa.text("SELECT id,stock,min_stock FROM products WHERE company_id=:cid"),{"cid":company["id"]}).all()
             for product in products:
-                stock_row = bind.execute(
-                    sa.text("SELECT id,stock FROM branch_stock WHERE branch_id=:bid AND product_id=:pid"),
-                    {"bid": branch_id, "pid": product[0]},
-                ).mappings().first()
-                if stock_row is None:
-                    bind.execute(
-                        sa.text(
-                            "INSERT INTO branch_stock(company_id,branch_id,product_id,stock,min_stock,reserved_stock,updated_at) "
-                            "VALUES(:cid,:bid,:pid,:stock,:minimum,0,CURRENT_TIMESTAMP)"
-                        ),
-                        {
-                            "cid": company["id"], "bid": branch_id, "pid": product[0],
-                            "stock": product[1] or 0, "minimum": product[2] or 0,
-                        },
-                    )
-                    migrated_stock_value = product[1] or 0
-                else:
-                    migrated_stock_value = stock_row["stock"] or 0
-
-                opening_exists = bind.execute(
-                    sa.text(
-                        "SELECT id FROM branch_stock_movements "
-                        "WHERE company_id=:cid AND branch_id=:bid AND product_id=:pid "
-                        "AND movement_type='opening' AND source_type='multibranch_migration' LIMIT 1"
-                    ),
-                    {"cid": company["id"], "bid": branch_id, "pid": product[0]},
-                ).first()
-                if not opening_exists:
-                    bind.execute(
-                        sa.text(
-                            "INSERT INTO branch_stock_movements("
-                            "company_id,branch_id,product_id,movement_type,quantity_delta,stock_after,"
-                            "source_type,source_id,user_id,note,created_at"
-                            ") VALUES(:cid,:bid,:pid,'opening',:quantity,:stock_after,"
-                            "'multibranch_migration',NULL,NULL,:note,CURRENT_TIMESTAMP)"
-                        ),
-                        {
-                            "cid": company["id"], "bid": branch_id, "pid": product[0],
-                            "quantity": migrated_stock_value, "stock_after": migrated_stock_value,
-                            "note": "Saldo inicial migrado a Casa central durante la activación multisucursal",
-                        },
-                    )
-                aggregate_stock = bind.execute(
-                    sa.text("SELECT COALESCE(SUM(stock),0) FROM branch_stock WHERE company_id=:cid AND product_id=:pid"),
-                    {"cid": company["id"], "pid": product[0]},
-                ).scalar_one()
-                bind.execute(
-                    sa.text("UPDATE products SET stock=:stock WHERE company_id=:cid AND id=:pid"),
-                    {"stock": aggregate_stock, "cid": company["id"], "pid": product[0]},
-                )
+                if not bind.execute(sa.text("SELECT id FROM branch_stock WHERE branch_id=:bid AND product_id=:pid"),{"bid":branch_id,"pid":product[0]}).first():
+                    bind.execute(sa.text("INSERT INTO branch_stock(company_id,branch_id,product_id,stock,min_stock,reserved_stock,updated_at) VALUES(:cid,:bid,:pid,:stock,:minimum,0,CURRENT_TIMESTAMP)"),{"cid":company["id"],"bid":branch_id,"pid":product[0],"stock":product[1] or 0,"minimum":product[2] or 0})
 
     # Reconcile the legacy integer values before adding referential integrity.
     # Some historical values were not real branch IDs and must not block deploy.
