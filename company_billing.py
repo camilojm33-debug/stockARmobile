@@ -4362,8 +4362,8 @@ def company_settings_user_delete(user_id):
 @bp.route("/company-settings/users/create", methods=["POST"])
 @company_admin_required
 def company_settings_user_create():
-    from app import Branch, User, UserBranchAccess, UserCompanyMembership, db, record_audit
-    from stockarmobile.company_memberships import ensure_membership
+    from app import User, UserCompanyMembership, db, record_audit
+    from services.company_membership_invitation_service import CompanyMembershipInvitationService
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4388,19 +4388,14 @@ def company_settings_user_create():
     is_existing_account = user is not None
     if is_existing_account:
         if user.role == "superadmin" or not user.active:
-            flash("La cuenta existente no puede vincularse a esta empresa.", "warning")
+            flash("La cuenta existente no puede recibir esta invitación.", "warning")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         membership = UserCompanyMembership.query.filter_by(
             user_id=user.id, company_id=company.id
         ).first()
         if membership is not None and membership.active:
-            flash("Esta cuenta ya pertenece a la empresa.", "info")
+            flash("Esta cuenta ya tiene acceso activo a la empresa.", "info")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
-        ensure_membership(
-            db.session, user, company.id,
-            role=role, permissions_json="[]", active=True,
-        )
-        credential_message = "La cuenta existente quedó vinculada. Puede entrar con su correo y contraseña habituales."
     else:
         if not username:
             flash("Para crear una cuenta nueva, completá el nombre de usuario. Si la persona ya tiene cuenta, alcanza con su email.", "danger")
@@ -4414,7 +4409,7 @@ def company_settings_user_create():
             username=username,
             email=email,
             company_id=company.id,
-            role=role,
+            role="user",
             active=True,
             auth_provider="local",
             permissions_json="[]",
@@ -4427,26 +4422,31 @@ def company_settings_user_create():
         user.must_change_password = True
         db.session.add(user)
         db.session.flush()
-        ensure_membership(
-            db.session, user, company.id,
-            role=role, permissions_json="[]", active=True,
-        )
-        credential_message = f"Cuenta creada. Contraseña temporal: {temp_password}. Deberá cambiarla al ingresar."
 
-    default_branch = Branch.query.filter_by(company_id=company.id, is_default=True, active=True).first()
-    if default_branch is not None and UserBranchAccess.query.filter_by(
-        company_id=company.id, user_id=user.id, branch_id=default_branch.id
-    ).first() is None:
-        db.session.add(UserBranchAccess(company_id=company.id, user_id=user.id, branch_id=default_branch.id))
-
+    membership, invitation_url, email_sent = CompanyMembershipInvitationService.create_or_refresh(
+        db.session,
+        user=user,
+        company=company,
+        role=role,
+        permissions_json="[]",
+    )
     record_audit(
-        action="company_user_link" if is_existing_account else "company_user_create",
+        action="company_membership_invited",
         entity="user",
         entity_id=user.id,
-        detail=f"{'Cuenta existente vinculada' if is_existing_account else 'Cuenta nueva creada'} a company_id={company.id} con rol={role}",
+        detail=f"Invitación {'reenviada' if is_existing_account else 'creada'} para company_id={company.id}, role={role}, expires_at={membership.invitation_expires_at}.",
     )
     db.session.commit()
-    flash(credential_message, "success")
+
+    if email_sent:
+        message = f"Invitación enviada a {email}. La persona debe iniciar sesión y aceptarla dentro de 7 días."
+        if not is_existing_account:
+            message += f" Contraseña temporal para el primer ingreso: {temp_password}."
+    else:
+        message = f"No se pudo enviar el correo automáticamente. Compartí este enlace de invitación: {invitation_url}"
+        if not is_existing_account:
+            message += f" Contraseña temporal para el primer ingreso: {temp_password}."
+    flash(message, "success" if email_sent else "warning")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 @bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
