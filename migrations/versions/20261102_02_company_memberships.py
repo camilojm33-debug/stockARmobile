@@ -24,6 +24,7 @@ def upgrade():
         sa.Column("invitation_token_hash", sa.String(length=64), nullable=True),
         sa.Column("invitation_expires_at", sa.DateTime(), nullable=True),
         sa.Column("invitation_password_setup_required", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("invitation_acceptance_required", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("invited_email", sa.String(length=160), nullable=True),
         sa.Column("invited_at", sa.DateTime(), nullable=True),
         sa.Column("accepted_at", sa.DateTime(), nullable=True),
