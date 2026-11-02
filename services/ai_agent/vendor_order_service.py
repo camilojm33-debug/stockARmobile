@@ -945,7 +945,7 @@ class VendorOrderService:
                 "quantity": float(quantity),
                 "unit_measure": product.unit_measure or "u",
                 "unit_price": float(promotion.unit_price),
-                "stock": normalized_stock_quantity(product.stock),
+                "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
                 "subtotal": float(subtotal),
                 "promotion_id": promotion.promotion_id,
                 "promotion_name": promotion.promotion_name,
@@ -1100,7 +1100,7 @@ class VendorOrderService:
             requested_total = quantity if replace_quantity else existing + quantity
             if requested_total > available:
                 raise ValueError(
-                    f"Stock insuficiente para {product.name}. Disponible: {product.stock:g}; solicitado: {requested_total:g}."
+                    f"Stock insuficiente para {product.name}. Disponible: {available:g}; solicitado: {requested_total:g}."
                 )
             if str(product.id) not in cart and len(cart) >= MAX_CART_LINES:
                 raise ValueError(f"El carrito admite hasta {MAX_CART_LINES} productos diferentes.")
