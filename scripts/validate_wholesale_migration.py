@@ -77,11 +77,15 @@ def main() -> None:
         product = Product(barcode="MIG-001", name="Producto migración", stock=17, min_stock=3,
                           active=True, company_id=company.id)
         db.session.add_all([user, product])
-        db.session.commit()
-        _progress("Seeded representative company, Premium/Negocio plans, user and product")
+        db.session.flush()
+        # Capture primary keys before commit expires ORM instances and a later
+        # attribute read opens a new transaction that can lock the tables during DDL.
         expected_company_id = company.id
         expected_user_id = user.id
         expected_product_id = product.id
+        db.session.commit()
+        db.session.remove()
+        _progress("Seeded representative company, Premium/Negocio plans, user and product; ORM session closed")
 
         _progress("Rewinding disposable schema to the pre-feature state")
         with db.engine.begin() as connection:
