@@ -730,6 +730,11 @@ def switch_company():
         detail=f"Cambio de empresa desde company_id={previous_company_id} hacia company_id={target_company_id}.",
     )
     db.session.commit()
+    # Flask-Login caches the identity on the application context. Invalidate
+    # that cache so the next request reloads the membership selected in session.
+    from flask import g
+    g.pop("_login_user", None)
+    g.pop("_stockarmobile_membership_context_key", None)
     flash(f"Empresa activa: {company.name}.", "success")
     return redirect(url_for("dashboard.index"))
 
@@ -796,5 +801,10 @@ def accept_company_invitation(token):
         detail=f"Invitación de acceso aceptada por usuario_id={invited_user.id}.",
     )
     db.session.commit()
+    # Reload the authenticated identity on the following request using the
+    # newly accepted membership, rather than retaining a pre-invitation cache.
+    from flask import g
+    g.pop("_login_user", None)
+    g.pop("_stockarmobile_membership_context_key", None)
     flash(f"Ya tenés acceso a {company.name}.", "success")
     return redirect(url_for("dashboard.index"))
