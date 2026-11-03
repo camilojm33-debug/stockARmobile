@@ -617,11 +617,13 @@ def refresh_cached_company_membership_context():
         session.clear()
         return None
 
-    # Refresh even when Flask-Login has a cached ORM instance. This discards
-    # any transient company_id/role/permissions from the previous tenant.
+    # Flask-Login may have loaded this identity through an application-scoped
+    # SQLAlchemy session that survived a preserved app context (notably in tests
+    # and embedded clients). Drop that read-only identity map before reloading so
+    # a stale User row cannot leak its role or company into this request.
+    db.session.remove()
     identity = (
         db.session.query(User)
-        .populate_existing()
         .filter(User.id == user_id)
         .first()
     )
