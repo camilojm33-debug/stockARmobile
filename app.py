@@ -584,27 +584,56 @@ def trace_mp_qr_response(response):
     return response
 
 
-@app.before_request
 def refresh_cached_company_membership_context():
-    """Bind the session-selected company from a verified active membership."""
+    """Reload the identity and bind only its session-selected active membership.
+
+    Flask-Login caches the authenticated user on the application context. A tenant
+    switch must never reuse membership-specific ORM attributes from a previous
+    request. Refresh the persisted identity, replace Flask-Login's cached object,
+    then apply the authorized membership selected in the signed session.
+    """
     if not current_user.is_authenticated:
         return None
 
-    from app import Company, CompanyMembership
+    from flask_login import logout_user
+    from app import Company, CompanyMembership, User
     from stockarmobile.company_memberships import (
         ACTIVE_COMPANY_SESSION_KEY,
         apply_membership_context,
         choose_membership_for_login,
     )
 
-    user_id = int(current_user.id)
-    selected_company_id = session.get(ACTIVE_COMPANY_SESSION_KEY)
-    if (getattr(current_user, "role", None) or "").strip().lower() == "superadmin":
+    try:
+        user_id = int(current_user.get_id())
+    except (TypeError, ValueError):
+        logout_user()
+        session.clear()
         return None
 
-    # The selected session tenant takes precedence over the legacy primary
-    # company. Check the exact membership row first; this keeps role/permissions
-    # independent for shared accounts and avoids silently reverting to primary.
+    # Refresh even when Flask-Login has a cached ORM instance. This discards
+    # any transient company_id/role/permissions from the previous tenant.
+    identity = (
+        db.session.query(User)
+        .populate_existing()
+        .filter(User.id == user_id)
+        .first()
+    )
+    if identity is None or not bool(identity.active):
+        logout_user()
+        session.clear()
+        return None
+
+    # Make every subsequent current_user access in this request resolve to
+    # the refreshed object, not the stale LocalProxy target.
+    g._login_user = identity
+
+    if (identity.role or "").strip().lower() == "superadmin":
+        g.current_company_id = None
+        g.current_user_role = "superadmin"
+        g._stockarmobile_membership_context_key = (user_id, "superadmin")
+        return None
+
+    selected_company_id = session.get(ACTIVE_COMPANY_SESSION_KEY)
     membership = None
     if selected_company_id is not None:
         try:
@@ -621,74 +650,61 @@ def refresh_cached_company_membership_context():
                     status="active",
                 ).first()
 
+    if membership is None:
+        membership = choose_membership_for_login(identity, selected_company_id)
+
     if membership is not None:
-        apply_membership_context(current_user, membership)
-        session[ACTIVE_COMPANY_SESSION_KEY] = int(membership.company_id)
-        g._stockarmobile_membership_context_key = (user_id, str(int(membership.company_id)))
-        g.current_company_id = int(membership.company_id)
+        apply_membership_context(identity, membership)
+        selected_company_id = int(membership.company_id)
+        session[ACTIVE_COMPANY_SESSION_KEY] = selected_company_id
+        g.current_company_id = selected_company_id
         g.current_user_role = membership.role or "user"
+        g._stockarmobile_membership_context_key = (user_id, str(selected_company_id))
         return None
 
-    # Invalid or missing selection: validate the normal primary/available
-    # membership fallback. Never trust a tenant ID merely because it is in
-    # the signed session cookie.
-    membership = choose_membership_for_login(current_user, selected_company_id)
-    if membership is not None:
-        apply_membership_context(current_user, membership)
-        session[ACTIVE_COMPANY_SESSION_KEY] = int(membership.company_id)
-        g._stockarmobile_membership_context_key = (user_id, str(int(membership.company_id)))
-        g.current_company_id = int(membership.company_id)
-        g.current_user_role = membership.role or "user"
-        return None
-
-    # No active membership was selected. Distinguish a truly legacy identity
-    # from a user whose company access was explicitly revoked or is invitation-only.
-    identity = db.session.query(
-        User.company_id,
-        User.role,
-        User.permissions_json,
-        User.active,
-    ).filter(User.id == user_id).first()
+    # No active membership remains. Keep the identity authenticated only for
+    # invitation acceptance; do not fall back to a revoked primary tenant.
     memberships = CompanyMembership.query.filter_by(user_id=user_id).all()
-    primary_company_id = identity.company_id if identity is not None else None
+    primary_company_id = identity.company_id
     primary_membership = next(
-        (row for row in memberships if primary_company_id is not None and int(row.company_id) == int(primary_company_id)),
+        (
+            row for row in memberships
+            if primary_company_id is not None and int(row.company_id) == int(primary_company_id)
+        ),
         None,
     )
 
     if primary_membership is not None or memberships:
         from sqlalchemy.orm.attributes import set_committed_value
 
-        set_committed_value(current_user, "company_id", None)
-        set_committed_value(current_user, "role", "user")
-        set_committed_value(current_user, "permissions_json", "[]")
-        current_user.company_membership_active = False
-        current_user.company_membership_missing = True
+        set_committed_value(identity, "company_id", None)
+        set_committed_value(identity, "role", "user")
+        set_committed_value(identity, "permissions_json", "[]")
+        identity.company_membership_active = False
+        identity.company_membership_missing = True
         session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
-        g._stockarmobile_membership_context_key = (user_id, "")
         g.current_company_id = None
         g.current_user_role = "user"
-    elif identity is not None and primary_company_id is not None:
-        # Preserve compatibility for old accounts that have not received a
-        # membership row yet; restore their persisted primary-company attributes.
-        from sqlalchemy.orm.attributes import set_committed_value
+        g._stockarmobile_membership_context_key = (user_id, "")
+        return None
 
-        set_committed_value(current_user, "company_id", int(primary_company_id))
-        set_committed_value(current_user, "role", identity.role or "user")
-        set_committed_value(current_user, "permissions_json", identity.permissions_json or "[]")
-        current_user.company_membership_active = bool(identity.active)
-        current_user.company_membership_role = identity.role or "user"
-        current_user.company_membership_missing = False
+    # Backward compatibility for a legacy account not yet backfilled.
+    if primary_company_id is not None:
+        identity.company_membership_active = bool(identity.active)
+        identity.company_membership_role = identity.role or "user"
+        identity.company_membership_missing = False
         session[ACTIVE_COMPANY_SESSION_KEY] = int(primary_company_id)
-        g._stockarmobile_membership_context_key = (user_id, str(int(primary_company_id)))
         g.current_company_id = int(primary_company_id)
         g.current_user_role = identity.role or "user"
-    else:
-        current_user.company_membership_missing = False
-        g._stockarmobile_membership_context_key = (user_id, "")
-        g.current_company_id = None
-        g.current_user_role = getattr(current_user, "role", None)
+        g._stockarmobile_membership_context_key = (user_id, str(int(primary_company_id)))
+        return None
+
+    identity.company_membership_missing = False
+    g.current_company_id = None
+    g.current_user_role = identity.role or "user"
+    g._stockarmobile_membership_context_key = (user_id, "")
     return None
+
 
 @app.before_request
 def enforce_password_change_if_required():
