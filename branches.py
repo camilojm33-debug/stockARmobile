@@ -212,14 +212,13 @@ def search_transfer_products():
         ).filter(BranchStock.stock > 0)
         product_query = product_query.filter(Product.id.in_(available_product_ids))
 
-    categories = [
+    categories = sorted({
         row[0] for row in db.session.query(Product.category)
         .filter_by(company_id=company_id, active=True)
         .filter(Product.category.isnot(None), func.trim(Product.category) != "")
         .distinct()
-        .order_by(func.lower(Product.category))
         .all()
-    ]
+    }, key=lambda value: value.casefold())
     total = product_query.count()
     products = product_query.order_by(func.lower(Product.name), Product.id).offset(offset).limit(limit).all()
     product_ids = [product.id for product in products]
