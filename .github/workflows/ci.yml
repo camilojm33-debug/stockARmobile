@@ -58,6 +58,8 @@ jobs:
         run: node --check static/assets/js/offline-manager-core.js
       - name: Check cart manager
         run: node --check static/assets/js/cart-manager.js
+      - name: Check branch transfer manager
+        run: node --check static/assets/js/branch-transfer-manager.js
       - name: Run tests
         id: tests
         shell: bash

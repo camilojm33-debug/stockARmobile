@@ -128,6 +128,47 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     return transfer
 
 
+def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None):
+    """Transfer several products in one caller-controlled database transaction.
+
+    Products are locked in ascending ID order so concurrent multi-product
+    transfers acquire product locks consistently. The caller must commit only
+    after this function returns and roll back if any line raises ValueError.
+    """
+    normalized = []
+    seen_product_ids = set()
+    for item in items or ():
+        try:
+            product, quantity = item
+        except (TypeError, ValueError):
+            raise ValueError("La lista de productos de la transferencia no es válida.") from None
+        product_id = int(getattr(product, "id", 0) or 0)
+        if product_id <= 0:
+            raise ValueError("Hay un producto inválido en la transferencia.")
+        if product_id in seen_product_ids:
+            raise ValueError("No repitas un producto en la misma transferencia.")
+        seen_product_ids.add(product_id)
+        normalized.append((product_id, product, quantity))
+
+    if not normalized:
+        raise ValueError("Agregá al menos un producto a la transferencia.")
+    if len(normalized) > 100:
+        raise ValueError("Una transferencia puede incluir hasta 100 productos por operación.")
+
+    normalized.sort(key=lambda row: row[0])
+    transfers = []
+    for _product_id, product, quantity in normalized:
+        transfers.append(transfer_branch_stock(
+            product,
+            source_branch_id,
+            target_branch_id,
+            quantity,
+            user_id=user_id,
+            note=note,
+        ))
+    return transfers
+
+
 def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", user_id=None, note=None):
     lock_product_stock_row(product)
     row = get_branch_stock(product, branch_id, lock=True, create=True)
