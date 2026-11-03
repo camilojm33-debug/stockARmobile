@@ -479,9 +479,15 @@ def _complete_pending_branch_user_assignment(company):
 
     # A pending operation is tied to the administrator and tenant that submitted
     # it. Never replay it in another user's session.
+    try:
+        pending_company_id = int(pending.get("company_id") or 0)
+        pending_owner_id = int(pending.get("owner_user_id") or 0)
+    except (TypeError, ValueError):
+        pending_company_id = 0
+        pending_owner_id = 0
     if (
-        int(pending.get("company_id") or 0) != int(company.id)
-        or int(pending.get("owner_user_id") or 0) != int(getattr(current_user, "id", 0) or 0)
+        pending_company_id != int(company.id)
+        or pending_owner_id != int(getattr(current_user, "id", 0) or 0)
         or (getattr(current_user, "role", None) or "").lower() != "admin"
     ):
         session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
@@ -507,6 +513,14 @@ def _complete_pending_branch_user_assignment(company):
         session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
         session.modified = True
         flash("La selección de personal venció. Volvé a elegir los empleados y guardá los accesos.", "warning")
+        return False
+
+    from services.ai_agent.usage_service import can_use_commercial_feature
+    feature_access = can_use_commercial_feature(company, "multi_branch")
+    if not feature_access.allowed:
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash(feature_access.reason or "La asignación de personal requiere el plan Premium.", "warning")
         return False
 
     try:
