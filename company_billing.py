@@ -463,6 +463,106 @@ def _mark_pin_verified(company_id, verified=True):
         session.pop(key, None)
 
 
+def _complete_pending_branch_user_assignment(company):
+    """Apply a validated, one-time branch employee assignment after PIN verification."""
+    from flask import session
+    from app import db, record_audit
+    from branches import (
+        PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY,
+        PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS,
+        _apply_branch_user_access,
+    )
+
+    pending = session.get(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY)
+    if not isinstance(pending, dict):
+        return False
+
+    # A pending operation is tied to the administrator and tenant that submitted
+    # it. Never replay it in another user's session.
+    try:
+        pending_company_id = int(pending.get("company_id") or 0)
+        pending_owner_id = int(pending.get("owner_user_id") or 0)
+    except (TypeError, ValueError):
+        pending_company_id = 0
+        pending_owner_id = 0
+    if (
+        pending_company_id != int(company.id)
+        or pending_owner_id != int(getattr(current_user, "id", 0) or 0)
+        or (getattr(current_user, "role", None) or "").lower() != "admin"
+    ):
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        return False
+
+    try:
+        created_at = float(pending.get("created_at") or 0)
+        branch_id = int(pending.get("branch_id") or 0)
+        raw_user_ids = pending.get("user_ids")
+        if not isinstance(raw_user_ids, list):
+            raise ValueError("La selección pendiente no tiene un formato válido.")
+        user_ids = {int(value) for value in raw_user_ids}
+        if any(value <= 0 for value in user_ids):
+            raise ValueError("La selección pendiente contiene empleados inválidos.")
+    except (TypeError, ValueError):
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash("La asignación pendiente no era válida. Volvé a seleccionar el personal.", "warning")
+        return False
+
+    if created_at <= 0 or datetime.now(timezone.utc).timestamp() - created_at > PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS:
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash("La selección de personal venció. Volvé a elegir los empleados y guardá los accesos.", "warning")
+        return False
+
+    from services.ai_agent.usage_service import can_use_commercial_feature
+    feature_access = can_use_commercial_feature(company, "multi_branch")
+    if not feature_access.allowed:
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash(feature_access.reason or "La asignación de personal requiere el plan Premium.", "warning")
+        return False
+
+    try:
+        branch, users = _apply_branch_user_access(company.id, branch_id, user_ids)
+        record_audit(
+            action="branch_user_access_update",
+            entity="branch",
+            entity_id=branch.id,
+            company_id=company.id,
+            detail=(
+                f"Accesos de sucursal actualizados luego de validar PIN: "
+                f"{len(users)} empleado(s) habilitado(s)."
+            ),
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash(str(exc), "warning")
+        return False
+    except Exception:
+        db.session.rollback()
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        current_app.logger.exception(
+            "Pending branch employee assignment failed company_id=%s branch_id=%s",
+            company.id,
+            branch_id,
+        )
+        flash("No se pudieron guardar los accesos. Volvé a seleccionar el personal e intentá nuevamente.", "danger")
+        return False
+
+    session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+    session.modified = True
+    flash(
+        f"PIN correcto. Accesos de {branch.name} guardados: {len(users)} empleado(s) habilitado(s).",
+        "success",
+    )
+    return True
+
+
 def _load_company(company_id):
     from app import Company
 
@@ -4109,18 +4209,45 @@ def company_settings_cash_update(session_id):
 @company_member_required
 def company_settings_pin_verify():
     from app import db, record_audit, utcnow
+    from flask import session
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
 
     if not company.business_pin_hash:
         flash("El PIN no esta configurado. Solicita al Super Administrador que lo asigne.", "warning")
-        return redirect(url_for("company_billing.company_settings"))
+        pending = session.get("stockarmobile_pending_branch_user_assignment")
+        try:
+            has_pending_assignment = (
+                isinstance(pending, dict)
+                and int(pending.get("company_id") or 0) == int(company.id)
+                and int(pending.get("owner_user_id") or 0) == int(current_user.id)
+            )
+        except (TypeError, ValueError):
+            has_pending_assignment = False
+        return redirect(
+            url_for("company_billing.company_settings", panel="branches")
+            if has_pending_assignment
+            else url_for("company_billing.company_settings")
+        )
 
     remaining = CompanySecurityService.remaining_block_seconds(company, now=utcnow())
     if remaining > 0:
         flash(f"Acceso bloqueado temporalmente. Intenta en {remaining} segundos.", "danger")
-        return redirect(url_for("company_billing.company_settings"))
+        pending = session.get("stockarmobile_pending_branch_user_assignment")
+        try:
+            has_pending_assignment = (
+                isinstance(pending, dict)
+                and int(pending.get("company_id") or 0) == int(company.id)
+                and int(pending.get("owner_user_id") or 0) == int(current_user.id)
+            )
+        except (TypeError, ValueError):
+            has_pending_assignment = False
+        return redirect(
+            url_for("company_billing.company_settings", panel="branches")
+            if has_pending_assignment
+            else url_for("company_billing.company_settings")
+        )
 
     pin = request.form.get("access_pin")
     if CompanySecurityService.verify_pin(company, pin):
@@ -4128,8 +4255,25 @@ def company_settings_pin_verify():
         _mark_pin_verified(company.id, True)
         record_audit(action="company_settings_pin_ok", entity="company", entity_id=company.id, detail="PIN Mi Empresa validado")
         db.session.commit()
-        flash("PIN correcto. Acceso concedido a Mi Empresa.", "success")
-        return redirect(url_for("company_billing.company_settings"))
+        pending_payload = session.get("stockarmobile_pending_branch_user_assignment")
+        try:
+            had_pending_assignment = (
+                isinstance(pending_payload, dict)
+                and int(pending_payload.get("company_id") or 0) == int(company.id)
+                and int(pending_payload.get("owner_user_id") or 0) == int(current_user.id)
+            )
+        except (TypeError, ValueError):
+            had_pending_assignment = False
+        pending_assignment = _complete_pending_branch_user_assignment(company)
+        if pending_assignment:
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+        if not had_pending_assignment:
+            flash("PIN correcto. Acceso concedido a Mi Empresa.", "success")
+        return redirect(
+            url_for("company_billing.company_settings", panel="branches")
+            if had_pending_assignment
+            else url_for("company_billing.company_settings")
+        )
 
     attempts, blocked = CompanySecurityService.register_failed_attempt(company)
     record_audit(action="company_settings_pin_failed", entity="company", entity_id=company.id, detail=f"Intento PIN fallido #{attempts}")
@@ -4138,7 +4282,20 @@ def company_settings_pin_verify():
         flash("Demasiados intentos fallidos. Acceso bloqueado temporalmente.", "danger")
     else:
         flash("PIN incorrecto.", "danger")
-    return redirect(url_for("company_billing.company_settings"))
+    pending = session.get("stockarmobile_pending_branch_user_assignment")
+    try:
+        has_pending_assignment = (
+            isinstance(pending, dict)
+            and int(pending.get("company_id") or 0) == int(company.id)
+            and int(pending.get("owner_user_id") or 0) == int(current_user.id)
+        )
+    except (TypeError, ValueError):
+        has_pending_assignment = False
+    return redirect(
+        url_for("company_billing.company_settings", panel="branches")
+        if has_pending_assignment
+        else url_for("company_billing.company_settings")
+    )
 
 
 @bp.route("/company-settings/pin/change", methods=["POST"])
@@ -4172,8 +4329,16 @@ def company_settings_pin_bootstrap():
         detail="PIN inicial de Mi Empresa generado por usuario de la empresa.",
     )
     db.session.commit()
-    flash("PIN inicial generado. Guardalo ahora: se muestra una sola vez.", "success")
-    return redirect(url_for("company_billing.company_settings"))
+    pending_assignment = _complete_pending_branch_user_assignment(company)
+    if not pending_assignment:
+        flash("PIN inicial generado. Guardalo ahora: se muestra una sola vez.", "success")
+        pending_payload = session.get("stockarmobile_pending_branch_user_assignment")
+        return redirect(
+            url_for("company_billing.company_settings", panel="branches")
+            if isinstance(pending_payload, dict)
+            else url_for("company_billing.company_settings")
+        )
+    return redirect(url_for("company_billing.company_settings", panel="branches"))
 
 
 @bp.route("/company-settings/pin/regenerate", methods=["POST"])
@@ -5020,6 +5185,40 @@ def company_settings():
         branch.id: {row.user_id for row in UserBranchAccess.query.filter_by(company_id=company.id, branch_id=branch.id).all()}
         for branch in company_branches
     }
+    pending_branch_user_assignment = None
+    from branches import (
+        PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY,
+        PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS,
+    )
+    pending_assignment_payload = session.get(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY)
+    if isinstance(pending_assignment_payload, dict):
+        try:
+            pending_created_at = float(pending_assignment_payload.get("created_at") or 0)
+            pending_branch_id = int(pending_assignment_payload.get("branch_id") or 0)
+            pending_company_id = int(pending_assignment_payload.get("company_id") or 0)
+            pending_owner_id = int(pending_assignment_payload.get("owner_user_id") or 0)
+        except (TypeError, ValueError):
+            pending_created_at = 0
+            pending_branch_id = 0
+            pending_company_id = 0
+            pending_owner_id = 0
+        pending_branch = next((item for item in company_branches if int(item.id) == pending_branch_id), None)
+        if (
+            pending_company_id == int(company.id)
+            and pending_owner_id == int(current_user.id)
+            and pending_branch is not None
+            and datetime.now(timezone.utc).timestamp() - pending_created_at <= PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS
+        ):
+            pending_branch_user_assignment = {
+                "branch_name": pending_branch.name,
+                "employee_count": len(pending_assignment_payload.get("user_ids") or []),
+            }
+        elif (
+            pending_company_id == int(company.id)
+            and pending_owner_id == int(current_user.id)
+        ):
+            session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+            session.modified = True
     branch_limit = max(1, int(getattr(PlanUsageService._active_plan_for_company(company.id)[1], "max_branches", 1) or 1))
     active_branch_count = sum(1 for branch in company_branches if branch.active)
 
@@ -5243,6 +5442,7 @@ def company_settings():
         multi_branch_access=multi_branch_access,
         company_branches=company_branches,
         branch_user_access=branch_user_access,
+        pending_branch_user_assignment=pending_branch_user_assignment,
         branch_limit=branch_limit,
         active_branch_count=active_branch_count,
     )
