@@ -167,7 +167,8 @@
     try {
       const response = await fetch(root.dataset.productsUrl + '?' + params.toString(), {
         credentials: 'same-origin',
-        headers: { Accept: 'application/json' }
+        cache: 'no-store',
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' }
       });
       const payload = await response.json();
       if (version !== requestVersion) return;
