@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stockarmobile-pwa-v16';
+const CACHE_NAME = 'stockarmobile-pwa-v17';
 const STATIC_ASSETS = [
   '/offline.html',
   '/manifest.json',
@@ -6,6 +6,7 @@ const STATIC_ASSETS = [
   '/static/assets/css/landing.css?v=20260923',
   '/static/assets/css/landing-v3.css?v=20260923',
   '/static/assets/js/cart-manager.js?v=20261103-branch-aware-cart-scope',
+  '/static/assets/js/branch-transfer-manager.js?v=20261103-multi-product-transfer',
   '/static/assets/js/landing.js',
   '/static/assets/js/edit-sale.js',
   '/static/assets/js/ventas-new.js',
