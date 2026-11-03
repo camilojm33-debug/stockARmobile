@@ -37,11 +37,15 @@ def _user(company, *, role="admin", email="multi@example.test"):
 
 
 def _assert_rendered_tenant_context(html, expected_company_id, expected_role, expected_user_id, client):
-    company_match = re.search(r'data-company-id="([^"]*)"', html)
-    role_match = re.search(r'data-role="([^"]*)"', html)
-    user_match = re.search(r'data-user-id="([^"]*)"', html)
-    refresh_match = re.search(r'data-tenant-refresh="([^"]*)"', html)
-    user_refresh_match = re.search(r'data-user-tenant-refresh="([^"]*)"', html)
+    # Do not search the whole document: CSS selectors in the <head> contain
+    # strings such as [data-role="superadmin"], which are not rendered elements.
+    body_match = re.search(r"<body\\b([^>]*)>", html, flags=re.IGNORECASE | re.DOTALL)
+    body_attributes = body_match.group(1) if body_match else ""
+    company_match = re.search(r'data-company-id="([^"]*)"', body_attributes)
+    role_match = re.search(r'data-role="([^"]*)"', body_attributes)
+    user_match = re.search(r'data-user-id="([^"]*)"', body_attributes)
+    refresh_match = re.search(r'data-tenant-refresh="([^"]*)"', body_attributes)
+    user_refresh_match = re.search(r'data-user-tenant-refresh="([^"]*)"', body_attributes)
     with client.session_transaction() as browser_session:
         selected_company_id = browser_session.get(ACTIVE_COMPANY_SESSION_KEY)
         authenticated_user_id = browser_session.get("_user_id")
