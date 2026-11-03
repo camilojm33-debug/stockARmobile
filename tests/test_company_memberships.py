@@ -39,7 +39,7 @@ def _user(company, *, role="admin", email="multi@example.test"):
 def _assert_rendered_tenant_context(html, expected_company_id, expected_role, expected_user_id, client):
     # Do not search the whole document: CSS selectors in the <head> contain
     # strings such as [data-role="superadmin"], which are not rendered elements.
-    body_match = re.search(r"<body\\b([^>]*)>", html, flags=re.IGNORECASE | re.DOTALL)
+    body_match = re.search(r"<body\b([^>]*)>", html, flags=re.IGNORECASE | re.DOTALL)
     body_attributes = body_match.group(1) if body_match else ""
     company_match = re.search(r'data-company-id="([^"]*)"', body_attributes)
     role_match = re.search(r'data-role="([^"]*)"', body_attributes)
