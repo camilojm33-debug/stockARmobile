@@ -496,6 +496,9 @@ def migrate_legacy_company_logos_once():
 
 @app.before_request
 def bind_tenant_context():
+    # Refresh the authenticated identity's selected membership before any
+    # tenant-aware helpers or permission guards cache company/role in `g`.
+    refresh_cached_company_membership_context()
     bind_current_tenant_context(current_user)
 
 
