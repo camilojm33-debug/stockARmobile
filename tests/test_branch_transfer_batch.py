@@ -189,6 +189,7 @@ def test_branch_transfer_product_search_returns_only_tenant_and_source_branch_st
         set_branch_stock(no_stock, source.id, 0)
         db.session.commit()
         user = _admin(company, "search")
+        db.session.commit()
         client = app.test_client()
         _login(client, user)
 
