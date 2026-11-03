@@ -651,6 +651,9 @@ def refresh_cached_company_membership_context():
     g._login_user = identity
 
     if (identity.role or "").strip().lower() == "superadmin":
+        g._stockarmobile_tenant_refresh_debug = (
+            f"user={identity.id};role={identity.role};company={identity.company_id};membership=superadmin"
+        )
         g.current_company_id = None
         g.current_user_role = "superadmin"
         g._stockarmobile_membership_context_key = (user_id, "superadmin")
@@ -678,6 +681,10 @@ def refresh_cached_company_membership_context():
 
     if membership is not None:
         apply_membership_context(identity, membership)
+        g._stockarmobile_tenant_refresh_debug = (
+            f"user={identity.id};role={identity.role};company={identity.company_id};"
+            f"membership_id={membership.id};membership_company={membership.company_id};membership_role={membership.role}"
+        )
         selected_company_id = int(membership.company_id)
         session[ACTIVE_COMPANY_SESSION_KEY] = selected_company_id
         g.current_company_id = selected_company_id
