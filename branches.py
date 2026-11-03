@@ -464,6 +464,14 @@ def assign_users(branch_id):
 
     try:
         branch, users = _apply_branch_user_access(company_id, branch.id, selected_ids)
+        from app import record_audit
+        record_audit(
+            action="branch_user_access_update",
+            entity="branch",
+            entity_id=branch.id,
+            company_id=company_id,
+            detail=f"Asignación de personal actualizada: {len(users)} empleado(s) habilitado(s).",
+        )
         db.session.commit()
     except ValueError as exc:
         db.session.rollback()
