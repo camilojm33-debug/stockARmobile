@@ -685,6 +685,7 @@ def refresh_cached_company_membership_context():
             f"user={identity.id};role={identity.role};company={identity.company_id};"
             f"membership_id={membership.id};membership_company={membership.company_id};membership_role={membership.role}"
         )
+        identity._stockarmobile_tenant_refresh_debug = g._stockarmobile_tenant_refresh_debug
         selected_company_id = int(membership.company_id)
         session[ACTIVE_COMPANY_SESSION_KEY] = selected_company_id
         g.current_company_id = selected_company_id
