@@ -14,7 +14,7 @@ def _safe_return_path(value, fallback="/"):
     """Accept only an application-local path for post/selection redirects."""
     candidate = str(value or "").strip()
     if (not candidate.startswith("/") or candidate.startswith("//")
-            or "\\\\" in candidate or any(ord(char) < 32 for char in candidate)):
+            or "\\" in candidate or any(ord(char) < 32 for char in candidate)):
         return fallback
     parsed = urlsplit(candidate)
     if parsed.scheme or parsed.netloc:
