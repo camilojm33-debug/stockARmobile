@@ -683,7 +683,7 @@ def enforce_password_change_if_required():
 
 @app.before_request
 def enforce_membership_required_for_tenant_users():
-    """Users without an active tenant may only accept invitations or manage credentials."""
+    """Keep identities without an active tenant signed in, but deny tenant pages."""
     if not current_user.is_authenticated or not getattr(current_user, "company_membership_missing", False):
         return None
     endpoint = request.endpoint or ""
@@ -695,12 +695,7 @@ def enforce_membership_required_for_tenant_users():
     }
     if endpoint in allowed:
         return None
-    from flask_login import logout_user
-    logout_user()
-    session.clear()
-    flash("Tu cuenta no tiene empresas activas. Iniciá sesión desde el enlace de una invitación vigente o contactá al administrador.", "warning")
-    return redirect(url_for("auth.login"))
-
+    abort(403, description="Tu cuenta no tiene una empresa activa. Aceptá una invitación vigente o contactá al administrador.")
 
 @app.before_request
 def enforce_billing_restrictions_for_blocked_tenants():
