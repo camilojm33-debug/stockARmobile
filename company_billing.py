@@ -4216,12 +4216,38 @@ def company_settings_pin_verify():
 
     if not company.business_pin_hash:
         flash("El PIN no esta configurado. Solicita al Super Administrador que lo asigne.", "warning")
-        return redirect(url_for("company_billing.company_settings"))
+        pending = session.get("stockarmobile_pending_branch_user_assignment")
+        try:
+            has_pending_assignment = (
+                isinstance(pending, dict)
+                and int(pending.get("company_id") or 0) == int(company.id)
+                and int(pending.get("owner_user_id") or 0) == int(current_user.id)
+            )
+        except (TypeError, ValueError):
+            has_pending_assignment = False
+        return redirect(
+            url_for("company_billing.company_settings", panel="branches")
+            if has_pending_assignment
+            else url_for("company_billing.company_settings")
+        )
 
     remaining = CompanySecurityService.remaining_block_seconds(company, now=utcnow())
     if remaining > 0:
         flash(f"Acceso bloqueado temporalmente. Intenta en {remaining} segundos.", "danger")
-        return redirect(url_for("company_billing.company_settings"))
+        pending = session.get("stockarmobile_pending_branch_user_assignment")
+        try:
+            has_pending_assignment = (
+                isinstance(pending, dict)
+                and int(pending.get("company_id") or 0) == int(company.id)
+                and int(pending.get("owner_user_id") or 0) == int(current_user.id)
+            )
+        except (TypeError, ValueError):
+            has_pending_assignment = False
+        return redirect(
+            url_for("company_billing.company_settings", panel="branches")
+            if has_pending_assignment
+            else url_for("company_billing.company_settings")
+        )
 
     pin = request.form.get("access_pin")
     if CompanySecurityService.verify_pin(company, pin):
@@ -4230,11 +4256,14 @@ def company_settings_pin_verify():
         record_audit(action="company_settings_pin_ok", entity="company", entity_id=company.id, detail="PIN Mi Empresa validado")
         db.session.commit()
         pending_payload = session.get("stockarmobile_pending_branch_user_assignment")
-        had_pending_assignment = (
-            isinstance(pending_payload, dict)
-            and int(pending_payload.get("company_id") or 0) == int(company.id)
-            and int(pending_payload.get("owner_user_id") or 0) == int(current_user.id)
-        )
+        try:
+            had_pending_assignment = (
+                isinstance(pending_payload, dict)
+                and int(pending_payload.get("company_id") or 0) == int(company.id)
+                and int(pending_payload.get("owner_user_id") or 0) == int(current_user.id)
+            )
+        except (TypeError, ValueError):
+            had_pending_assignment = False
         pending_assignment = _complete_pending_branch_user_assignment(company)
         if pending_assignment:
             return redirect(url_for("company_billing.company_settings", panel="branches"))
@@ -4254,9 +4283,19 @@ def company_settings_pin_verify():
     else:
         flash("PIN incorrecto.", "danger")
     pending = session.get("stockarmobile_pending_branch_user_assignment")
-    if isinstance(pending, dict) and int(pending.get("company_id") or 0) == int(company.id):
-        return redirect(url_for("company_billing.company_settings", panel="branches"))
-    return redirect(url_for("company_billing.company_settings"))
+    try:
+        has_pending_assignment = (
+            isinstance(pending, dict)
+            and int(pending.get("company_id") or 0) == int(company.id)
+            and int(pending.get("owner_user_id") or 0) == int(current_user.id)
+        )
+    except (TypeError, ValueError):
+        has_pending_assignment = False
+    return redirect(
+        url_for("company_billing.company_settings", panel="branches")
+        if has_pending_assignment
+        else url_for("company_billing.company_settings")
+    )
 
 
 @bp.route("/company-settings/pin/change", methods=["POST"])
