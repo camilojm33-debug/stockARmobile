@@ -1,5 +1,6 @@
 """Premium multi-branch management routes."""
 import re
+import time
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, request, session, url_for
 from flask_login import current_user
 from sqlalchemy import func, or_
@@ -10,6 +11,68 @@ bp = Blueprint("branches", __name__, url_prefix="/sucursales")
 
 def _company_id():
     return int(getattr(current_user, "company_id", 0) or 0)
+
+
+PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY = "stockarmobile_pending_branch_user_assignment"
+PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS = 900
+MAX_PENDING_BRANCH_USER_ASSIGNMENTS = 200
+
+
+def _parse_selected_user_ids(raw_values):
+    selected_ids = set()
+    for raw_value in raw_values or []:
+        try:
+            user_id = int(str(raw_value).strip())
+        except (TypeError, ValueError):
+            raise ValueError("La selección de empleados contiene un identificador inválido.") from None
+        if user_id <= 0:
+            raise ValueError("La selección de empleados contiene un identificador inválido.")
+        selected_ids.add(user_id)
+    if len(selected_ids) > MAX_PENDING_BRANCH_USER_ASSIGNMENTS:
+        raise ValueError(
+            f"Podés asignar hasta {MAX_PENDING_BRANCH_USER_ASSIGNMENTS} empleados a una sucursal por vez."
+        )
+    return selected_ids
+
+
+def _apply_branch_user_access(company_id, branch_id, selected_ids):
+    """Persist an entire branch membership selection after validating tenant ownership."""
+    branch = Branch.query.filter_by(
+        id=int(branch_id), company_id=int(company_id), active=True
+    ).first()
+    if branch is None:
+        raise ValueError("La sucursal ya no existe o está inactiva. No se modificaron los accesos.")
+
+    selected_ids = {int(value) for value in (selected_ids or [])}
+    users = (
+        User.query.filter(
+            User.company_id == int(company_id),
+            User.active.is_(True),
+            User.role != "superadmin",
+            User.id.in_(selected_ids),
+        ).all()
+        if selected_ids else []
+    )
+    if {int(user.id) for user in users} != selected_ids:
+        raise ValueError(
+            "Uno o más empleados ya no están activos o no pertenecen a esta empresa. No se modificaron los accesos."
+        )
+
+    existing_rows = UserBranchAccess.query.filter_by(
+        branch_id=branch.id, company_id=int(company_id)
+    ).all()
+    for row in existing_rows:
+        db.session.delete(row)
+    db.session.flush()
+
+    for user in users:
+        db.session.add(UserBranchAccess(
+            company_id=int(company_id),
+            user_id=int(user.id),
+            branch_id=int(branch.id),
+        ))
+    db.session.flush()
+    return branch, users
 
 
 def _lock_company_for_branch_limit(company_id):
@@ -354,18 +417,71 @@ def assign_users(branch_id):
     blocked = _require_feature(company)
     if blocked:
         return blocked
-    pin_blocked = _require_company_pin(company)
-    if pin_blocked:
-        return pin_blocked
-    branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first_or_404()
-    selected_ids = {int(value) for value in request.form.getlist("user_ids") if str(value).isdigit()}
-    users = User.query.filter(User.company_id == company_id, User.role != "superadmin", User.id.in_(selected_ids)).all() if selected_ids else []
-    if {int(user.id) for user in users} != selected_ids:
-        abort(400)
-    for row in UserBranchAccess.query.filter_by(branch_id=branch.id, company_id=company_id).all():
-        db.session.delete(row)
-    for user in users:
-        db.session.add(UserBranchAccess(company_id=company_id, user_id=user.id, branch_id=branch.id))
-    db.session.commit()
-    flash(f"Accesos de {branch.name} actualizados.", "success")
+
+    branch = Branch.query.filter_by(
+        id=branch_id, company_id=company_id, active=True
+    ).first_or_404()
+    try:
+        selected_ids = _parse_selected_user_ids(request.form.getlist("user_ids"))
+        selectable_users = (
+            User.query.filter(
+                User.company_id == company_id,
+                User.active.is_(True),
+                User.role != "superadmin",
+                User.id.in_(selected_ids),
+            ).all()
+            if selected_ids else []
+        )
+        if {int(user.id) for user in selectable_users} != selected_ids:
+            raise ValueError(
+                "Uno o más empleados ya no están activos o no pertenecen a esta empresa."
+            )
+    except ValueError as exc:
+        flash(str(exc), "warning")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+
+    from company_billing import _is_pin_verified
+    if not _is_pin_verified(company_id):
+        session[PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY] = {
+            "company_id": company_id,
+            "owner_user_id": int(current_user.id),
+            "branch_id": int(branch.id),
+            "user_ids": sorted(selected_ids),
+            "created_at": time.time(),
+        }
+        session.modified = True
+        if not company.business_pin_hash:
+            flash(
+                "La selección de personal quedó guardada. Generá primero el PIN administrativo para confirmar la asignación.",
+                "warning",
+            )
+        else:
+            flash(
+                "La selección de personal quedó pendiente. Validá el PIN y se aplicará automáticamente a esta sucursal.",
+                "warning",
+            )
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+
+    try:
+        branch, users = _apply_branch_user_access(company_id, branch.id, selected_ids)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Branch employee assignment failed company_id=%s branch_id=%s",
+            company_id,
+            branch_id,
+        )
+        flash("No se pudieron guardar los accesos. No se modificó la asignación anterior.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+
+    flash(
+        f"Accesos de {branch.name} actualizados: {len(users)} empleado(s) habilitado(s).",
+        "success",
+    )
     return redirect(url_for("company_billing.company_settings", panel="branches"))
+
