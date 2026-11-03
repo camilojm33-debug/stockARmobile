@@ -592,9 +592,6 @@ def refresh_cached_company_membership_context():
     request. Refresh the persisted identity, replace Flask-Login's cached object,
     then apply the authorized membership selected in the signed session.
     """
-    if not current_user.is_authenticated:
-        return None
-
     from flask_login import logout_user
     from app import Company, CompanyMembership, User
     from stockarmobile.company_memberships import (
@@ -603,8 +600,18 @@ def refresh_cached_company_membership_context():
         choose_membership_for_login,
     )
 
+    # The signed Flask-Login session is the source of truth for identity.
+    # Do not derive the identity key from current_user here: that LocalProxy may
+    # still resolve a cached ORM object from a previous tenant/request context.
+    raw_user_id = session.get("_user_id")
+    if raw_user_id is None:
+        # Remember-cookie authentication may not have populated _user_id yet.
+        if not current_user.is_authenticated:
+            return None
+        raw_user_id = current_user.get_id()
+
     try:
-        user_id = int(current_user.get_id())
+        user_id = int(raw_user_id)
     except (TypeError, ValueError):
         logout_user()
         session.clear()
