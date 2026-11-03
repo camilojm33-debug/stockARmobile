@@ -307,3 +307,44 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     assert "data-transfer-quantity" in script
     assert "items_json" in template
     assert "available_only" in script
+
+def test_branch_transfer_script_loader_renders_for_branch_panel_context():
+    from pathlib import Path
+
+    from jinja2 import Environment, select_autoescape
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "templates"
+        / "company_billing"
+        / "settings.html"
+    ).read_text(encoding="utf-8")
+    loader_start = template.rfind(
+        "{% if settings_panel == 'branches' and active_branch_count > 1 %}"
+    )
+    assert loader_start >= 0, "El cargador debe usar el contexto settings_panel."
+    loader_end = template.find("{% endif %}", loader_start)
+    assert loader_end >= 0
+    loader_source = template[loader_start : loader_end + len("{% endif %}")]
+    render_loader = Environment(
+        autoescape=select_autoescape(("html", "xml"))
+    ).from_string(loader_source)
+    url_for = lambda _endpoint, **_kwargs: "/static/assets/js/branch-transfer-manager.js?v=test"
+
+    rendered = render_loader.render(
+        settings_panel="branches",
+        active_branch_count=2,
+        url_for=url_for,
+    )
+    assert "branch-transfer-manager.js" in rendered
+
+    assert "branch-transfer-manager.js" not in render_loader.render(
+        settings_panel="general",
+        active_branch_count=2,
+        url_for=url_for,
+    )
+    assert "branch-transfer-manager.js" not in render_loader.render(
+        settings_panel="branches",
+        active_branch_count=1,
+        url_for=url_for,
+    )
