@@ -8251,6 +8251,12 @@ def test_purchases_fail_closed_when_admin_has_no_company_context():
         admin = User.query.filter_by(username="negocio_admin").first()
         assert admin is not None
         admin.company_id = None
+        # In the membership model, the tenant relationship is independent of
+        # the legacy users.company_id field. Revoke every membership to model
+        # an identity that genuinely has no active company context.
+        for membership in CompanyMembership.query.filter_by(user_id=admin.id).all():
+            membership.active = False
+            membership.status = "revoked"
         db.session.commit()
 
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
