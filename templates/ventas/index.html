@@ -1182,7 +1182,7 @@
         Number(product.id),
         product.name,
         Number(product.price || 0),
-        Number((product.branch_stock_display if product.branch_stock_display is defined else product.stock) || 0),
+        Number(product.stock || 0),
         product.barcode || barcode,
         1,
         product.unit_measure || 'u'
@@ -1267,7 +1267,7 @@
       Number(product.id),
       product.name || 'Producto',
       Number(product.price || 0),
-      Number((product.branch_stock_display if product.branch_stock_display is defined else product.stock) || 0),
+      Number(product.stock || 0),
       product.barcode || '',
       1,
       product.unit_measure || product.unit || 'u'
@@ -1330,7 +1330,7 @@
       return;
     }
     suggestionsEl.innerHTML = suggestions.map((product, index) => {
-      const stock = Number((product.branch_stock_display if product.branch_stock_display is defined else product.stock) || 0);
+      const stock = Number(product.stock || 0);
       const disabled = stock <= 0;
       const productName = posEscapeHtml(product.name || 'Producto');
       const productBarcode = posEscapeHtml(product.barcode || 'Sin código');
