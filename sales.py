@@ -94,9 +94,17 @@ def _new_checkout_token():
     return ValidationService.new_checkout_token()
 
 
+def _active_cart_branch_scope():
+    """Keep operational carts and quote prefills isolated to the selected branch."""
+    from stockarmobile.branch_context import get_active_branch_id
+
+    branch_id = get_active_branch_id()
+    return int(branch_id) if branch_id is not None else "default"
+
+
 def _cart_key():
     company_id = getattr(current_user, "company_id", None) or "global"
-    return f"cart_{company_id}_{current_user.id}"
+    return f"cart_{company_id}_{current_user.id}_{_active_cart_branch_scope()}"
 
 
 def _cart_tenant_key():
@@ -105,7 +113,7 @@ def _cart_tenant_key():
 
 
 def _quote_cart_prefill_session_key():
-    return f"quote_cart_prefill_{_cart_tenant_key()}"
+    return f"quote_cart_prefill_{_cart_tenant_key()}_{_active_cart_branch_scope()}"
 
 
 def _set_quote_cart_prefill(payload):

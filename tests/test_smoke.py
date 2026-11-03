@@ -108,6 +108,13 @@ def seed():
     db.session.commit()
 
 
+def _quote_prefill_from_session(session_payload, tenant_header):
+    prefix = f"quote_cart_prefill_{tenant_header}_"
+    keys = [key for key in session_payload if key.startswith(prefix)]
+    assert len(keys) == 1
+    return session_payload[keys[0]]
+
+
 def open_cash_session(client, opening_amount="0"):
     response = client.post(
         "/caja/",
@@ -1819,8 +1826,7 @@ def test_quotes_create_convert_pdf_and_stock_flow():
     assert "/ventas/" in (convert_response.headers.get("Location") or "")
 
     with client.session_transaction() as session_payload:
-        prefill_key = f"quote_cart_prefill_{tenant_header}"
-        prefill = session_payload.get(prefill_key)
+        prefill = _quote_prefill_from_session(session_payload, tenant_header)
         assert isinstance(prefill, dict)
         assert prefill.get("quote_id") == quote_id
         assert prefill.get("checkout_token") == f"quote-cart-{quote_id}"
@@ -2215,7 +2221,7 @@ def test_quote_conversion_preserves_structured_adjustments_without_double_discou
 
     client.post(f"/presupuestos/{quote_id}/convertir", follow_redirects=False)
     with client.session_transaction() as session_payload:
-        prefill = session_payload[f"quote_cart_prefill_{tenant_header}"]
+        prefill = _quote_prefill_from_session(session_payload, tenant_header)
 
     open_cash_session(client)
     checkout = client.post(
@@ -2280,8 +2286,7 @@ def test_quotes_convert_redirects_to_sales_and_prefills_cart_without_open_cash()
     assert "/ventas/" in (convert_response.headers.get("Location") or "")
 
     with client.session_transaction() as session_payload:
-        prefill_key = f"quote_cart_prefill_{tenant_header}"
-        prefill = session_payload.get(prefill_key)
+        prefill = _quote_prefill_from_session(session_payload, tenant_header)
         assert isinstance(prefill, dict)
         assert prefill.get("quote_id") == quote_id
         assert len(prefill.get("items") or []) == 1

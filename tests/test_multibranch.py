@@ -880,3 +880,83 @@ def test_ai_invoice_purchase_and_ai_sale_reject_excess_branch_precision(app):
         assert available_stock(product, branch.id) == 10.0
         assert float(product.stock) == 10.0
         db.session.rollback()
+
+
+
+def test_pos_session_carts_and_quote_prefills_are_isolated_by_active_branch(app, monkeypatch):
+    from flask import session
+    from flask_login import login_user
+    from sales import _cart_key, _cart_tenant_key, _quote_cart_prefill_session_key
+
+    with app.app_context():
+        company = _company("Empresa carrito multisucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="branch-cart-admin",
+            email="branch-cart-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        selected = {"branch_id": central.id}
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: selected["branch_id"],
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            tenant_key = _cart_tenant_key()
+            central_cart_key = _cart_key()
+            central_quote_key = _quote_cart_prefill_session_key()
+            session[central_cart_key] = {"items": {"101": 2}}
+            session[central_quote_key] = {"quote_id": 101}
+
+            selected["branch_id"] = north.id
+            north_cart_key = _cart_key()
+            north_quote_key = _quote_cart_prefill_session_key()
+            assert _cart_tenant_key() == tenant_key
+            assert north_cart_key != central_cart_key
+            assert north_quote_key != central_quote_key
+            assert north_cart_key not in session
+            assert north_quote_key not in session
+
+            session[north_cart_key] = {"items": {"202": 1}}
+            selected["branch_id"] = central.id
+            assert _cart_key() == central_cart_key
+            assert _quote_cart_prefill_session_key() == central_quote_key
+            assert session[central_cart_key]["items"] == {"101": 2}
+            assert session[central_quote_key]["quote_id"] == 101
+        db.session.rollback()
+
+
+def test_pos_browser_cart_and_quote_storage_are_scoped_to_active_branch():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    base_template = (root / "templates" / "base_master.html").read_text(encoding="utf-8")
+    cart_manager = (root / "static" / "assets" / "js" / "cart-manager.js").read_text(encoding="utf-8")
+    sales_template = (root / "templates" / "ventas" / "index.html").read_text(encoding="utf-8")
+
+    assert 'data-active-branch-id="{{ active_branch_id or \'\' }}"' in base_template
+    assert "function getCartStorageScopeKey()" in cart_manager
+    assert "document.body?.dataset?.activeBranchId" in cart_manager
+    assert "CART_KEY_PREFIX}_${getCartStorageScopeKey()}" in cart_manager
+    assert "QUOTE_CONTEXT_STORAGE_PREFIX}_${getCartStorageScopeKey()}" in cart_manager
+    assert "v='20261103-branch-aware-cart-scope'" in sales_template
+
+
+def test_company_settings_branch_panel_keeps_render_context_and_jinja_defaults_safe():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    company_billing = (root / "company_billing.py").read_text(encoding="utf-8")
+    settings_template = (root / "templates" / "company_billing" / "settings.html").read_text(encoding="utf-8")
+
+    assert "active_branch_count=active_branch_count" in company_billing
+    assert "branch_user_access.get(branch.id, [])" in settings_template
+    assert "branch_user_access.get(branch.id, set())" not in settings_template
