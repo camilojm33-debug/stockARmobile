@@ -3,6 +3,7 @@ import hashlib
 import re
 
 from flask import session
+from sqlalchemy import text
 
 from app import Company, CompanyMembership, User, db, load_user, utcnow
 from stockarmobile.company_memberships import (
@@ -42,13 +43,28 @@ def _assert_rendered_tenant_context(html, expected_company_id, expected_role, ex
     with client.session_transaction() as browser_session:
         selected_company_id = browser_session.get(ACTIVE_COMPANY_SESSION_KEY)
         authenticated_user_id = browser_session.get("_user_id")
+    with client.application.app_context():
+        with db.engine.connect() as connection:
+            persisted_identity = connection.execute(
+                text("SELECT role, company_id, active FROM users WHERE id=:user_id"),
+                {"user_id": int(expected_user_id)},
+            ).mappings().first()
+            persisted_memberships = connection.execute(
+                text(
+                    "SELECT company_id, role, status, active FROM company_memberships "
+                    "WHERE user_id=:user_id ORDER BY company_id"
+                ),
+                {"user_id": int(expected_user_id)},
+            ).mappings().all()
     actual_company_id = company_match.group(1) if company_match else None
     actual_role = role_match.group(1) if role_match else None
     actual_user_id = user_match.group(1) if user_match else None
     assert actual_company_id == str(expected_company_id), (
         f"expected company_id={expected_company_id}, rendered={actual_company_id}, "
         f"role={actual_role}, rendered_user_id={actual_user_id}, "
-        f"session_user_id={authenticated_user_id}, session_company_id={selected_company_id}"
+        f"session_user_id={authenticated_user_id}, session_company_id={selected_company_id}, "
+        f"persisted_identity={dict(persisted_identity) if persisted_identity else None}, "
+        f"persisted_memberships={[dict(row) for row in persisted_memberships]}"
     )
     assert actual_role == expected_role, (
         f"expected role={expected_role}, rendered role={actual_role}, "
