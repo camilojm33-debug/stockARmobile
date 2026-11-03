@@ -1,6 +1,7 @@
 """Premium multi-branch management routes."""
 import re
 import time
+from urllib.parse import urlsplit
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, request, session, url_for
 from flask_login import current_user
 from sqlalchemy import func, or_
@@ -8,6 +9,18 @@ from app import Branch, Company, User, UserBranchAccess, db, tenant_required, co
 from stockarmobile.branch_context import SESSION_KEY
 
 bp = Blueprint("branches", __name__, url_prefix="/sucursales")
+
+def _safe_return_path(value, fallback="/"):
+    """Accept only an application-local path for post/selection redirects."""
+    candidate = str(value or "").strip()
+    if (not candidate.startswith("/") or candidate.startswith("//")
+            or "\\\\" in candidate or any(ord(char) < 32 for char in candidate)):
+        return fallback
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc:
+        return fallback
+    return candidate
+
 
 def _company_id():
     return int(getattr(current_user, "company_id", 0) or 0)
@@ -134,7 +147,7 @@ def select_branch():
     session[SESSION_KEY] = int(branch.id)
     session.modified = True
     flash(f"Sucursal activa: {branch.name}.", "success")
-    return redirect(url_for("dashboard.index"))
+    return redirect(_safe_return_path(request.form.get("return_to"), fallback=url_for("dashboard.index")))
 
 @bp.route("/crear", methods=["POST"])
 @company_admin_required
@@ -406,7 +419,7 @@ def transfer_stock():
         db.session.rollback()
         current_app.logger.exception("Branch stock transfer batch failed company_id=%s", company_id)
         flash("No se pudo completar la transferencia. No se guardaron cambios.", "danger")
-    return redirect(url_for("company_billing.company_settings", panel="branches"))
+    return redirect(_safe_return_path(request.form.get("return_to"), fallback=url_for("company_billing.company_settings", panel="branches")))
 
 
 @bp.route("/<int:branch_id>/usuarios", methods=["POST"])
