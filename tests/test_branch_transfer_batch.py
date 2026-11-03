@@ -348,3 +348,22 @@ def test_branch_transfer_script_loader_renders_for_branch_panel_context():
         active_branch_count=1,
         url_for=url_for,
     )
+
+
+def test_safe_return_path_preserves_only_local_navigation():
+    from branches import _safe_return_path
+
+    assert _safe_return_path("/productos?page=2&category=Bebidas") == "/productos?page=2&category=Bebidas"
+    assert _safe_return_path("//evil.example/path", fallback="/fallback") == "/fallback"
+    assert _safe_return_path("https://evil.example/path", fallback="/fallback") == "/fallback"
+    assert _safe_return_path("\\\\evil.example/path", fallback="/fallback") == "/fallback"
+
+
+def test_branch_selector_form_keeps_current_url_and_transfer_search_disables_cache():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    base = (root / "templates" / "base_master.html").read_text(encoding="utf-8")
+    script = (root / "static" / "assets" / "js" / "branch-transfer-manager.js").read_text(encoding="utf-8")
+    assert 'name="return_to" value="{{ request.full_path }}"' in base
+    assert "cache: 'no-store'" in script
