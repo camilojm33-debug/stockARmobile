@@ -2213,7 +2213,7 @@
   })();
 </script>
 {% endif %}
-{% if panel == 'branches' and active_branch_count > 1 %}
+{% if settings_panel == 'branches' and active_branch_count > 1 %}
 <script src="{{ url_for('static', filename='assets/js/branch-transfer-manager.js', v='20261103-multi-product-transfer') }}"></script>
 {% endif %}
 {% endblock %}
