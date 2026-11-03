@@ -41,6 +41,7 @@ def _assert_rendered_tenant_context(html, expected_company_id, expected_role, ex
     role_match = re.search(r'data-role="([^"]*)"', html)
     user_match = re.search(r'data-user-id="([^"]*)"', html)
     refresh_match = re.search(r'data-tenant-refresh="([^"]*)"', html)
+    user_refresh_match = re.search(r'data-user-tenant-refresh="([^"]*)"', html)
     with client.session_transaction() as browser_session:
         selected_company_id = browser_session.get(ACTIVE_COMPANY_SESSION_KEY)
         authenticated_user_id = browser_session.get("_user_id")
@@ -66,7 +67,8 @@ def _assert_rendered_tenant_context(html, expected_company_id, expected_role, ex
         f"session_user_id={authenticated_user_id}, session_company_id={selected_company_id}, "
         f"persisted_identity={dict(persisted_identity) if persisted_identity else None}, "
         f"persisted_memberships={[dict(row) for row in persisted_memberships]}, "
-        f"tenant_refresh={refresh_match.group(1) if refresh_match else None}"
+        f"tenant_refresh={refresh_match.group(1) if refresh_match else None}, "
+        f"user_tenant_refresh={user_refresh_match.group(1) if user_refresh_match else None}"
     )
     assert actual_role == expected_role, (
         f"expected role={expected_role}, rendered role={actual_role}, "
