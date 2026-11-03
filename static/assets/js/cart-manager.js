@@ -204,8 +204,13 @@ function getCartTenantKey() {
   return `${companyId}:${userId}`;
 }
 
+function getCartStorageScopeKey() {
+  const branchId = String(document.body?.dataset?.activeBranchId || '').trim();
+  return `${getCartTenantKey()}:${branchId || 'default'}`;
+}
+
 function getCartStorageKey() {
-  return `${CART_KEY_PREFIX}_${getCartTenantKey()}`;
+  return `${CART_KEY_PREFIX}_${getCartStorageScopeKey()}`;
 }
 
 /*
@@ -217,7 +222,7 @@ function getCartStorageKey() {
 const QUOTE_CONTEXT_STORAGE_PREFIX = 'stockarmobile_quote_checkout_context_v1';
 
 function getQuoteContextStorageKey() {
-  return `${QUOTE_CONTEXT_STORAGE_PREFIX}_${getCartTenantKey()}`;
+  return `${QUOTE_CONTEXT_STORAGE_PREFIX}_${getCartStorageScopeKey()}`;
 }
 
 function clearPersistedQuotePricingSnapshot() {
