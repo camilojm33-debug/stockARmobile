@@ -664,9 +664,9 @@ def refresh_cached_company_membership_context():
         except (TypeError, ValueError):
             selected_company_id = None
         if selected_company_id is not None:
-            company = db.session.get(Company, selected_company_id)
+            company = Company.query.populate_existing().filter_by(id=selected_company_id).first()
             if company is not None and company.active:
-                membership = CompanyMembership.query.filter_by(
+                membership = CompanyMembership.query.populate_existing().filter_by(
                     user_id=user_id,
                     company_id=selected_company_id,
                     active=True,
@@ -687,7 +687,7 @@ def refresh_cached_company_membership_context():
 
     # No active membership remains. Keep the identity authenticated only for
     # invitation acceptance; do not fall back to a revoked primary tenant.
-    memberships = CompanyMembership.query.filter_by(user_id=user_id).all()
+    memberships = CompanyMembership.query.populate_existing().filter_by(user_id=user_id).all()
     primary_company_id = identity.company_id
     primary_membership = next(
         (
