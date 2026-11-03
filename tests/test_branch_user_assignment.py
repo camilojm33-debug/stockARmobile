@@ -53,8 +53,15 @@ def _route_urls(app, branch_id):
 
 def _allow_branch_feature(monkeypatch):
     import branches
+    import services.ai_agent.usage_service as usage_service
+    from types import SimpleNamespace
 
     monkeypatch.setattr(branches, "_require_feature", lambda _company: None)
+    monkeypatch.setattr(
+        usage_service,
+        "can_use_commercial_feature",
+        lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=None),
+    )
 
 
 def _allow_pin_verification(monkeypatch, *, valid):
