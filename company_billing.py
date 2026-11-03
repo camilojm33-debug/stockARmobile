@@ -463,6 +463,92 @@ def _mark_pin_verified(company_id, verified=True):
         session.pop(key, None)
 
 
+def _complete_pending_branch_user_assignment(company):
+    """Apply a validated, one-time branch employee assignment after PIN verification."""
+    from flask import session
+    from app import db, record_audit
+    from branches import (
+        PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY,
+        PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS,
+        _apply_branch_user_access,
+    )
+
+    pending = session.get(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY)
+    if not isinstance(pending, dict):
+        return False
+
+    # A pending operation is tied to the administrator and tenant that submitted
+    # it. Never replay it in another user's session.
+    if (
+        int(pending.get("company_id") or 0) != int(company.id)
+        or int(pending.get("owner_user_id") or 0) != int(getattr(current_user, "id", 0) or 0)
+        or (getattr(current_user, "role", None) or "").lower() != "admin"
+    ):
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        return False
+
+    try:
+        created_at = float(pending.get("created_at") or 0)
+        branch_id = int(pending.get("branch_id") or 0)
+        raw_user_ids = pending.get("user_ids")
+        if not isinstance(raw_user_ids, list):
+            raise ValueError("La selección pendiente no tiene un formato válido.")
+        user_ids = {int(value) for value in raw_user_ids}
+        if any(value <= 0 for value in user_ids):
+            raise ValueError("La selección pendiente contiene empleados inválidos.")
+    except (TypeError, ValueError):
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash("La asignación pendiente no era válida. Volvé a seleccionar el personal.", "warning")
+        return False
+
+    if created_at <= 0 or datetime.now(timezone.utc).timestamp() - created_at > PENDING_BRANCH_USER_ASSIGNMENT_TTL_SECONDS:
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash("La selección de personal venció. Volvé a elegir los empleados y guardá los accesos.", "warning")
+        return False
+
+    try:
+        branch, users = _apply_branch_user_access(company.id, branch_id, user_ids)
+        record_audit(
+            action="branch_user_access_update",
+            entity="branch",
+            entity_id=branch.id,
+            company_id=company.id,
+            detail=(
+                f"Accesos de sucursal actualizados luego de validar PIN: "
+                f"{len(users)} empleado(s) habilitado(s)."
+            ),
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        flash(str(exc), "warning")
+        return False
+    except Exception:
+        db.session.rollback()
+        session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+        session.modified = True
+        current_app.logger.exception(
+            "Pending branch employee assignment failed company_id=%s branch_id=%s",
+            company.id,
+            branch_id,
+        )
+        flash("No se pudieron guardar los accesos. Volvé a seleccionar el personal e intentá nuevamente.", "danger")
+        return False
+
+    session.pop(PENDING_BRANCH_USER_ASSIGNMENT_SESSION_KEY, None)
+    session.modified = True
+    flash(
+        f"PIN correcto. Accesos de {branch.name} guardados: {len(users)} empleado(s) habilitado(s).",
+        "success",
+    )
+    return True
+
+
 def _load_company(company_id):
     from app import Company
 
@@ -4128,7 +4214,13 @@ def company_settings_pin_verify():
         _mark_pin_verified(company.id, True)
         record_audit(action="company_settings_pin_ok", entity="company", entity_id=company.id, detail="PIN Mi Empresa validado")
         db.session.commit()
-        flash("PIN correcto. Acceso concedido a Mi Empresa.", "success")
+        pending_assignment = _complete_pending_branch_user_assignment(company)
+        if not pending_assignment:
+            flash("PIN correcto. Acceso concedido a Mi Empresa.", "success")
+        pending_payload = session.get("stockarmobile_pending_branch_user_assignment")
+        if pending_assignment or pending_payload is None:
+            if pending_assignment:
+                return redirect(url_for("company_billing.company_settings", panel="branches"))
         return redirect(url_for("company_billing.company_settings"))
 
     attempts, blocked = CompanySecurityService.register_failed_attempt(company)
@@ -4138,6 +4230,9 @@ def company_settings_pin_verify():
         flash("Demasiados intentos fallidos. Acceso bloqueado temporalmente.", "danger")
     else:
         flash("PIN incorrecto.", "danger")
+    pending = session.get("stockarmobile_pending_branch_user_assignment")
+    if isinstance(pending, dict) and int(pending.get("company_id") or 0) == int(company.id):
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
     return redirect(url_for("company_billing.company_settings"))
 
 
@@ -4172,8 +4267,11 @@ def company_settings_pin_bootstrap():
         detail="PIN inicial de Mi Empresa generado por usuario de la empresa.",
     )
     db.session.commit()
-    flash("PIN inicial generado. Guardalo ahora: se muestra una sola vez.", "success")
-    return redirect(url_for("company_billing.company_settings"))
+    pending_assignment = _complete_pending_branch_user_assignment(company)
+    if not pending_assignment:
+        flash("PIN inicial generado. Guardalo ahora: se muestra una sola vez.", "success")
+        return redirect(url_for("company_billing.company_settings"))
+    return redirect(url_for("company_billing.company_settings", panel="branches"))
 
 
 @bp.route("/company-settings/pin/regenerate", methods=["POST"])
