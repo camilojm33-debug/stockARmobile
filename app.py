@@ -617,23 +617,37 @@ def refresh_cached_company_membership_context():
         session.clear()
         return None
 
-    # Flask-Login may have loaded this identity through an application-scoped
-    # SQLAlchemy session that survived a preserved app context (notably in tests
-    # and embedded clients). Drop that read-only identity map before reloading so
-    # a stale User row cannot leak its role or company into this request.
-    db.session.remove()
-    identity = (
-        db.session.query(User)
-        .filter(User.id == user_id)
-        .first()
-    )
-    if identity is None or not bool(identity.active):
+    # Flask-Login may hold a User object in the request/app-scoped ORM identity
+    # map. Read the persisted identity through an independent short-lived Session
+    # so we can refresh that object without removing the main scoped session or
+    # detaching other ORM objects used by the current request.
+    from sqlalchemy.orm import Session
+    cached_identity = current_user._get_current_object()
+    identity_session = Session(bind=db.engine, autoflush=False, expire_on_commit=False)
+    try:
+        persisted_identity = identity_session.get(User, user_id)
+        if persisted_identity is None:
+            logout_user()
+            session.clear()
+            return None
+        persisted_values = {
+            attribute.key: getattr(persisted_identity, attribute.key)
+            for attribute in sa_inspect(User).column_attrs
+        }
+    finally:
+        identity_session.close()
+
+    from sqlalchemy.orm.attributes import set_committed_value
+    if not bool(persisted_values.get("active", True)):
         logout_user()
         session.clear()
         return None
 
-    # Make every subsequent current_user access in this request resolve to
-    # the refreshed object, not the stale LocalProxy target.
+    # Refresh every mapped column on the cached identity while preserving its
+    # attachment to the request's main SQLAlchemy session.
+    for attribute_name, value in persisted_values.items():
+        set_committed_value(cached_identity, attribute_name, value)
+    identity = cached_identity
     g._login_user = identity
 
     if (identity.role or "").strip().lower() == "superadmin":
