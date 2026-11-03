@@ -311,7 +311,7 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
 def test_branch_transfer_script_loader_renders_for_branch_panel_context():
     from pathlib import Path
 
-    from jinja2 import Environment
+    from jinja2 import Environment, select_autoescape
 
     template = (
         Path(__file__).resolve().parents[1]
@@ -326,7 +326,9 @@ def test_branch_transfer_script_loader_renders_for_branch_panel_context():
     loader_end = template.find("{% endif %}", loader_start)
     assert loader_end >= 0
     loader_source = template[loader_start : loader_end + len("{% endif %}")]
-    render_loader = Environment().from_string(loader_source)
+    render_loader = Environment(
+        autoescape=select_autoescape(("html", "xml"))
+    ).from_string(loader_source)
     url_for = lambda _endpoint, **_kwargs: "/static/assets/js/branch-transfer-manager.js?v=test"
 
     rendered = render_loader.render(
