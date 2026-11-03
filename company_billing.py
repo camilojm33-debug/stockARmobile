@@ -474,6 +474,21 @@ def _normalize_company_role(raw_role):
     return role if role in {"admin", "user"} else "user"
 
 
+
+def _load_company_membership_user(user_id, company_id):
+    from app import CompanyMembership, User
+    from stockarmobile.company_memberships import apply_membership_context, ensure_primary_membership, get_membership
+
+    user = User.query.filter_by(id=user_id).first_or_404()
+    membership = get_membership(user.id, company_id)
+    if membership is None:
+        membership = ensure_primary_membership(user, company_id)
+    if membership is None or membership.status == "invited":
+        abort(404)
+    apply_membership_context(user, membership)
+    return user, membership
+
+
 def _temporary_password(length=10):
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
@@ -1696,29 +1711,29 @@ def _require_company_admin_or_forbid():
 
 
 def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_text="", role_filter="", status_filter=""):
-    from app import CashMovement, Sale, User, db
+    from app import CashMovement, Sale, db
+    from stockarmobile.company_memberships import get_company_users
 
-    users_query = User.query.filter_by(company_id=company_id)
     normalized_search = (search_text or "").strip().lower()
     normalized_role = (role_filter or "").strip().lower()
     normalized_status = (status_filter or "").strip().lower()
-
-    if normalized_search:
-        search_like = f"%{normalized_search}%"
-        users_query = users_query.filter(
-            func.lower(func.coalesce(User.username, "")).like(search_like)
-            | func.lower(func.coalesce(User.email, "")).like(search_like)
-            | func.lower(func.coalesce(User.first_name, "")).like(search_like)
-            | func.lower(func.coalesce(User.last_name, "")).like(search_like)
-        )
-    if normalized_role in {"admin", "user"}:
-        users_query = users_query.filter(User.role == normalized_role)
-    if normalized_status == "active":
-        users_query = users_query.filter(User.active.is_(True))
-    elif normalized_status == "inactive":
-        users_query = users_query.filter(User.active.is_(False))
-
-    users = users_query.order_by(User.created_at.asc(), User.id.asc()).all()
+    users = get_company_users(company_id)
+    filtered_users = []
+    for user in users:
+        membership_active = bool(getattr(user, "company_membership_active", user.active))
+        membership_role = getattr(user, "company_membership_role", user.role or "user")
+        if normalized_search:
+            haystack = " ".join((user.username or "", user.email or "", user.first_name or "", user.last_name or "")).lower()
+            if normalized_search not in haystack:
+                continue
+        if normalized_role in {"admin", "user"} and membership_role != normalized_role:
+            continue
+        if normalized_status == "active" and not membership_active:
+            continue
+        if normalized_status == "inactive" and membership_active:
+            continue
+        filtered_users.append(user)
+    users = filtered_users
 
     sales_query = db.session.query(
         Sale.seller_id.label("user_id"),
@@ -1761,19 +1776,18 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
         egresos = float(getattr(movement_data, "egresos", 0) or 0)
         saldo = ingresos - egresos
         average_ticket = (total_sold / sales_count) if sales_count else 0.0
-        result_rows.append(
-            {
-                "user": user,
-                "total_sold": total_sold,
-                "sales_count": sales_count,
-                "average_ticket": average_ticket,
-                "ingresos": ingresos,
-                "egresos": egresos,
-                "saldo": saldo,
-                "last_access": access_rows.get(user.id),
-                "permissions": _user_permissions(user),
-            }
-        )
+        result_rows.append({
+            "user": user,
+            "total_sold": total_sold,
+            "sales_count": sales_count,
+            "average_ticket": average_ticket,
+            "ingresos": ingresos,
+            "egresos": egresos,
+            "saldo": saldo,
+            "last_access": access_rows.get(user.id),
+            "permissions": _user_permissions(user),
+            "membership_active": bool(getattr(user, "company_membership_active", user.active)),
+        })
     result_rows.sort(key=lambda item: (-item["total_sold"], item["user"].created_at or datetime.min, item["user"].id))
     for index, row in enumerate(result_rows, start=1):
         row["rank"] = index
@@ -4230,10 +4244,9 @@ def company_settings_user_update(user_id):
     if blocked is not None:
         return blocked
 
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    user, membership = _load_company_membership_user(user_id, company.id)
     full_name = (request.form.get("full_name") or "").strip()[:160]
     email = (request.form.get("email") or "").strip().lower()[:120]
-    role = _normalize_company_role(request.form.get("role"))
     if full_name:
         parts = full_name.split(" ", 1)
         user.first_name = parts[0][:80]
@@ -4241,15 +4254,13 @@ def company_settings_user_update(user_id):
     if email and email != user.email:
         existing_email = User.query.filter(User.email == email, User.id != user.id).first()
         if existing_email is not None:
-            flash("Ese email ya esta en uso por otro usuario.", "danger")
-            return redirect(url_for("company_billing.company_settings"))
+            flash("Ese email ya esta en uso por otra cuenta.", "danger")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
         user.email = email
-    if user.id != current_user.id:
-        user.role = role
-    record_audit(action="company_user_update", entity="user", entity_id=user.id, detail=f"Usuario actualizado por administrador: {user.username}")
+    record_audit(action="company_user_update", entity="user", entity_id=user.id, detail=f"Datos de identidad actualizados desde company_id={company.id}: {user.username}")
     db.session.commit()
-    flash("Usuario actualizado correctamente.", "success")
-    return redirect(url_for("company_billing.company_settings"))
+    flash("Datos del empleado actualizados correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
 @bp.route("/company-settings/users/<int:user_id>/role", methods=["POST"])
@@ -4263,16 +4274,35 @@ def company_settings_user_role_update(user_id):
     if blocked is not None:
         return blocked
 
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    user, membership = _load_company_membership_user(user_id, company.id)
     role = _normalize_company_role(request.form.get("role"))
     if user.id == current_user.id and role != "admin":
         flash("No puedes quitarte el rol administrador desde tu propia sesión.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-    user.role = role
-    record_audit(action="company_user_role_update", entity="user", entity_id=user.id, detail=f"Rol actualizado a {role} para {user.username}")
+    previous_role = membership.role or "user"
+    membership.role = role
+    try:
+        membership_permissions = json.loads(membership.permissions_json or "[]")
+    except (TypeError, ValueError):
+        membership_permissions = []
+    if not isinstance(membership_permissions, list):
+        membership_permissions = []
+    membership_permissions = sorted({
+        str(item).strip() for item in membership_permissions if str(item).strip()
+    })
+    if role == "admin":
+        membership_permissions = sorted(set(membership_permissions) | {"economic_stats"})
+    else:
+        membership_permissions = sorted(set(membership_permissions) - {"economic_stats"})
+    membership.permissions_json = json.dumps(membership_permissions)
+    primary_company_id = db.session.query(User.company_id).filter(User.id == user.id).scalar()
+    if primary_company_id is not None and int(primary_company_id) == int(company.id):
+        user.role = role
+        user.permissions_json = membership.permissions_json
+    record_audit(action="company_user_role_update", entity="user", entity_id=user.id, company_id=company.id, detail=f"Rol actualizado de {previous_role} a {role} en empresa {company.id}")
     db.session.commit()
-    flash("Rol del empleado actualizado correctamente.", "success")
+    flash("Rol del empleado actualizado para esta empresa.", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
@@ -4283,28 +4313,34 @@ def company_settings_user_permissions(user_id):
     if not company_id or not _is_pin_verified(company_id):
         flash("Validá el PIN de Mi Empresa para administrar los permisos de empleados.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
-    # AI_PERMISSION_PIN_FINAL
     from app import User, db, record_audit
 
-    company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
     blocked = _pin_guard(company)
     if blocked is not None:
         return blocked
 
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    user, membership = _load_company_membership_user(user_id, company.id)
     selected = request.form.getlist("permissions")
-    _set_user_permissions(user, selected)
-    record_audit(action="company_user_permissions", entity="user", entity_id=user.id, detail=f"Permisos actualizados para {user.username}")
+    valid_keys = {key for key, _label in EMPLOYEE_PERMISSIONS}
+    cleaned = sorted({key for key in selected if key in valid_keys})
+    if membership.role in {"admin", "superadmin"} and "economic_stats" not in cleaned:
+        cleaned.append("economic_stats")
+        cleaned.sort()
+    membership.permissions_json = json.dumps(cleaned)
+    primary_company_id = db.session.query(User.company_id).filter(User.id == user.id).scalar()
+    if primary_company_id is not None and int(primary_company_id) == int(company.id):
+        user.permissions_json = membership.permissions_json
+    record_audit(action="company_user_permissions", entity="user", entity_id=user.id, company_id=company.id, detail=f"Permisos actualizados en empresa {company.id}")
     db.session.commit()
-    flash("Permisos del empleado actualizados.", "success")
+    flash("Permisos actualizados para esta empresa.", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
 @bp.route("/company-settings/users/<int:user_id>/delete", methods=["POST"])
 @company_admin_required
 def company_settings_user_delete(user_id):
-    from app import CashMovement, Expense, Sale, User, db, record_audit
+    from app import CashMovement, CompanyMembership, Expense, Sale, User, UserBranchAccess, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4312,40 +4348,46 @@ def company_settings_user_delete(user_id):
     if blocked is not None:
         return blocked
 
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    user, membership = _load_company_membership_user(user_id, company.id)
     if user.id == current_user.id:
-        flash("No puedes eliminar tu propio usuario administrador.", "warning")
+        flash("No puedes quitar tu propio acceso de administrador.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     linked_sales = Sale.query.filter_by(company_id=company.id, seller_id=user.id).count()
     linked_cash = CashMovement.query.filter_by(company_id=company.id, user_id=user.id).count()
     linked_expenses = Expense.query.filter_by(company_id=company.id, user_id=user.id).count()
     has_history = (linked_sales + linked_cash + linked_expenses) > 0
+    other_memberships = CompanyMembership.query.filter(
+        CompanyMembership.user_id == user.id,
+        CompanyMembership.company_id != company.id,
+    ).count()
 
+    UserBranchAccess.query.filter_by(company_id=company.id, user_id=user.id).delete(synchronize_session=False)
     if has_history:
-        user.active = False
-        record_audit(
-            action="company_user_soft_delete",
-            entity="user",
-            entity_id=user.id,
-            detail=f"Usuario desactivado por historial vinculado ({linked_sales} ventas, {linked_cash} movimientos, {linked_expenses} gastos)",
-        )
+        membership.active = False
+        membership.status = "revoked"
+        membership.invitation_token_hash = None
+        record_audit(action="company_membership_revoked", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Acceso revocado por historial vinculado ({linked_sales} ventas, {linked_cash} movimientos, {linked_expenses} gastos)")
         db.session.commit()
-        flash("El empleado tenía historial y fue desactivado en lugar de eliminarse.", "warning")
+        flash("El empleado tiene historial en esta empresa. Se revocó su acceso y se conservaron sus registros.", "warning")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-    username = user.username
-    db.session.delete(user)
-    record_audit(action="company_user_delete", entity="user", entity_id=user_id, detail=f"Empleado eliminado: {username}")
+    # Keep a revoked tombstone so the old primary-company compatibility path
+    # cannot silently re-grant access and the same global account can be invited later.
+    membership.active = False
+    membership.status = "revoked"
+    membership.invitation_token_hash = None
+    membership.invitation_expires_at = None
+    record_audit(action="company_membership_removed", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Vínculo revocado para usuario_id={user.id}; la cuenta global fue conservada.")
     db.session.commit()
-    flash("Empleado eliminado correctamente.", "success")
+    flash("Se quitó el acceso del usuario a esta empresa. La cuenta global y otros vínculos se conservaron.", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
 @bp.route("/company-settings/users/create", methods=["POST"])
 @company_admin_required
 def company_settings_user_create():
-    from app import Branch, User, UserBranchAccess, db, record_audit
+    from app import Branch, CompanyMembership, User, UserBranchAccess, db, record_audit, utcnow
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4356,7 +4398,7 @@ def company_settings_user_create():
     allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
     if not allowed:
         flash(message, "danger")
-        return redirect(url_for("company_billing.company_settings"))
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     username = (request.form.get("username") or "").strip()[:80]
     email = (request.form.get("email") or "").strip().lower()[:120]
@@ -4364,14 +4406,14 @@ def company_settings_user_create():
     role = _normalize_company_role(request.form.get("role"))
 
     if not username or not email:
-        flash("Debes completar empresa/negocio y email.", "danger")
-        return redirect(url_for("company_billing.company_settings"))
+        flash("Debes completar usuario y email.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
     if User.query.filter_by(username=username).first() is not None:
-        flash("Esa empresa/negocio ya existe.", "danger")
-        return redirect(url_for("company_billing.company_settings"))
-    if User.query.filter_by(email=email).first() is not None:
-        flash("Ese email ya existe.", "danger")
-        return redirect(url_for("company_billing.company_settings"))
+        flash("Ese nombre de usuario ya existe.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+    if User.query.filter(func.lower(User.email) == email).first() is not None:
+        flash("Ese correo ya pertenece a una cuenta. Usá la opción Invitar a empresa para vincularla.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     temp_password = _temporary_password()
     user = User(username=username, email=email, company_id=company.id, role=role, active=True, auth_provider="local", permissions_json="[]")
@@ -4383,19 +4425,38 @@ def company_settings_user_create():
     user.must_change_password = True
     db.session.add(user)
     db.session.flush()
+    membership = CompanyMembership.query.filter_by(user_id=user.id, company_id=company.id).first()
+    if membership is None:
+        membership = CompanyMembership(
+            user_id=user.id,
+            company_id=company.id,
+            role=role,
+            permissions_json="[]",
+            active=True,
+            status="active",
+            accepted_at=utcnow(),
+        )
+        db.session.add(membership)
+    else:
+        membership.role = role
+        membership.permissions_json = "[]"
+        membership.active = True
+        membership.status = "active"
+        membership.accepted_at = utcnow()
     default_branch = Branch.query.filter_by(company_id=company.id, is_default=True, active=True).first()
     if default_branch is not None:
         db.session.add(UserBranchAccess(company_id=company.id, user_id=user.id, branch_id=default_branch.id))
-    record_audit(action="company_user_create", entity="user", entity_id=user.id, detail=f"Alta de usuario {user.username}")
+    record_audit(action="company_user_create", entity="user", entity_id=user.id, company_id=company.id, detail=f"Alta de usuario {user.username}")
     db.session.commit()
-    flash(f"Empleado creado correctamente. Contrasena temporal: {temp_password}", "success")
-    return redirect(url_for("company_billing.company_settings"))
+    flash(f"Empleado creado correctamente. Contraseña temporal: {temp_password}", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
-@bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
+@bp.route("/company-settings/users/invite", methods=["POST"])
 @company_admin_required
-def company_settings_user_toggle(user_id):
-    from app import User, db, record_audit
+def company_settings_user_invite():
+    import hashlib
+    from app import CompanyMembership, User, db, record_audit, utcnow
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4403,22 +4464,133 @@ def company_settings_user_toggle(user_id):
     if blocked is not None:
         return blocked
 
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
-    if user.id == current_user.id and user.active:
-        flash("No puedes desactivar tu propio usuario administrador.", "warning")
-        return redirect(url_for("company_billing.company_settings"))
+    email = (request.form.get("email") or "").strip().lower()[:120]
+    if not email:
+        flash("Ingresá el correo de la cuenta que querés vincular.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+    user = User.query.filter(func.lower(User.email) == email).first()
+    if user is None or not user.active:
+        flash("La persona debe crear su cuenta de StockArMobile e iniciar sesión al menos una vez antes de poder vincularla.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+    if user.role == "superadmin":
+        flash("No se puede vincular una cuenta SuperAdmin como empleado.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-    if not user.active:
+    membership = CompanyMembership.query.filter_by(user_id=user.id, company_id=company.id).first()
+    if membership is not None and membership.status == "active" and membership.active:
+        flash("Ese usuario ya pertenece a esta empresa.", "info")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    pending_not_expired = bool(
+        membership is not None
+        and membership.status == "invited"
+        and membership.invitation_expires_at is not None
+        and membership.invitation_expires_at > utcnow()
+    )
+    if not pending_not_expired:
         allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
         if not allowed:
             flash(message, "danger")
-            return redirect(url_for("company_billing.company_settings"))
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
 
-    user.active = not user.active
-    record_audit(action="company_user_toggle", entity="user", entity_id=user.id, detail=f"Usuario {'activado' if user.active else 'desactivado'}")
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if membership is None:
+        membership = CompanyMembership(
+            user_id=user.id,
+            company_id=company.id,
+            role="user",
+            permissions_json="[]",
+        )
+        db.session.add(membership)
+    membership.active = False
+    membership.status = "invited"
+    membership.role = _normalize_company_role(request.form.get("role") or "user")
+    membership.permissions_json = "[]"
+    membership.invited_by_user_id = current_user.id
+    membership.invitation_token_hash = token_hash
+    membership.invitation_expires_at = utcnow() + timedelta(days=7)
+    membership.accepted_at = None
+    record_audit(action="company_membership_invited", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Invitación emitida para user_id={user.id}, email={email}")
     db.session.commit()
-    flash(f"Usuario {'activado' if user.active else 'desactivado'} correctamente.", "success")
-    return redirect(url_for("company_billing.company_settings"))
+
+    invitation_url = url_for("auth.accept_company_invitation", token=token, _external=True)
+    flash(f"Invitación creada para {email}. Copiá y enviá este enlace; vence en 7 días: {invitation_url}", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+
+@bp.route("/company-settings/users/invitations/<int:membership_id>/cancel", methods=["POST"])
+@company_admin_required
+def company_settings_user_invitation_cancel(membership_id):
+    from app import CompanyMembership, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+    membership = CompanyMembership.query.filter_by(
+        id=membership_id,
+        company_id=company.id,
+        status="invited",
+        active=False,
+    ).first_or_404()
+    membership.status = "revoked"
+    membership.invitation_token_hash = None
+    membership.invitation_expires_at = None
+    record_audit(action="company_membership_invitation_cancelled", entity="company_membership", entity_id=membership.id, company_id=company.id, detail="Invitación cancelada por administrador.")
+    db.session.commit()
+    flash("Invitación cancelada.", "info")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+
+@bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
+@company_admin_required
+def company_settings_user_toggle(user_id):
+    from app import CompanyMembership, User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    user, membership = _load_company_membership_user(user_id, company.id)
+    if user.id == current_user.id and membership.active:
+        flash("No puedes desactivar tu propio usuario administrador.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    new_active = not bool(membership.active and membership.status == "active")
+    if not new_active and membership.role == "admin":
+        other_admins = CompanyMembership.query.filter(
+            CompanyMembership.company_id == company.id,
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
+            CompanyMembership.role == "admin",
+            CompanyMembership.user_id != user.id,
+        ).count()
+        if other_admins == 0:
+            flash("No se puede desactivar al único administrador activo de la empresa.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    if new_active:
+        if not user.active:
+            flash("La cuenta global está desactivada. Un SuperAdmin debe reactivarla antes de devolverle acceso.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+        allowed, message = PlanUsageService.can_create(company.id, PlanUsageService.RESOURCE_USERS)
+        if not allowed:
+            flash(message, "danger")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+        membership.active = True
+        membership.status = "active"
+    else:
+        membership.active = False
+        membership.status = "revoked"
+
+    record_audit(action="company_membership_toggle", entity="company_membership", entity_id=membership.id, company_id=company.id, detail=f"Acceso de usuario_id={user.id} {'activado' if new_active else 'revocado'} en la empresa.")
+    db.session.commit()
+    flash(f"Acceso del empleado {'activado' if new_active else 'desactivado'} en esta empresa.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
 @bp.route("/company-settings/users/<int:user_id>/reset-password", methods=["POST"])
@@ -4432,37 +4604,34 @@ def company_settings_user_reset_password(user_id):
     if blocked is not None:
         return blocked
 
-    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    user, _membership = _load_company_membership_user(user_id, company.id)
     new_password = (request.form.get("new_password") or "").strip()
     confirm_password = (request.form.get("confirm_password") or "").strip()
     force_change = (request.form.get("force_change") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     if new_password or confirm_password:
         if len(new_password) < 6:
-            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+            flash("La nueva contraseña debe tener al menos 6 caracteres.", "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         if new_password != confirm_password:
-            flash("Las contrasenas no coinciden.", "danger")
+            flash("Las contraseñas no coinciden.", "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         user.set_password(new_password)
         user.must_change_password = force_change
-        record_audit(
-            action="company_user_set_password",
-            entity="user",
-            entity_id=user.id,
-            detail=f"Contrasena configurada manualmente para {user.username}. force_change={force_change}",
-        )
+        record_audit(action="company_user_set_password", entity="user", entity_id=user.id, company_id=company.id, detail=f"Contraseña configurada desde empresa {company.id}. force_change={force_change}")
         db.session.commit()
-        flash(f"Contrasena actualizada correctamente para {user.username}.", "success")
+        flash(f"Contraseña actualizada correctamente para {user.username}.", "success")
         return redirect(url_for("company_billing.company_settings", panel="employees"))
 
     temp_password = _temporary_password()
     user.set_password(temp_password)
     user.must_change_password = True
-    record_audit(action="company_user_reset_password", entity="user", entity_id=user.id, detail=f"Contrasena restablecida para {user.username}")
+    record_audit(action="company_user_reset_password", entity="user", entity_id=user.id, company_id=company.id, detail=f"Contraseña restablecida para {user.username}")
     db.session.commit()
-    flash(f"Contrasena restablecida. Temporal para {user.username}: {temp_password}", "success")
+    flash(f"Contraseña restablecida. Temporal para {user.username}: {temp_password}", "success")
     return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+
 
 
 @bp.route("/company-settings/password", methods=["POST"])
@@ -4490,6 +4659,7 @@ def company_settings_change_password():
     db.session.commit()
     flash("Contrasena actualizada correctamente.", "success")
     return redirect(url_for("company_billing.company_settings"))
+
 
 
 @bp.route("/company-settings/general", methods=["POST"])
@@ -4537,6 +4707,7 @@ def company_settings_general_save():
     db.session.commit()
     flash("Configuración general guardada correctamente.", "success")
     return redirect(url_for("company_billing.company_settings", panel="general"))
+
 
 
 @bp.route("/company-settings/billing", methods=["POST"])
@@ -4612,6 +4783,7 @@ def company_settings_billing_save():
     return redirect(url_for("company_billing.company_settings", panel="billing"))
 
 
+
 @bp.route("/company-settings/billing/pos/add", methods=["POST"])
 @company_admin_required
 def company_settings_billing_pos_add():
@@ -4646,6 +4818,7 @@ def company_settings_billing_pos_add():
     return redirect(url_for("company_billing.company_settings", panel="billing"))
 
 
+
 @bp.route("/company-settings/billing/numbering/reset", methods=["POST"])
 @company_admin_required
 def company_settings_billing_numbering_reset():
@@ -4675,6 +4848,7 @@ def company_settings_billing_numbering_reset():
     db.session.commit()
     flash("Numeración reiniciada correctamente.", "success")
     return redirect(url_for("company_billing.company_settings", panel="billing"))
+
 
 
 @bp.route("/company-settings/schedules", methods=["POST"])
@@ -4711,10 +4885,12 @@ def company_settings_schedules_save():
     return redirect(url_for("company_billing.company_settings", panel="schedules"))
 
 
+
 @bp.route("/company-settings/schedules/assign", methods=["POST"])
 @company_admin_required
 def company_settings_schedules_assign_add():
-    from app import User, db, record_audit
+    from app import db, record_audit
+    from stockarmobile.company_memberships import get_company_users
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -4728,7 +4904,7 @@ def company_settings_schedules_assign_add():
     end = (request.form.get("end") or "").strip()[:5]
     valid_days = {"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
 
-    user = User.query.filter_by(id=user_id, company_id=company.id, active=True).first()
+    user = next((item for item in get_company_users(company.id, active_only=True) if item.id == user_id), None)
     if user is None:
         flash("Debes seleccionar un empleado activo válido.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="schedules"))
@@ -4754,6 +4930,7 @@ def company_settings_schedules_assign_add():
     db.session.commit()
     flash("Asignación de horario guardada correctamente.", "success")
     return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
 
 
 @bp.route("/company-settings/schedules/assign/<string:assignment_id>/delete", methods=["POST"])
@@ -4782,6 +4959,7 @@ def company_settings_schedules_assign_delete(assignment_id):
     return redirect(url_for("company_billing.company_settings", panel="schedules"))
 
 
+
 @bp.route("/company-settings/security/logout-current", methods=["POST"])
 @company_member_required
 def company_settings_security_logout_current():
@@ -4796,6 +4974,7 @@ def company_settings_security_logout_current():
     logout_user()
     flash("Sesión cerrada correctamente.", "info")
     return redirect(url_for("auth.login"))
+
 
 
 @bp.route("/company-settings/billing/invoice/<int:invoice_id>/pdf")
@@ -4822,6 +5001,7 @@ def company_settings_billing_invoice_pdf(invoice_id):
     return _pdf_from_lines("Factura SaaS - StockArmobile", lines, f"factura_{invoice.id}.pdf")
 
 
+
 @bp.route("/company-settings/billing/payment/<int:payment_id>/pdf")
 @company_admin_required
 def company_settings_billing_payment_pdf(payment_id):
@@ -4844,6 +5024,7 @@ def company_settings_billing_payment_pdf(payment_id):
         f"Fecha de registro: {payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-'}",
     ]
     return _pdf_from_lines("Comprobante de Pago - StockArmobile", lines, f"pago_{payment.id}.pdf")
+
 
 
 @bp.route("/company-settings/backups/create", methods=["POST"])
@@ -4871,6 +5052,7 @@ def company_settings_backups_create():
     if BackupService.plan_limit_status(company_id)["count"] >= plan["limit"]:
         flash("Límite de Backups alcanzado. Se eliminó automáticamente el backup más antiguo.", "warning")
     return redirect(url_for("company_billing.company_settings", panel="backups"))
+
 
 
 @bp.route("/company-settings/backups/import", methods=["POST"])
@@ -4909,6 +5091,7 @@ def company_settings_backups_import():
         return redirect(url_for("company_billing.company_settings", panel="backups"))
 
 
+
 @bp.route("/company-settings/backups/<int:backup_id>/download")
 @company_member_required
 def company_settings_backups_download(backup_id):
@@ -4929,6 +5112,7 @@ def company_settings_backups_download(backup_id):
         as_attachment=True,
         download_name=backup.file_name or backup_path.name,
     )
+
 
 
 @bp.route("/company-settings/backups/<int:backup_id>/restore", methods=["POST"])
@@ -4967,6 +5151,7 @@ def company_settings_backups_restore(backup_id):
     return redirect(url_for("company_billing.company_settings", panel="backups"))
 
 
+
 @bp.route("/company-settings/backups/<int:backup_id>/delete", methods=["POST"])
 @company_member_required
 def company_settings_backups_delete(backup_id):
@@ -5002,13 +5187,15 @@ def company_settings_backups_delete(backup_id):
     return redirect(url_for("company_billing.company_settings", panel="backups"))
 
 
+
 @bp.route("/company-settings")
 @company_member_required
 def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, Branch, CashSession, Product, Quote, Sale, SaleItem, User, UserBranchAccess
+    from app import AuditLog, Branch, CashSession, Product, Quote, Sale, SaleItem, UserBranchAccess
+    from stockarmobile.company_memberships import get_company_users
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -5088,11 +5275,7 @@ def company_settings():
             .limit(12)
             .all()
         )
-        active_employees = (
-            User.query.filter_by(company_id=company.id, active=True)
-            .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
-            .all()
-        )
+        active_employees = get_company_users(company.id, active_only=True)
         device_rows = (
             AuditLog.query.filter_by(company_id=company.id, action="login_success")
             .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
@@ -5246,7 +5429,6 @@ def company_settings():
         branch_limit=branch_limit,
         active_branch_count=active_branch_count,
     )
-
 
 @bp.route("/company-settings/day-activity")
 @company_admin_required
@@ -5430,11 +5612,8 @@ def business_billing_hub():
     dashboard = BusinessBillingService.build_dashboard(company.id, config)
     reports = BusinessBillingService.report_summary(rows)
 
-    users = (
-        User.query.filter_by(company_id=company.id, active=True)
-        .order_by(User.username.asc())
-        .all()
-    )
+    from stockarmobile.company_memberships import get_company_users
+    users = get_company_users(company.id, active_only=True)
     selected_tab = (request.args.get("tab") or "dashboard").strip().lower()
     if selected_tab not in {
         "dashboard",

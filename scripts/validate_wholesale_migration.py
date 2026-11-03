@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261102_01_multibranch_opening"
+HEAD_REVISION = "20261102_02_company_memberships"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -94,6 +94,10 @@ def main() -> None:
 
         _progress("Rewinding disposable schema to the pre-feature state")
         with db.engine.begin() as connection:
+            # db.create_all() builds the current ORM metadata, including the new
+            # membership table. Remove it here so Alembic must create/backfill it
+            # from the historic baseline exactly as it will on an existing tenant.
+            connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_discount_rules CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))

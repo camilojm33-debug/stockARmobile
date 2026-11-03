@@ -45,7 +45,7 @@
       <span>Empleados y empresas/negocios</span>
       <small class="text-muted">{{ users|length }} registros</small>
     </div>
-    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Empresa / Negocio</th><th>Email</th><th>Rol actual</th><th>Empresa</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>
+    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Empresa / Negocio</th><th>Email</th><th>Rol actual</th><th>Empresa principal</th><th>Empresas vinculadas</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>
       {% for user in users %}
       {% set company = companies_by_id.get(user.company_id) if user.company_id else None %}
       <tr>
@@ -66,6 +66,18 @@
           <span>ID {{ user.company_id }}</span>
           {% else %}
           <span class="text-muted">Global</span>
+          {% endif %}
+        </td>
+        <td>
+          {% set linked_memberships = memberships_by_user.get(user.id, []) %}
+          {% if linked_memberships %}
+            <div class="d-flex flex-wrap gap-1">
+              {% for membership in linked_memberships %}
+              <span class="badge text-bg-light border text-dark">{{ membership.company.name }} · {{ 'Admin' if membership.role == 'admin' else 'Empleado' }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <span class="text-muted small">Sin vínculos activos</span>
           {% endif %}
         </td>
         <td>{{ 'activo' if user.active else 'inactivo' }}</td>
@@ -103,7 +115,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-center text-muted py-4">Sin usuarios.</td></tr>
+      <tr><td colspan="8" class="text-center text-muted py-4">Sin usuarios.</td></tr>
       {% endfor %}
     </tbody></table></div>
   </div>
