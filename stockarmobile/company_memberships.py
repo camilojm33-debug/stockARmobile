@@ -22,7 +22,7 @@ ACTIVE_COMPANY_SESSION_KEY = "stockarmobile_active_company_id"
 def get_membership(user_id: int, company_id: int, *, active_only: bool = False):
     from app import CompanyMembership
 
-    query = CompanyMembership.query.filter_by(user_id=int(user_id), company_id=int(company_id))
+    query = CompanyMembership.query.populate_existing().filter_by(user_id=int(user_id), company_id=int(company_id))
     if active_only:
         query = query.filter_by(active=True, status="active")
     return query.first()
@@ -76,15 +76,15 @@ def get_company_users(company_id: int, *, active_only: bool | None = None, inclu
     from app import CompanyMembership, User, db
 
     company_id = int(company_id)
-    memberships = CompanyMembership.query.filter_by(company_id=company_id).all()
+    memberships = CompanyMembership.query.populate_existing().filter_by(company_id=company_id).all()
     membership_by_user = {int(row.user_id): row for row in memberships}
     users_by_id = {}
     if membership_by_user:
-        for user in User.query.filter(User.id.in_(list(membership_by_user))).all():
+        for user in User.query.populate_existing().filter(User.id.in_(list(membership_by_user))).all():
             users_by_id[int(user.id)] = user
 
     # Backward compatibility for pre-migration/test-created users without a membership row.
-    for user in User.query.filter_by(company_id=company_id).all():
+    for user in User.query.populate_existing().filter_by(company_id=company_id).all():
         users_by_id.setdefault(int(user.id), user)
 
     result = []
@@ -118,7 +118,7 @@ def active_memberships_for_user(user_id: int):
     from app import Company, CompanyMembership
 
     return (
-        CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+        CompanyMembership.query.populate_existing().join(Company, Company.id == CompanyMembership.company_id)
         .filter(
             CompanyMembership.user_id == int(user_id),
             CompanyMembership.active.is_(True),
