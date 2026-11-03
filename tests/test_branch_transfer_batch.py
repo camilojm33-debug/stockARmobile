@@ -307,6 +307,9 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     assert "data-transfer-quantity" in script
     assert "items_json" in template
     assert "available_only" in script
+    service_worker = (Path(__file__).resolve().parents[1] / "static" / "service-worker.js").read_text(encoding="utf-8")
+    assert "'/sucursales/api/productos-transferencia'" in service_worker
+    assert "stockarmobile-pwa-v19" in service_worker
 
 def test_branch_transfer_script_loader_renders_for_branch_panel_context():
     from pathlib import Path

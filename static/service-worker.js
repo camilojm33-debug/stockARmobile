@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stockarmobile-pwa-v18';
+const CACHE_NAME = 'stockarmobile-pwa-v19';
 const STATIC_ASSETS = [
   '/offline.html',
   '/manifest.json',
@@ -20,7 +20,7 @@ const STATIC_ASSETS = [
   '/static/images/branding/icon-maskable-512.png',
   '/static/images/branding/splash.png'
 ];
-const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent', '/api/search'];
+const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent', '/api/search', '/sucursales/api/productos-transferencia'];
 const SYNCABLE_POST_PREFIXES = [
   '/ventas/checkout',
   '/ventas/edit/',
