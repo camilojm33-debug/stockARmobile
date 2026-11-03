@@ -1,5 +1,6 @@
 from datetime import timedelta
 import hashlib
+import re
 
 from flask import session
 
@@ -32,6 +33,23 @@ def _user(company, *, role="admin", email="multi@example.test"):
     db.session.add(row)
     db.session.flush()
     return row
+
+
+def _assert_rendered_tenant_context(html, expected_company_id, expected_role, client):
+    company_match = re.search(r'data-company-id="([^"]*)"', html)
+    role_match = re.search(r'data-role="([^"]*)"', html)
+    with client.session_transaction() as browser_session:
+        selected_company_id = browser_session.get(ACTIVE_COMPANY_SESSION_KEY)
+    actual_company_id = company_match.group(1) if company_match else None
+    actual_role = role_match.group(1) if role_match else None
+    assert actual_company_id == str(expected_company_id), (
+        f"expected company_id={expected_company_id}, rendered={actual_company_id}, "
+        f"session_company_id={selected_company_id}, role={actual_role}"
+    )
+    assert actual_role == expected_role, (
+        f"expected role={expected_role}, rendered role={actual_role}, "
+        f"company_id={actual_company_id}, session_company_id={selected_company_id}"
+    )
 
 
 def _membership(user, company, *, role, permissions="[]"):
@@ -166,8 +184,7 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
     second_response = client.get(dashboard_url)
     assert second_response.status_code == 200
     second_html = second_response.get_data(as_text=True)
-    assert f'data-company-id="{second_id}"' in second_html
-    assert 'data-role="user"' in second_html
+    _assert_rendered_tenant_context(second_html, second_id, "user", client)
 
     denied = client.post("/auth/switch-company", data={"company_id": str(third_id)})
     assert denied.status_code == 403
@@ -226,8 +243,7 @@ def test_user_without_active_membership_can_only_accept_new_company_invitation(c
     dashboard = client.get(dashboard_url)
     assert dashboard.status_code == 200
     html = dashboard.get_data(as_text=True)
-    assert f'data-company-id="{new_company_id}"' in html
-    assert 'data-role="user"' in html
+    _assert_rendered_tenant_context(html, new_company_id, "user", client)
 
     with company_membership_app.app_context():
         stored = db.session.get(User, user_id)
