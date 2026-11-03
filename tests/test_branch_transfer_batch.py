@@ -123,6 +123,9 @@ def test_batch_branch_transfer_can_be_rolled_back_when_one_product_has_insuffici
         set_branch_stock(first, target.id, 2)
         set_branch_stock(second, source.id, 1)
         set_branch_stock(second, target.id, 4)
+        # Persist fixture data before testing the transfer transaction rollback.
+        # Otherwise rollback would also remove the newly-created company/branches.
+        db.session.commit()
 
         from stockarmobile.branch_inventory import transfer_branch_stock_batch
 
