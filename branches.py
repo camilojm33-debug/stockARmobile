@@ -1,8 +1,8 @@
 """Premium multi-branch management routes."""
 import re
-from flask import Blueprint, abort, current_app, flash, redirect, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, request, session, url_for
 from flask_login import current_user
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from app import Branch, Company, User, UserBranchAccess, db, tenant_required, company_admin_required
 from stockarmobile.branch_context import SESSION_KEY
 
@@ -171,11 +171,93 @@ def update_branch(branch_id):
     flash("Sucursal actualizada.", "success")
     return redirect(url_for("company_billing.company_settings", panel="branches"))
 
+@bp.route("/api/productos-transferencia")
+@company_admin_required
+def search_transfer_products():
+    """Search this tenant's products and return stock for the selected source branch."""
+    from app import BranchStock, Product
+    from services.ai_agent.usage_service import can_use_commercial_feature
+
+    company_id = _company_id()
+    company = Company.query.filter_by(id=company_id, active=True).first_or_404()
+    feature = can_use_commercial_feature(company, "multi_branch")
+    if not feature.allowed:
+        return jsonify(success=False, error=feature.reason or "La gestión multisucursal requiere un plan habilitado."), 403
+
+    source_id = request.args.get("source_branch_id", type=int)
+    source = Branch.query.filter_by(id=source_id, company_id=company_id, active=True).first()
+    if source is None:
+        return jsonify(success=False, error="Seleccioná una sucursal de origen válida."), 400
+
+    search = (request.args.get("q") or "").strip()[:100]
+    category = (request.args.get("category") or "").strip()[:100]
+    available_only = request.args.get("available_only", "1") != "0"
+    limit = min(100, max(1, request.args.get("limit", 30, type=int) or 30))
+    offset = min(50000, max(0, request.args.get("offset", 0, type=int) or 0))
+
+    product_query = Product.query.filter_by(company_id=company_id, active=True)
+    if search:
+        pattern = f"%{search}%"
+        product_query = product_query.filter(or_(
+            Product.name.ilike(pattern),
+            Product.barcode.ilike(pattern),
+            Product.category.ilike(pattern),
+            Product.brand.ilike(pattern),
+        ))
+    if category:
+        product_query = product_query.filter(func.lower(func.trim(Product.category)) == category.lower())
+    if available_only:
+        available_product_ids = db.session.query(BranchStock.product_id).filter_by(
+            company_id=company_id, branch_id=source.id
+        ).filter(BranchStock.stock > 0)
+        product_query = product_query.filter(Product.id.in_(available_product_ids))
+
+    categories = [
+        row[0] for row in db.session.query(Product.category)
+        .filter_by(company_id=company_id, active=True)
+        .filter(Product.category.isnot(None), func.trim(Product.category) != "")
+        .distinct()
+        .order_by(func.lower(Product.category))
+        .all()
+    ]
+    total = product_query.count()
+    products = product_query.order_by(func.lower(Product.name), Product.id).offset(offset).limit(limit).all()
+    product_ids = [product.id for product in products]
+    stock_rows = {}
+    if product_ids:
+        stock_rows = {
+            row.product_id: row
+            for row in BranchStock.query.filter_by(company_id=company_id, branch_id=source.id)
+            .filter(BranchStock.product_id.in_(product_ids)).all()
+        }
+
+    return jsonify(
+        success=True,
+        products=[{
+            "id": product.id,
+            "name": product.name,
+            "barcode": product.barcode or "",
+            "category": product.category or "",
+            "brand": product.brand or "",
+            "unit_measure": product.unit_measure or "u",
+            "stock": float(stock_rows[product.id].stock or 0) if product.id in stock_rows else 0,
+        } for product in products],
+        categories=categories,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=offset + len(products) < total,
+        source_branch_id=source.id,
+    )
+
+
 @bp.route("/transferir-stock", methods=["POST"])
 @company_admin_required
 def transfer_stock():
+    import json
     from decimal import Decimal, InvalidOperation
-    from app import BranchStockTransfer, Product
+    from app import Product
+
     company_id = _company_id()
     company = Company.query.filter_by(id=company_id, active=True).first_or_404()
     blocked = _require_feature(company)
@@ -184,37 +266,84 @@ def transfer_stock():
     pin_blocked = _require_company_pin(company)
     if pin_blocked:
         return pin_blocked
+
     source_id = request.form.get("source_branch_id", type=int)
     target_id = request.form.get("target_branch_id", type=int)
-    product_reference = (request.form.get("product_code") or request.form.get("product_id") or "").strip()
-    try:
-        quantity = Decimal((request.form.get("quantity") or "0").replace(",", "."))
-    except (InvalidOperation, AttributeError):
-        quantity = Decimal("0")
     source = Branch.query.filter_by(id=source_id, company_id=company_id, active=True).first()
     target = Branch.query.filter_by(id=target_id, company_id=company_id, active=True).first()
-    product_query = Product.query.filter_by(company_id=company_id, active=True)
-    product = product_query.filter_by(barcode=product_reference).first() if product_reference else None
-    if product is None and product_reference.isdigit():
-        product = Product.query.filter_by(id=int(product_reference), company_id=company_id, active=True).first()
-    if source is None or target is None or product is None:
-        flash("Revisá origen, destino y producto de la transferencia.", "danger")
+    if source is None or target is None or source.id == target.id:
+        flash("Revisá las sucursales de origen y destino. Deben ser distintas y estar activas.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="branches"))
+
     try:
-        from stockarmobile.branch_inventory import transfer_branch_stock
-        transfer = transfer_branch_stock(
-            product, source.id, target.id, quantity,
+        raw_items = (request.form.get("items_json") or "").strip()
+        if raw_items:
+            payload = json.loads(raw_items)
+            if not isinstance(payload, list) or not payload:
+                raise ValueError("Agregá al menos un producto a la transferencia.")
+            if len(payload) > 100:
+                raise ValueError("Una transferencia puede incluir hasta 100 productos por operación.")
+            parsed_items = []
+            seen_ids = set()
+            for row in payload:
+                if not isinstance(row, dict):
+                    raise ValueError("La lista de productos no tiene un formato válido.")
+                try:
+                    product_id = int(row.get("product_id") or 0)
+                except (TypeError, ValueError):
+                    product_id = 0
+                if product_id <= 0:
+                    raise ValueError("Hay un producto inválido en la lista.")
+                if product_id in seen_ids:
+                    raise ValueError("No repitas un producto en la misma transferencia.")
+                seen_ids.add(product_id)
+                try:
+                    quantity = Decimal(str(row.get("quantity") or "0").replace(",", "."))
+                except (InvalidOperation, AttributeError):
+                    raise ValueError("Hay una cantidad inválida en la lista.") from None
+                parsed_items.append((product_id, quantity))
+
+            products_by_id = {
+                product.id: product for product in Product.query.filter_by(
+                    company_id=company_id, active=True
+                ).filter(Product.id.in_(seen_ids)).all()
+            }
+            if len(products_by_id) != len(parsed_items):
+                raise ValueError("Uno o más productos ya no están disponibles para esta empresa.")
+            transfer_items = [(products_by_id[product_id], quantity) for product_id, quantity in parsed_items]
+        else:
+            # Keep compatibility with the original single-product form.
+            from_reference = (request.form.get("product_code") or request.form.get("product_id") or "").strip()
+            product = Product.query.filter_by(company_id=company_id, active=True).filter_by(barcode=from_reference).first() if from_reference else None
+            if product is None and from_reference.isdigit():
+                product = Product.query.filter_by(id=int(from_reference), company_id=company_id, active=True).first()
+            if product is None:
+                raise ValueError("Revisá el producto de la transferencia.")
+            try:
+                quantity = Decimal((request.form.get("quantity") or "0").replace(",", "."))
+            except (InvalidOperation, AttributeError):
+                raise ValueError("La cantidad de transferencia no es válida.") from None
+            transfer_items = [(product, quantity)]
+
+        from stockarmobile.branch_inventory import transfer_branch_stock_batch
+        transfers = transfer_branch_stock_batch(
+            transfer_items, source.id, target.id,
             user_id=current_user.id, note=request.form.get("note"),
         )
         db.session.commit()
-        flash(f"Transferencia #{transfer.id}: {quantity} {product.unit_measure or 'u'} de {source.name} a {target.name}.", "success")
+        total_units = sum((quantity for _product, quantity in transfer_items), Decimal("0"))
+        flash(
+            f"Transferencia completada: {len(transfers)} producto(s), "
+            f"{total_units.normalize()} unidad(es) de {source.name} a {target.name}.",
+            "success",
+        )
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "warning")
     except Exception:
         db.session.rollback()
-        current_app.logger.exception("Branch stock transfer failed company_id=%s", company_id)
-        flash("No se pudo transferir el stock. No se guardaron cambios.", "danger")
+        current_app.logger.exception("Branch stock transfer batch failed company_id=%s", company_id)
+        flash("No se pudo completar la transferencia. No se guardaron cambios.", "danger")
     return redirect(url_for("company_billing.company_settings", panel="branches"))
 
 
