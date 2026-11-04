@@ -1450,7 +1450,7 @@ def api_mp_qr_create():
 @tenant_required
 def api_mp_qr_status():
     _mp_qr_trace_enter("sales.api_mp_qr_status")
-    from app import Payment
+    from app import Payment, BranchStockReservation
     from services.payment_flow import is_stale_pos_draft
 
     draft_id = request.args.get("draft_id", type=int)
@@ -1478,7 +1478,15 @@ def api_mp_qr_status():
     status = (payment.status or "pending").lower()
     if is_stale_pos_draft(payment) and status in {"pending", "in_process", "authorized"}:
         status = "expired"
-    can_process = status == "approved"
+    snapshot = payload.get("snapshot") or {}
+    items = snapshot.get("items") or []
+    reservation_ready = True
+    if payment.branch_id is not None:
+        reserved_count = BranchStockReservation.query.filter_by(
+            payment_id=int(payment.id), status="reserved"
+        ).count()
+        reservation_ready = reserved_count == len(items) and bool(items)
+    can_process = status == "approved" and not payload.get("sale_id") and reservation_ready
     return jsonify({
         "payment_id": payment.id,
         "status": status,
@@ -1497,6 +1505,7 @@ def api_mp_qr_status():
         "operation_number": payment.payment_id or payment.preference_id or f"pos-{payment.id}",
         "approved_at": approved_at.strftime("%Y-%m-%d %H:%M") if approved_at else None,
         "can_process_sale": can_process,
+        "stock_reservation_error": payload.get("pos_stock_reservation_error"),
         "sale_id": payload.get("sale_id"),
         "finalize_url": url_for("sales.api_mp_qr_finalize", draft_id=payment.id),
     })
@@ -1562,6 +1571,17 @@ def api_mp_qr_finalize():
     items = snapshot.get("items") or []
     if not items:
         return jsonify({"error": "No hay items para procesar."}), 400
+
+    if payment.branch_id is not None:
+        try:
+            from stockarmobile.branch_inventory import ensure_branch_stock_reservations_for_payment
+            ensure_branch_stock_reservations_for_payment(payment)
+        except ValueError as exc:
+            db.session.rollback()
+            return _api_error(
+                "El pago está aprobado, pero el stock de la sucursal de origen requiere revisión: " + str(exc),
+                status=409,
+            )
 
     sale_payload = {
         "client_id": snapshot.get("client_id") or "",
