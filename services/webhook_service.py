@@ -1085,7 +1085,10 @@ class WebhookService:
                     payment_payload = {}
                 snapshot = payment_payload.get("snapshot") if isinstance(payment_payload, dict) else None
                 snapshot = snapshot if isinstance(snapshot, dict) else {}
-                already_finalized = bool(snapshot.get("sale_id"))
+                already_finalized = bool(
+                    (payment_payload.get("sale_id") if isinstance(payment_payload, dict) else None)
+                    or snapshot.get("sale_id")
+                )
                 if payment_status == "approved" and not already_finalized:
                     origin_is_fulfillable = bool(
                         payment.branch_id
