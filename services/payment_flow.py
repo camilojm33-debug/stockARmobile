@@ -48,7 +48,7 @@ def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: d
         Payment.status.in_(POS_DRAFT_PENDING_STATUSES),
         Payment.payment_id.is_(None),
         Payment.created_at < cutoff,
-    )
+    ).with_for_update()
     if company_id is not None:
         query = query.filter(Payment.company_id == int(company_id))
 
