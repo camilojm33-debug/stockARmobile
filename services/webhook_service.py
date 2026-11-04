@@ -20,6 +20,10 @@ def _merge_pos_draft_payload(existing_payload_json, provider_response):
         stored = {}
     if not isinstance(stored, dict):
         stored = {}
+    if isinstance(provider_response, dict):
+        for key, value in provider_response.items():
+            if key not in {"flow", "snapshot", "sale_id"}:
+                stored[key] = value
     stored["provider_response"] = provider_response
     return json.dumps(stored, ensure_ascii=False)
 
