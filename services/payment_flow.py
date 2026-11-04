@@ -119,7 +119,11 @@ def release_pos_payment_reservation(db_session, payment) -> bool:
 
     from app import Product
     from stockarmobile.branch_inventory import release_branch_stock_reservation
-    for item in snapshot.get("items") or []:
+    reservation_items = sorted(
+        snapshot.get("items") or [],
+        key=lambda item: int(item.get("productId") or item.get("product_id") or 0),
+    )
+    for item in reservation_items:
         product_id = int(item.get("productId") or item.get("product_id") or 0)
         quantity = item.get("quantity") or 0
         if product_id <= 0 or not quantity:
