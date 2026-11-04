@@ -1545,6 +1545,8 @@ def api_mp_qr_finalize():
         return jsonify({"error": "La sucursal guardada en el borrador no coincide con el pago."}), 409
     if int(snapshot.get("cash_session_id") or 0) <= 0:
         return jsonify({"error": "El borrador QR no conserva la caja de origen."}), 409
+    if int(snapshot.get("cash_session_id") or 0) != int(open_session.id):
+        return jsonify({"error": "El QR fue creado con otra caja. Reabrí la caja de origen para finalizar este cobro."}), 409
     if not items:
         return jsonify({"error": "No hay items para procesar."}), 400
 
@@ -1605,7 +1607,14 @@ def api_mp_qr_finalize():
 
     sale_id = data["sale_id"]
     payment.reference = f"sale_id:{sale_id}"
-    payment.payload_json = json.dumps({**draft_payload, "sale_id": sale_id}, ensure_ascii=False)
+    # Preserve reservation metadata updated before the sale transaction committed.
+    try:
+        persisted_payload = json.loads(payment.payload_json or "{}")
+    except (TypeError, ValueError):
+        persisted_payload = {}
+    if not isinstance(persisted_payload, dict):
+        persisted_payload = {}
+    payment.payload_json = json.dumps({**persisted_payload, "sale_id": sale_id}, ensure_ascii=False)
     record_audit(action="pos_qr_finalize", entity="sale", entity_id=sale_id, detail=f"POS QR finalizado con pago {payment.payment_id or payment.preference_id}")
     db.session.commit()
     _set_pos_qr_draft(None)
