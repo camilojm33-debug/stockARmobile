@@ -445,7 +445,7 @@
     <div class="col-6 col-lg">
       <div class="ai-metric h-100">
         <div class="small text-muted">{{ label }}</div>
-        <div class="ai-metric-value">{{ value }}</div>
+        <div class="ai-metric-value">{{ value if value is not none else 'Solo empresa' }}</div>
       </div>
     </div>
     {% endfor %}
