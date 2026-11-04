@@ -184,6 +184,9 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     new = validate_stock_quantity(quantity or 0, label="El stock de sucursal")
     if new < 0:
         raise ValueError("El stock de sucursal debe ser un número finito no negativo.")
+    reserved = Decimal(str(row.reserved_stock or 0))
+    if new < reserved:
+        raise ValueError("El ajuste dejaría por debajo del stock reservado para cobros QR pendientes.")
     row.stock = new
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if new != old:
