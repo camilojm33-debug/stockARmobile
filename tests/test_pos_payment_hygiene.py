@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 from datetime import datetime, timedelta
 
 from app import Company, Payment, PaymentHistory, db
@@ -69,3 +72,33 @@ def test_expire_stale_pos_drafts_updates_only_abandoned_local_pos_drafts(app):
         history = PaymentHistory.query.filter_by(payment_id=old.id, event="expired_stale_pos_draft").first()
         assert history is not None
         assert history.status == "expired"
+
+
+def test_pos_provider_payload_merge_preserves_trusted_sale_snapshot():
+    from services.payment_flow import merge_pos_payment_provider_payload
+    from services.webhook_service import WebhookService
+
+    snapshot = {
+        "branch_id": 17,
+        "cash_session_id": 91,
+        "items": [{"productId": 8, "quantity": 2}],
+        "stock_reservation_released": False,
+    }
+    payment = SimpleNamespace(
+        provider="mercadopago_pos",
+        payload_json=json.dumps({"flow": "pos_sale", "snapshot": snapshot}),
+    )
+
+    merge_pos_payment_provider_payload(
+        payment,
+        {
+            "id": 123456,
+            "status": "approved",
+            "date_last_updated": "2026-11-03T20:30:00.000-03:00",
+        },
+    )
+    merged = json.loads(payment.payload_json)
+    assert merged["flow"] == "pos_sale"
+    assert merged["snapshot"] == snapshot
+    assert merged["mercadopago"]["status"] == "approved"
+    assert WebhookService._event_updated_at(merged) is not None
