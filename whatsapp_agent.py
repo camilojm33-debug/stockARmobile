@@ -732,6 +732,21 @@ def _ai_order_row(company_id: int, quote):
     }
 
 
+def _tenant_ai_order_quotes(company_id, Quote):
+    """Scope Vendedor IA orders to the logged-in user's active, assigned branch."""
+    from stockarmobile.branch_context import get_active_branch_id
+
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    query = Quote.query.filter(
+        Quote.company_id == int(company_id),
+        Quote.observations == marker,
+    )
+    branch_id = get_active_branch_id()
+    if branch_id is not None:
+        query = query.filter(Quote.branch_id == int(branch_id))
+    return query
+
+
 @bp.get("/pedidos-ia")
 @login_required
 def ai_orders():
@@ -739,9 +754,8 @@ def ai_orders():
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
     quotes = (
-        Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == marker)
+        _tenant_ai_order_quotes(company_id, Quote)
         .order_by(Quote.date.desc(), Quote.id.desc())
         .limit(100)
         .all()
@@ -816,11 +830,8 @@ def ai_order_mark_picked_up(quote_id: int):
     from app import Quote, QuoteDelivery
     from stockarmobile.helpers.dates import utcnow_naive
 
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
-        id=int(quote_id),
-        company_id=int(company_id),
-        observations=marker,
+    quote = _tenant_ai_order_quotes(company_id, Quote).filter(
+        Quote.id == int(quote_id)
     ).with_for_update().first()
     if quote is None:
         abort(404)
@@ -1115,6 +1126,9 @@ def ai_order_shipping(quote_id: int):
     company_id = get_current_company_id()
     if not company_id:
         abort(403)
+    from app import Quote
+    if _tenant_ai_order_quotes(company_id, Quote).filter(Quote.id == int(quote_id)).first() is None:
+        abort(404)
     raw_cost = str(request.form.get("shipping_cost") or "").strip().replace(",", ".")
     try:
         from decimal import Decimal, InvalidOperation
@@ -1178,11 +1192,8 @@ def ai_order_attention(quote_id: int):
         abort(403)
     from app import Quote, record_audit
 
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
-        id=int(quote_id),
-        company_id=int(company_id),
-        observations=marker,
+    quote = _tenant_ai_order_quotes(company_id, Quote).filter(
+        Quote.id == int(quote_id)
     ).first()
     if quote is None:
         abort(404)
@@ -1250,8 +1261,7 @@ def ai_order_detail(quote_id: int):
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id), observations=marker).first()
+    quote = _tenant_ai_order_quotes(company_id, Quote).filter(Quote.id == int(quote_id)).first()
     if quote is None:
         abort(404)
     return render_template(
