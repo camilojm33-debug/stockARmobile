@@ -1075,7 +1075,10 @@ class WebhookService:
             if flow == "pos_sale":
                 draft_payment_id = ref_parts.get("draft_payment_id")
                 if draft_payment_id and str(draft_payment_id).isdigit():
-                    draft_payment = Payment.query.filter_by(id=int(draft_payment_id), company_id=payment.company_id).first()
+                    draft_payment = Payment.query.filter_by(
+                        id=int(draft_payment_id),
+                        company_id=payment.company_id,
+                    ).with_for_update().first()
                     if draft_payment:
                         draft_payment.payment_id = payment.payment_id or draft_payment.payment_id
                         draft_payment.preference_id = payment.preference_id or draft_payment.preference_id
