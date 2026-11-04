@@ -1212,3 +1212,32 @@ def test_backup_inventory_restore_rejects_balance_below_live_qr_reservations(app
         with pytest.raises(ValueError, match="reservadas para cobros QR"):
             BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
         db.session.rollback()
+
+
+def test_ai_critical_stock_counts_only_units_not_reserved_by_qr(app):
+    from app import Payment
+    from ai_agents import _count_critical_stock
+    from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+
+    with app.app_context():
+        company = _company("Empresa stock crítico con reservas QR")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        product = Product(
+            company_id=company.id, barcode="AI-QR-CRIT-001",
+            name="Producto reservado", stock=10, min_stock=4, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        payment = Payment(
+            company_id=company.id, user_id=None, branch_id=central.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:critical",
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, Decimal("4"))], central.id)
+        db.session.commit()
+
+        assert _count_critical_stock(company.id, branch_id=central.id) == 1
+        db.session.rollback()
