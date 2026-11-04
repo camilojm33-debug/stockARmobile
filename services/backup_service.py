@@ -134,7 +134,12 @@ class BackupService:
         "PurchaseItem",
         "Sale",
         "SaleItem",
+        "CashRegister",
         "CashSession",
+        "CashSessionEvent",
+        "CashTransfer",
+        "FinancialAccount",
+        "FinancialAccountMovement",
         "CashMovement",
         "Expense",
         "User",
@@ -472,7 +477,12 @@ class BackupService:
             BranchStockMovement,
             BranchStockTransfer,
             CashMovement,
+            CashRegister,
             CashSession,
+            CashSessionEvent,
+            CashTransfer,
+            FinancialAccount,
+            FinancialAccountMovement,
             Client,
             Company,
             Expense,
@@ -540,7 +550,12 @@ class BackupService:
                 .all()
             )
 
+        cash_registers = CashRegister.query.filter_by(company_id=company_id).order_by(CashRegister.id.asc()).all()
         cash_sessions = CashSession.query.filter_by(company_id=company_id).order_by(CashSession.id.asc()).all()
+        cash_session_events = CashSessionEvent.query.filter_by(company_id=company_id).order_by(CashSessionEvent.id.asc()).all()
+        cash_transfers = CashTransfer.query.filter_by(company_id=company_id).order_by(CashTransfer.id.asc()).all()
+        financial_accounts = FinancialAccount.query.filter_by(company_id=company_id).order_by(FinancialAccount.id.asc()).all()
+        financial_account_movements = FinancialAccountMovement.query.filter_by(company_id=company_id).order_by(FinancialAccountMovement.id.asc()).all()
         cash_movements = CashMovement.query.filter_by(company_id=company_id).order_by(CashMovement.id.asc()).all()
         expenses = Expense.query.filter_by(company_id=company_id).order_by(Expense.id.asc()).all()
         categories = sorted({(product.category or "").strip() for product in products if (product.category or "").strip()})
@@ -571,7 +586,12 @@ class BackupService:
             "purchase_payment_details": [BackupService._row_to_dict(row) for row in purchase_payment_details],
             "sales": [BackupService._row_to_dict(row) for row in sales],
             "sale_items": [BackupService._row_to_dict(row) for row in sale_items],
+            "cash_registers": [BackupService._row_to_dict(row) for row in cash_registers],
             "cash_sessions": [BackupService._row_to_dict(row) for row in cash_sessions],
+            "cash_session_events": [BackupService._row_to_dict(row) for row in cash_session_events],
+            "cash_transfers": [BackupService._row_to_dict(row) for row in cash_transfers],
+            "financial_accounts": [BackupService._row_to_dict(row) for row in financial_accounts],
+            "financial_account_movements": [BackupService._row_to_dict(row) for row in financial_account_movements],
             "cash_movements": [BackupService._row_to_dict(row) for row in cash_movements],
             "expenses": [BackupService._row_to_dict(row) for row in expenses],
             "section_counts": BackupService._section_counts(base_payload | {"categories": categories}),
@@ -618,7 +638,12 @@ class BackupService:
             "purchase_orders",
             "purchase_payment_details",
             "sales",
+            "cash_registers",
             "cash_sessions",
+            "cash_session_events",
+            "cash_transfers",
+            "financial_accounts",
+            "financial_account_movements",
             "cash_movements",
             "expenses",
             "branch_stock",
@@ -660,6 +685,14 @@ class BackupService:
             ("products", "supplier_id", "suppliers"),
             ("sales", "client_id", "clients"),
             ("sales", "cash_session_id", "cash_sessions"),
+            ("cash_sessions", "cash_register_id", "cash_registers"),
+            ("cash_session_events", "cash_session_id", "cash_sessions"),
+            ("cash_transfers", "source_register_id", "cash_registers"),
+            ("cash_transfers", "target_register_id", "cash_registers"),
+            ("cash_transfers", "source_session_id", "cash_sessions"),
+            ("financial_account_movements", "account_id", "financial_accounts"),
+            ("expenses", "cash_session_id", "cash_sessions"),
+            ("cash_movements", "cash_transfer_id", "cash_transfers"),
             ("sale_items", "sale_id", "sales"),
             ("sale_items", "product_id", "products"),
             ("purchase_orders", "supplier_id", "suppliers"),
@@ -1239,12 +1272,18 @@ class BackupService:
     @staticmethod
     def restore_backup(backup_log, *, expected_company_id: int, restored_by_user_id: int | None, sections=None, sync_sequences: bool = True):
         from app import (
+            Branch,
             BranchStock,
             CashMovement,
+            CashRegister,
             CashSession,
+            CashSessionEvent,
+            CashTransfer,
             Client,
             Company,
             Expense,
+            FinancialAccount,
+            FinancialAccountMovement,
             Product,
             PurchaseItem,
             PurchaseOrder,
@@ -1310,6 +1349,15 @@ class BackupService:
         client_id_map: dict[int, int] = {}
         sale_id_map: dict[int, int] = {}
         cash_session_id_map: dict[int, int] = {}
+        cash_register_id_map: dict[int, int] = {
+            int(row.id): int(row.id)
+            for row in CashRegister.query.filter_by(company_id=expected_company_id).all()
+        }
+        cash_transfer_id_map: dict[int, int] = {}
+        financial_account_id_map: dict[int, int] = {
+            int(row.id): int(row.id)
+            for row in FinancialAccount.query.filter_by(company_id=expected_company_id).all()
+        }
 
         if full_restore:
             PurchasePaymentDetail.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
@@ -1549,6 +1597,39 @@ class BackupService:
                 rows=payload.get("users") or [],
             )
 
+        # Restore physical cash registers first: open sessions and transfers refer to them.
+        if full_restore:
+            register_rows = BackupService._deserialize_rows(CashRegister, payload.get("cash_registers") or [])
+            existing_registers = {
+                int(row.id): row
+                for row in CashRegister.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in register_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                branch_id = source_row.get("branch_id")
+                branch = Branch.query.filter_by(
+                    id=int(branch_id), company_id=expected_company_id
+                ).first() if branch_id not in (None, "") else None
+                if branch is None:
+                    raise ValueError("El backup contiene una caja física asociada a una sucursal inexistente.")
+                candidate = dict(source_row)
+                candidate["company_id"] = expected_company_id
+                candidate["branch_id"] = int(branch.id)
+                register = existing_registers.get(incoming_id) if incoming_id is not None else None
+                if register is None and incoming_id is not None and db.session.get(CashRegister, incoming_id) is not None:
+                    candidate.pop("id", None)
+                if register is None:
+                    register = CashRegister(**candidate)
+                    db.session.add(register)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(register, key):
+                            setattr(register, key, value)
+                if incoming_id is not None:
+                    cash_register_id_map[incoming_id] = int(register.id)
+                existing_registers[int(register.id)] = register
+
         # Restore cash sessions in place. Sales and cash movements reference
         # these rows, so deleting sessions can cascade-delete financial history.
         if full_restore:
@@ -1562,6 +1643,12 @@ class BackupService:
                 session = existing_sessions.get(incoming_id) if incoming_id is not None else None
                 if session is None:
                     candidate = dict(source_row)
+                    source_register_id = candidate.get("cash_register_id")
+                    candidate["cash_register_id"] = (
+                        cash_register_id_map.get(int(source_register_id))
+                        if source_register_id not in (None, "")
+                        else None
+                    )
                     candidate["company_id"] = expected_company_id
                     if incoming_id is not None and db.session.get(CashSession, incoming_id) is not None:
                         candidate.pop("id", None)
@@ -1571,10 +1658,190 @@ class BackupService:
                 else:
                     for key, value in source_row.items():
                         if key not in {"id", "company_id"} and hasattr(session, key):
+                            if key == "cash_register_id" and value not in (None, ""):
+                                value = cash_register_id_map.get(int(value))
                             setattr(session, key, value)
                 if incoming_id is not None:
                     cash_session_id_map[incoming_id] = int(session.id)
                 existing_sessions[int(session.id)] = session
+
+            # Restore financial accounts before their ledger movements.
+            account_rows = BackupService._deserialize_rows(
+                FinancialAccount, payload.get("financial_accounts") or []
+            )
+            existing_accounts = {
+                int(row.id): row
+                for row in FinancialAccount.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in account_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                candidate = dict(source_row)
+                candidate["company_id"] = expected_company_id
+                branch_id = candidate.get("branch_id")
+                if branch_id not in (None, ""):
+                    branch = Branch.query.filter_by(
+                        id=int(branch_id), company_id=expected_company_id
+                    ).first()
+                    candidate["branch_id"] = int(branch.id) if branch else None
+                account = existing_accounts.get(incoming_id) if incoming_id is not None else None
+                if account is None and incoming_id is not None and db.session.get(FinancialAccount, incoming_id) is not None:
+                    candidate.pop("id", None)
+                if account is None:
+                    account = FinancialAccount(**candidate)
+                    db.session.add(account)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(account, key):
+                            setattr(account, key, value)
+                if incoming_id is not None:
+                    financial_account_id_map[incoming_id] = int(account.id)
+                existing_accounts[int(account.id)] = account
+
+            # Restore transfers after both registers and source sessions exist.
+            transfer_rows = BackupService._deserialize_rows(
+                CashTransfer, payload.get("cash_transfers") or []
+            )
+            existing_transfers = {
+                int(row.id): row
+                for row in CashTransfer.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in transfer_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                candidate = dict(source_row)
+                candidate["company_id"] = expected_company_id
+                for field in ("source_branch_id", "target_branch_id"):
+                    branch_id = candidate.get(field)
+                    branch = Branch.query.filter_by(
+                        id=int(branch_id), company_id=expected_company_id
+                    ).first() if branch_id not in (None, "") else None
+                    if branch is None:
+                        raise ValueError("El backup contiene una transferencia asociada a una sucursal inexistente.")
+                    candidate[field] = int(branch.id)
+                for field in ("source_register_id", "target_register_id"):
+                    source_register_id = candidate.get(field)
+                    mapped_register_id = cash_register_id_map.get(int(source_register_id)) if source_register_id not in (None, "") else None
+                    if mapped_register_id is None:
+                        raise ValueError("El backup contiene una transferencia sin una caja física restaurada.")
+                    candidate[field] = mapped_register_id
+                source_session_id = candidate.get("source_session_id")
+                candidate["source_session_id"] = (
+                    cash_session_id_map.get(int(source_session_id))
+                    if source_session_id not in (None, "")
+                    else None
+                )
+                transfer = existing_transfers.get(incoming_id) if incoming_id is not None else None
+                if transfer is None and candidate.get("idempotency_key"):
+                    transfer = CashTransfer.query.filter_by(
+                        company_id=expected_company_id,
+                        idempotency_key=candidate["idempotency_key"],
+                    ).first()
+                if transfer is None and incoming_id is not None and db.session.get(CashTransfer, incoming_id) is not None:
+                    candidate.pop("id", None)
+                if transfer is None:
+                    transfer = CashTransfer(**candidate)
+                    db.session.add(transfer)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(transfer, key):
+                            setattr(transfer, key, value)
+                if incoming_id is not None:
+                    cash_transfer_id_map[incoming_id] = int(transfer.id)
+                existing_transfers[int(transfer.id)] = transfer
+
+            # Restore append-only cash session event history.
+            event_rows = BackupService._deserialize_rows(
+                CashSessionEvent, payload.get("cash_session_events") or []
+            )
+            existing_events = {
+                int(row.id): row
+                for row in CashSessionEvent.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in event_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                candidate = dict(source_row)
+                candidate["company_id"] = expected_company_id
+                source_session_id = candidate.get("cash_session_id")
+                candidate["cash_session_id"] = (
+                    cash_session_id_map.get(int(source_session_id))
+                    if source_session_id not in (None, "")
+                    else None
+                )
+                if candidate["cash_session_id"] is None:
+                    continue
+                branch_id = candidate.get("branch_id")
+                if branch_id not in (None, ""):
+                    branch = Branch.query.filter_by(
+                        id=int(branch_id), company_id=expected_company_id
+                    ).first()
+                    candidate["branch_id"] = int(branch.id) if branch else None
+                actor_id = candidate.get("actor_user_id")
+                if actor_id is not None and User.query.filter_by(
+                    id=int(actor_id), company_id=expected_company_id
+                ).first() is None:
+                    candidate["actor_user_id"] = None
+                event = existing_events.get(incoming_id) if incoming_id is not None else None
+                if event is None and incoming_id is not None and db.session.get(CashSessionEvent, incoming_id) is not None:
+                    candidate.pop("id", None)
+                if event is None:
+                    event = CashSessionEvent(**candidate)
+                    db.session.add(event)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(event, key):
+                            setattr(event, key, value)
+                existing_events[int(event.id)] = event
+
+            # Restore the non-cash account ledger after account IDs are mapped.
+            financial_movement_rows = BackupService._deserialize_rows(
+                FinancialAccountMovement, payload.get("financial_account_movements") or []
+            )
+            existing_financial_movements = {
+                int(row.id): row
+                for row in FinancialAccountMovement.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in financial_movement_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                candidate = dict(source_row)
+                candidate["company_id"] = expected_company_id
+                source_account_id = candidate.get("account_id")
+                candidate["account_id"] = (
+                    financial_account_id_map.get(int(source_account_id))
+                    if source_account_id not in (None, "")
+                    else None
+                )
+                if candidate["account_id"] is None:
+                    continue
+                branch_id = candidate.get("branch_id")
+                if branch_id not in (None, ""):
+                    branch = Branch.query.filter_by(
+                        id=int(branch_id), company_id=expected_company_id
+                    ).first()
+                    candidate["branch_id"] = int(branch.id) if branch else None
+                actor_id = candidate.get("created_by_user_id")
+                if actor_id is not None and User.query.filter_by(
+                    id=int(actor_id), company_id=expected_company_id
+                ).first() is None:
+                    candidate["created_by_user_id"] = None
+                movement = existing_financial_movements.get(incoming_id) if incoming_id is not None else None
+                if movement is None and candidate.get("idempotency_key"):
+                    movement = FinancialAccountMovement.query.filter_by(
+                        company_id=expected_company_id,
+                        idempotency_key=candidate["idempotency_key"],
+                    ).first()
+                if movement is None and incoming_id is not None and db.session.get(FinancialAccountMovement, incoming_id) is not None:
+                    candidate.pop("id", None)
+                if movement is None:
+                    movement = FinancialAccountMovement(**candidate)
+                    db.session.add(movement)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(movement, key):
+                            setattr(movement, key, value)
+                existing_financial_movements[int(movement.id)] = movement
 
         if "sales" in sections:
             sale_rows = BackupService._deserialize_rows(Sale, payload.get("sales") or [])
@@ -1708,6 +1975,11 @@ class BackupService:
                     candidate["session_id"] = cash_session_id_map.get(
                         int(source_session_id), int(source_session_id)
                     )
+                source_transfer_id = candidate.get("cash_transfer_id")
+                if source_transfer_id is not None:
+                    candidate["cash_transfer_id"] = cash_transfer_id_map.get(
+                        int(source_transfer_id)
+                    )
                 movement = existing_movements.get(incoming_id) if incoming_id is not None else None
                 if movement is None:
                     candidate["company_id"] = expected_company_id
@@ -1728,6 +2000,11 @@ class BackupService:
             }
             for source_row in expense_rows:
                 incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                source_session_id = source_row.get("cash_session_id")
+                if source_session_id is not None:
+                    source_row["cash_session_id"] = cash_session_id_map.get(
+                        int(source_session_id)
+                    )
                 expense = existing_expenses.get(incoming_id) if incoming_id is not None else None
                 if expense is None:
                     candidate = dict(source_row)
@@ -1744,7 +2021,7 @@ class BackupService:
                 existing_expenses[int(expense.id)] = expense
 
         if sync_sequences:
-            BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, PurchasePaymentDetail, Sale, SaleItem, CashSession, CashMovement, Expense, User])
+            BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, PurchasePaymentDetail, Sale, SaleItem, CashRegister, CashSession, CashSessionEvent, CashTransfer, FinancialAccount, FinancialAccountMovement, CashMovement, Expense, User])
 
         backup_log.restored_at = utcnow()
         backup_log.restored_by_user_id = restored_by_user_id

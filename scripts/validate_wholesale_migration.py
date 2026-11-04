@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261102_01_multibranch_opening"
+HEAD_REVISION = "20261104_01_cash_treasury"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()

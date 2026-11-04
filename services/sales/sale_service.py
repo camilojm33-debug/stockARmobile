@@ -327,6 +327,9 @@ class SaleService:
             db.session.add(sale)
             db.session.flush()
 
+            from cash_treasury import record_sale_financial_movements
+            record_sale_financial_movements(sale, payment_breakdown)
+
             cash_amount = self._to_decimal(payment_breakdown.get("efectivo", 0))
             if cash_amount > 0:
                 db.session.add(

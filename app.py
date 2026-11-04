@@ -1421,11 +1421,21 @@ class PurchaseItem(db.Model):
 
 class CashSession(db.Model):
     __tablename__ = "cash_sessions"
+    __table_args__ = (
+        Index(
+            "uq_cash_sessions_open_register",
+            "cash_register_id",
+            unique=True,
+            postgresql_where=text("status = 'abierta' AND cash_register_id IS NOT NULL"),
+            sqlite_where=text("status = 'abierta' AND cash_register_id IS NOT NULL"),
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
+    cash_register_id = db.Column(db.Integer, db.ForeignKey("cash_registers.id", ondelete="SET NULL"), index=True)
     opened_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     opened_at = db.Column(db.DateTime, default=utcnow, index=True)
     closed_at = db.Column(db.DateTime)
@@ -1444,6 +1454,8 @@ class CashSession(db.Model):
     void_reason = db.Column(db.Text)
     user = db.relationship("User", foreign_keys=[user_id])
     movements = db.relationship("CashMovement", backref="session", cascade="all, delete-orphan")
+    register = db.relationship("CashRegister", backref="sessions")
+    events = db.relationship("CashSessionEvent", backref="cash_session", order_by="CashSessionEvent.created_at.asc()")
     company = db.relationship("Company", backref="cash_sessions")
     opened_by = db.relationship("User", foreign_keys=[opened_by_user_id], backref="opened_cash_sessions")
     reopened_by = db.relationship("User", foreign_keys=[reopened_by_user_id], backref="reopened_cash_sessions")
@@ -1452,6 +1464,7 @@ class CashSession(db.Model):
 
 class CashMovement(db.Model):
     __tablename__ = "cash_movements"
+    __table_args__ = (UniqueConstraint("cash_transfer_id", "movement_type", name="uq_cash_movements_transfer_type"),)
 
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"))
@@ -1459,6 +1472,7 @@ class CashMovement(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), index=True)
+    cash_transfer_id = db.Column(db.Integer, db.ForeignKey("cash_transfers.id", ondelete="SET NULL"), index=True)
     movement_type = db.Column(db.String(20), nullable=False)
     category = db.Column(db.String(80))
     amount = db.Column(MONEY, nullable=False)
@@ -1484,7 +1498,178 @@ class Expense(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
+    cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id", ondelete="SET NULL"), index=True)
     user = db.relationship("User")
+    cash_session = db.relationship("CashSession")
+
+
+class CashRegister(db.Model):
+    __tablename__ = "cash_registers"
+    __table_args__ = (
+        UniqueConstraint("company_id", "branch_id", "code", name="uq_cash_register_company_branch_code"),
+        Index("ix_cash_registers_company_branch_active", "company_id", "branch_id", "active"),
+        Index(
+            "uq_cash_registers_default_branch",
+            "branch_id",
+            unique=True,
+            postgresql_where=text("is_default = TRUE AND active = TRUE"),
+            sqlite_where=text("is_default = 1 AND active = 1"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    code = db.Column(db.String(40), nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    is_default = db.Column(db.Boolean, default=False, nullable=False)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    company = db.relationship("Company")
+    branch = db.relationship("Branch")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+
+
+class CashSessionEvent(db.Model):
+    __tablename__ = "cash_session_events"
+    __table_args__ = (Index("ix_cash_session_events_session_created", "cash_session_id", "created_at"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
+    cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = db.Column(db.String(30), nullable=False, index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    opening_amount = db.Column(MONEY)
+    expected_amount = db.Column(MONEY)
+    counted_amount = db.Column(MONEY)
+    difference_amount = db.Column(MONEY)
+    note = db.Column(db.Text)
+    payload_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    actor = db.relationship("User")
+
+
+class CashTransfer(db.Model):
+    __tablename__ = "cash_transfers"
+    __table_args__ = (
+        UniqueConstraint("company_id", "idempotency_key", name="uq_cash_transfers_company_idempotency"),
+        Index("ix_cash_transfers_company_status_created", "company_id", "status", "created_at"),
+        Index("ix_cash_transfers_source_branch", "source_branch_id", "status"),
+        Index("ix_cash_transfers_target_branch", "target_branch_id", "status"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False)
+    target_branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False)
+    source_register_id = db.Column(db.Integer, db.ForeignKey("cash_registers.id", ondelete="RESTRICT"), nullable=False)
+    target_register_id = db.Column(db.Integer, db.ForeignKey("cash_registers.id", ondelete="RESTRICT"), nullable=False)
+    source_session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id", ondelete="RESTRICT"), nullable=True)
+    amount = db.Column(MONEY, nullable=False)
+    currency = db.Column(db.String(10), nullable=False, default="ARS")
+    status = db.Column(db.String(20), nullable=False, default="pendiente", index=True)
+    idempotency_key = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(255))
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    dispatched_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    received_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    rejected_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    dispatched_at = db.Column(db.DateTime)
+    received_at = db.Column(db.DateTime)
+    rejected_at = db.Column(db.DateTime)
+    source_branch = db.relationship("Branch", foreign_keys=[source_branch_id])
+    target_branch = db.relationship("Branch", foreign_keys=[target_branch_id])
+    source_register = db.relationship("CashRegister", foreign_keys=[source_register_id])
+    target_register = db.relationship("CashRegister", foreign_keys=[target_register_id])
+    source_session = db.relationship("CashSession", foreign_keys=[source_session_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    dispatched_by = db.relationship("User", foreign_keys=[dispatched_by_user_id])
+    received_by = db.relationship("User", foreign_keys=[received_by_user_id])
+    rejected_by = db.relationship("User", foreign_keys=[rejected_by_user_id])
+
+
+class FinancialAccount(db.Model):
+    __tablename__ = "financial_accounts"
+    __table_args__ = (
+        UniqueConstraint("company_id", "branch_id", "code", name="uq_financial_accounts_company_branch_code"),
+        Index("ix_financial_accounts_company_branch_active", "company_id", "branch_id", "active"),
+        Index(
+            "uq_financial_accounts_company_central_code",
+            "company_id",
+            "code",
+            unique=True,
+            postgresql_where=text("branch_id IS NULL"),
+            sqlite_where=text("branch_id IS NULL"),
+        ),
+        Index(
+            "uq_financial_accounts_payment_mapping_branch",
+            "company_id",
+            "branch_id",
+            "payment_method_key",
+            unique=True,
+            postgresql_where=text("payment_method_key IS NOT NULL AND branch_id IS NOT NULL"),
+            sqlite_where=text("payment_method_key IS NOT NULL AND branch_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_financial_accounts_payment_mapping_central",
+            "company_id",
+            "payment_method_key",
+            unique=True,
+            postgresql_where=text("payment_method_key IS NOT NULL AND branch_id IS NULL"),
+            sqlite_where=text("payment_method_key IS NOT NULL AND branch_id IS NULL"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
+    name = db.Column(db.String(120), nullable=False)
+    code = db.Column(db.String(40), nullable=False)
+    account_type = db.Column(db.String(30), nullable=False, default="banco")
+    payment_method_key = db.Column(db.String(30), index=True)
+    provider = db.Column(db.String(80))
+    currency = db.Column(db.String(10), nullable=False, default="ARS")
+    opening_balance = db.Column(MONEY, nullable=False, default=Decimal("0.00"))
+    alias = db.Column(db.String(120))
+    account_reference = db.Column(db.String(120))
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    company = db.relationship("Company")
+    branch = db.relationship("Branch")
+    created_by = db.relationship("User")
+    movements = db.relationship("FinancialAccountMovement", backref="account", order_by="FinancialAccountMovement.created_at.asc()", cascade="all, delete-orphan")
+
+
+class FinancialAccountMovement(db.Model):
+    __tablename__ = "financial_account_movements"
+    __table_args__ = (
+        UniqueConstraint("company_id", "idempotency_key", name="uq_financial_account_movements_company_idempotency"),
+        Index("ix_financial_account_movements_account_created", "account_id", "created_at"),
+        Index("ix_financial_account_movements_company_branch_created", "company_id", "branch_id", "created_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("financial_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    movement_type = db.Column(db.String(20), nullable=False)
+    amount = db.Column(MONEY, nullable=False)
+    description = db.Column(db.String(255))
+    reference = db.Column(db.String(120))
+    source_type = db.Column(db.String(40))
+    source_id = db.Column(db.Integer)
+    idempotency_key = db.Column(db.String(100))
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    created_by = db.relationship("User")
 
 
 class ProductPriceHistory(db.Model):
@@ -2240,6 +2425,8 @@ app.register_blueprint(quotes_bp, url_prefix="/presupuestos")
 app.register_blueprint(qr_labels_bp, url_prefix="/qr")
 app.register_blueprint(purchases_bp, url_prefix="/compras")
 app.register_blueprint(cash_bp, url_prefix="/caja")
+from cash_treasury import bp as cash_treasury_bp
+app.register_blueprint(cash_treasury_bp, url_prefix="/caja/tesoreria")
 app.register_blueprint(expenses_bp, url_prefix="/gastos")
 app.register_blueprint(reports_bp, url_prefix="/reportes")
 app.register_blueprint(saas_bp, url_prefix="/superadmin")

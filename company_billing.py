@@ -4099,110 +4099,22 @@ def mercado_pago_status():
 @bp.route("/company-settings/cash/open", methods=["POST"])
 @company_admin_required
 def company_settings_cash_open():
-    from app import CashSession, db, record_audit
-
-    company_id = getattr(current_user, "company_id", None)
-    company = _load_company(company_id)
-    blocked = _pin_guard(company)
-    if blocked is not None:
-        return blocked
-
-    open_session = (
-        CashSession.query.filter_by(company_id=company.id, status="abierta")
-        .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
-        .first()
-    )
-    if open_session is not None:
-        flash("Ya existe una caja abierta para la empresa.", "warning")
-        return redirect(url_for("company_billing.company_settings", panel="stats"))
-
-    opening_amount = _to_float(request.form.get("opening_amount"), default=0.0)
-    note = (request.form.get("note") or "").strip() or None
-    session_row = CashSession(
-        user_id=current_user.id,
-        company_id=company.id,
-        opening_amount=opening_amount,
-        note=note,
-    )
-    db.session.add(session_row)
-    db.session.flush()
-    record_audit(
-        action="company_cash_open",
-        entity="cash_session",
-        entity_id=session_row.id,
-        company_id=company.id,
-        detail=f"Apertura de caja desde Mi Empresa por admin {current_user.id}",
-    )
-    db.session.commit()
-    flash("Caja abierta correctamente.", "success")
-    return redirect(url_for("company_billing.company_settings", panel="stats"))
+    flash("La apertura y administración de cajas se realiza desde Caja y Tesorería.", "info")
+    return redirect(url_for("cash.index"))
 
 
 @bp.route("/company-settings/cash/close/<int:session_id>", methods=["POST"])
 @company_admin_required
 def company_settings_cash_close(session_id):
-    from app import CashSession, db, record_audit, utcnow
-
-    company_id = getattr(current_user, "company_id", None)
-    company = _load_company(company_id)
-    blocked = _pin_guard(company)
-    if blocked is not None:
-        return blocked
-
-    session_row = CashSession.query.filter_by(id=session_id, company_id=company.id).first_or_404()
-    if session_row.status != "abierta":
-        flash("La caja seleccionada ya está cerrada.", "warning")
-        return redirect(url_for("company_billing.company_settings", panel="stats"))
-
-    session_row.closing_amount = _to_float(request.form.get("closing_amount"), default=float(session_row.closing_amount or 0))
-    session_row.closed_at = utcnow()
-    session_row.status = "cerrada"
-    note = (request.form.get("note") or "").strip()
-    if note:
-        session_row.note = note
-
-    record_audit(
-        action="company_cash_close",
-        entity="cash_session",
-        entity_id=session_row.id,
-        company_id=company.id,
-        detail=f"Cierre de caja desde Mi Empresa por admin {current_user.id}",
-    )
-    db.session.commit()
-    flash("Caja cerrada correctamente.", "success")
-    return redirect(url_for("company_billing.company_settings", panel="stats"))
+    flash("El cierre de caja se realiza desde la sesión correspondiente en Caja.", "info")
+    return redirect(url_for("cash.index"))
 
 
 @bp.route("/company-settings/cash/update/<int:session_id>", methods=["POST"])
 @company_admin_required
 def company_settings_cash_update(session_id):
-    from app import CashSession, db, record_audit
-
-    company_id = getattr(current_user, "company_id", None)
-    company = _load_company(company_id)
-    blocked = _pin_guard(company)
-    if blocked is not None:
-        return blocked
-
-    session_row = CashSession.query.filter_by(id=session_id, company_id=company.id).first_or_404()
-    if request.form.get("opening_amount") not in (None, ""):
-        session_row.opening_amount = _to_float(request.form.get("opening_amount"), default=float(session_row.opening_amount or 0))
-    if request.form.get("closing_amount") not in (None, ""):
-        session_row.closing_amount = _to_float(request.form.get("closing_amount"), default=float(session_row.closing_amount or 0))
-    note = request.form.get("note")
-    if note is not None:
-        session_row.note = (note or "").strip() or None
-
-    record_audit(
-        action="company_cash_update",
-        entity="cash_session",
-        entity_id=session_row.id,
-        company_id=company.id,
-        detail=f"Edición de caja desde Mi Empresa por admin {current_user.id}",
-    )
-    db.session.commit()
-    flash("Caja editada correctamente.", "success")
-    return redirect(url_for("company_billing.company_settings", panel="stats"))
+    flash("Los importes de sesiones cerradas no se editan desde Mi Empresa. Utilizá los ajustes auditados de Caja.", "warning")
+    return redirect(url_for("cash.index"))
 
 
 @bp.route("/company-settings/pin/verify", methods=["POST"])

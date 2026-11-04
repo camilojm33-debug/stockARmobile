@@ -196,7 +196,7 @@ def _current_open_cash_session():
     active_branch_id = get_active_branch_id()
     if active_branch_id is not None:
         session_query = session_query.filter(CashSession.branch_id == active_branch_id)
-    return session_query.order_by(CashSession.opened_at.desc()).first()
+    return session_query.order_by(CashSession.opened_at.desc()).with_for_update().first()
 
 
 def _require_open_cash_session(json_response=False):
