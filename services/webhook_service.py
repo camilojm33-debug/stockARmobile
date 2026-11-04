@@ -989,6 +989,16 @@ class WebhookService:
                         release_pos_payment_reservation(db_session, draft_payment)
                     expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
                     expected_user_id = int(ref_parts.get("user_id") or 0) or None
+                    metadata_branch_id = int(metadata.get("branch_id") or 0) or None
+                    metadata_user_id = int(metadata.get("user_id") or 0) or None
+                    metadata_draft_payment_id = int(metadata.get("draft_payment_id") or 0) or None
+                    reference_draft_payment_id = int(ref_parts.get("draft_payment_id") or 0) or None
+                    if metadata_branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook POS con sucursal inconsistente entre metadata y referencia externa.")
+                    if metadata_user_id and expected_user_id and metadata_user_id != expected_user_id:
+                        raise RuntimeError("Webhook POS con usuario inconsistente entre metadata y referencia externa.")
+                    if metadata_draft_payment_id and reference_draft_payment_id and metadata_draft_payment_id != reference_draft_payment_id:
+                        raise RuntimeError("Webhook POS con borrador inconsistente entre metadata y referencia externa.")
                     if draft_payment.provider != "mercadopago_pos":
                         raise RuntimeError("Webhook POS vinculado a un tipo de pago incompatible.")
                     if draft_payment.branch_id != expected_branch_id:
@@ -1029,6 +1039,12 @@ class WebhookService:
                         raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en external_reference para POS")
                     expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
                     expected_user_id = int(ref_parts.get("user_id") or 0) or None
+                    metadata_branch_id = int(metadata.get("branch_id") or 0) or None
+                    metadata_user_id = int(metadata.get("user_id") or 0) or None
+                    if metadata_branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook POS con sucursal inconsistente entre metadata y referencia externa.")
+                    if metadata_user_id and expected_user_id and metadata_user_id != expected_user_id:
+                        raise RuntimeError("Webhook POS con usuario inconsistente entre metadata y referencia externa.")
                     if payment.branch_id != expected_branch_id:
                         raise RuntimeError("Webhook Mercado Pago con sucursal inconsistente para POS")
                     if expected_user_id and int(payment.user_id or 0) != expected_user_id:
