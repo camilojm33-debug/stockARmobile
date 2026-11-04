@@ -691,6 +691,8 @@ class BackupService:
             ("cash_transfers", "target_register_id", "cash_registers"),
             ("cash_transfers", "source_session_id", "cash_sessions"),
             ("financial_account_movements", "account_id", "financial_accounts"),
+            ("expenses", "cash_session_id", "cash_sessions"),
+            ("cash_movements", "cash_transfer_id", "cash_transfers"),
             ("sale_items", "sale_id", "sales"),
             ("sale_items", "product_id", "products"),
             ("purchase_orders", "supplier_id", "suppliers"),

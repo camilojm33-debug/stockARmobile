@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20261104_01_cash_treasury_multibranch"
+revision = "20261104_01_cash_treasury"
 down_revision = "20261102_01_multibranch_opening"
 branch_labels = None
 depends_on = None
