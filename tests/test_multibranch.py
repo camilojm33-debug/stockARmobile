@@ -1066,3 +1066,47 @@ def test_vendor_whatsapp_conversations_are_attached_to_default_fulfillment_branc
         conversation = _get_or_create_conversation(company.id, "5491112345678")
         assert conversation.branch_id == central.id
         db.session.commit()
+
+
+def test_vendor_whatsapp_attention_rejects_conversation_from_another_branch(app, monkeypatch):
+    from flask_login import login_user
+    from stockarmobile.models.conversations import Conversation
+    from services.ai_agent.config_service import choose_agent
+    from whatsapp_agent import _get_or_create_conversation, _tenant_vendor_whatsapp_conversation
+
+    with app.app_context():
+        company = _company("Empresa atención WhatsApp aislada")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="whatsapp-branch-admin",
+            email="whatsapp-branch-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        agent = choose_agent(company.id, channel="whatsapp")
+        central_conversation = _get_or_create_conversation(company.id, "5491111111111")
+        north_conversation = Conversation(
+            company_id=company.id,
+            branch_id=north.id,
+            agent_id=agent.id,
+            channel="whatsapp",
+            external_conversation_id="5492222222222",
+            metadata_json={},
+        )
+        db.session.add(north_conversation)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            assert _tenant_vendor_whatsapp_conversation(company.id, central_conversation.id) is not None
+            assert _tenant_vendor_whatsapp_conversation(company.id, north_conversation.id) is None
+        db.session.rollback()
