@@ -104,10 +104,11 @@ def test_pos_provider_payload_merge_preserves_trusted_sale_snapshot():
     assert WebhookService._event_updated_at(merged) is not None
 
 
-def test_pos_payment_rejects_expired_or_mismatched_reservations():
+def test_pos_payment_rejects_expired_or_mismatched_reservations(app):
     from services.payment_flow import pos_payment_has_live_stock_reservation
 
-    payload = {
+    with app.app_context():
+        payload = {
         "flow": "pos_sale",
         "snapshot": {
             "branch_id": 17,
@@ -117,19 +118,19 @@ def test_pos_payment_rejects_expired_or_mismatched_reservations():
             "stock_reservation_released": False,
         },
     }
-    payment = SimpleNamespace(
-        provider="mercadopago_pos",
-        branch_id=17,
-        payload_json=json.dumps(payload),
-    )
-    # A released reservation must not be treated as inventory still held
-    # for the payment; the fully reserved positive path is covered by the
-    # branch-aware webhook integration test in test_multibranch.py.
-    payload["snapshot"]["stock_reservation_released"] = True
-    payment.payload_json = json.dumps(payload)
-    assert pos_payment_has_live_stock_reservation(payment) is False
-
-    payload["snapshot"]["stock_reservation_released"] = False
-    payload["snapshot"]["branch_id"] = 18
-    payment.payload_json = json.dumps(payload)
-    assert pos_payment_has_live_stock_reservation(payment) is False
+        payment = SimpleNamespace(
+            provider="mercadopago_pos",
+            branch_id=17,
+            payload_json=json.dumps(payload),
+        )
+        # A released reservation must not be treated as inventory still held
+        # for the payment; the fully reserved positive path is covered by the
+        # branch-aware webhook integration test in test_multibranch.py.
+        payload["snapshot"]["stock_reservation_released"] = True
+        payment.payload_json = json.dumps(payload)
+        assert pos_payment_has_live_stock_reservation(payment) is False
+    
+        payload["snapshot"]["stock_reservation_released"] = False
+        payload["snapshot"]["branch_id"] = 18
+        payment.payload_json = json.dumps(payload)
+        assert pos_payment_has_live_stock_reservation(payment) is False
