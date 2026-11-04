@@ -1431,3 +1431,64 @@ def test_pos_webhook_approval_preserves_a_valid_branch_reserved_draft(app, monke
         assert refunded == []
         assert Decimal(str(get_branch_stock(product, branch.id).reserved_stock)) == Decimal("2")
         db.session.rollback()
+
+
+def test_qr_status_can_be_checked_after_switching_to_another_assigned_branch(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _authorized_pos_qr_payment
+
+    with app.app_context():
+        company = _company("Empresa QR consulta multibranch")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="qr-switch-employee",
+            email="qr-switch-employee@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(employee)
+        db.session.flush()
+        payment = Payment(
+            company_id=company.id,
+            branch_id=central.id,
+            user_id=employee.id,
+            amount=100,
+            currency="ARS",
+            status="approved",
+            provider="mercadopago_pos",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": central.id,
+                    "cash_session_id": 10,
+                    "items": [{"productId": 1, "quantity": 1}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                },
+            }),
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: north.id,
+        )
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.accessible_branches",
+            lambda: [central, north],
+        )
+        with app.test_request_context("/"):
+            login_user(employee)
+            # Status is visible because the employee remains assigned to A,
+            # even though B is active. Finalization remains bound to A.
+            assert _authorized_pos_qr_payment(
+                payment.id,
+                require_active_branch=False,
+            ).id == payment.id
+            with pytest.raises(NotFound):
+                _authorized_pos_qr_payment(payment.id, require_active_branch=True)
+        db.session.rollback()
