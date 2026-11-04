@@ -1326,3 +1326,108 @@ def test_pos_qr_draft_session_key_is_separated_by_active_branch(app, monkeypatch
             assert str(central.id) in central_key
             assert str(north.id) in north_key
         db.session.rollback()
+
+
+def test_pos_webhook_approval_preserves_a_valid_branch_reserved_draft(app, monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with app.app_context():
+        company = _company("Empresa QR webhook multisucursal")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = User(
+            username="qr-webhook-owner",
+            email="qr-webhook-owner@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        product = Product(
+            company_id=company.id,
+            barcode="QR-WEBHOOK-001",
+            name="Producto webhook",
+            stock=5,
+            min_stock=0,
+            active=True,
+        )
+        db.session.add_all([user, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 5)
+        reserve_branch_stock(product, branch.id, 2, note="QR webhook pendiente")
+
+        draft = Payment(
+            company_id=company.id,
+            branch_id=branch.id,
+            user_id=user.id,
+            amount=200,
+            currency="ARS",
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": branch.id,
+                    "cash_session_id": 123,
+                    "items": [{"productId": product.id, "quantity": 2}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                    "cart_hash": "webhook-branch-check",
+                },
+            }),
+        )
+        db.session.add(draft)
+        db.session.flush()
+        external_reference = (
+            f"flow:pos_sale|draft_payment_id:{draft.id}|company_id:{company.id}|"
+            f"user_id:{user.id}|branch_id:{branch.id}|cart_hash:webhook-branch-check"
+        )
+        draft.external_reference = external_reference
+        db.session.commit()
+
+        approved_payment = {
+            "id": "123456789",
+            "status": "approved",
+            "date_last_updated": "2026-11-03T20:30:00Z",
+            "date_approved": "2026-11-03T20:30:00Z",
+            "transaction_amount": 200,
+            "currency_id": "ARS",
+            "payment_method_id": "qr",
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "pos_sale",
+                "company_id": company.id,
+                "user_id": user.id,
+                "draft_payment_id": draft.id,
+                "branch_id": branch.id,
+                "total_amount": 200,
+            },
+        }
+        service = WebhookService()
+        refunded = []
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
+        monkeypatch.setattr(
+            service.mp_service,
+            "refund_payment",
+            lambda payment_id: refunded.append(str(payment_id)) or {"id": "unexpected-refund", "status": "approved"},
+        )
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-qr-branch-1", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-qr-branch-1", "type": "payment", "data": {"id": "123456789"}},
+        )
+        db.session.refresh(draft)
+        stored = json.loads(draft.payload_json)
+
+        assert result["status"] == "processed"
+        assert draft.status == "approved"
+        assert draft.branch_id == branch.id
+        assert stored["snapshot"]["branch_id"] == branch.id
+        assert stored["snapshot"]["items"] == [{"productId": product.id, "quantity": 2}]
+        assert stored["mercadopago"]["status"] == "approved"
+        assert refunded == []
+        assert Decimal(str(get_branch_stock(product, branch.id).reserved_stock)) == Decimal("2")
+        db.session.rollback()
