@@ -239,13 +239,24 @@ def reserve_branch_stock_for_payment(payment, items, branch_id, *, user_id=None)
         existing = BranchStockReservation.query.filter_by(
             payment_id=int(payment.id), product_id=product_id
         ).with_for_update().first()
+        stock = Decimal(str(row.stock or 0))
+        reserved = Decimal(str(row.reserved_stock or 0))
         if existing is not None:
-            if existing.status == "reserved" and Decimal(str(existing.quantity)) == qty:
+            if Decimal(str(existing.quantity)) != qty:
+                raise ValueError("El QR ya tiene una reserva de stock incompatible.")
+            if existing.status == "reserved":
+                reservations.append(existing)
+                continue
+            if existing.status == "released":
+                available = stock - reserved
+                if qty > available:
+                    raise ValueError(f"Stock insuficiente para reactivar la reserva de {product.name}. Disponible: {max(available, Decimal('0'))}.")
+                row.reserved_stock = reserved + qty
+                existing.status = "reserved"
+                existing.released_at = None
                 reservations.append(existing)
                 continue
             raise ValueError("El QR ya tiene una reserva de stock incompatible.")
-        stock = Decimal(str(row.stock or 0))
-        reserved = Decimal(str(row.reserved_stock or 0))
         available = stock - reserved
         if qty > available:
             raise ValueError(f"Stock disponible insuficiente para reservar {product.name}. Disponible: {max(available, Decimal('0'))}.")
@@ -290,6 +301,55 @@ def release_branch_stock_reservations(payment_id, *, user_id=None):
         released += 1
     db.session.flush()
     return released
+
+
+def ensure_branch_stock_reservations_for_payment(payment):
+    """Re-establish the complete source-branch reservation before an approved QR sale."""
+    import json
+    from app import Product
+
+    branch_id = getattr(payment, "branch_id", None)
+    if branch_id is None:
+        return []
+    try:
+        payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    except (TypeError, ValueError):
+        payload = {}
+    snapshot = payload.get("snapshot") if isinstance(payload, dict) else None
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    snapshot_branch_id = snapshot.get("branch_id")
+    if snapshot_branch_id is not None and int(snapshot_branch_id) != int(branch_id):
+        raise ValueError("La sucursal de la instantánea no coincide con la sucursal del pago.")
+    items = snapshot.get("items") or []
+    if not items:
+        raise ValueError("El QR aprobado no contiene una instantánea local de productos.")
+    normalized = []
+    product_ids = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("La instantánea del QR contiene una línea inválida.")
+        try:
+            product_id = int(item.get("productId") or item.get("product_id") or 0)
+        except (TypeError, ValueError):
+            product_id = 0
+        if product_id <= 0 or product_id in product_ids:
+            raise ValueError("La instantánea del QR contiene productos inválidos o repetidos.")
+        product_ids.add(product_id)
+        normalized.append((product_id, item.get("quantity")))
+    products = {
+        int(product.id): product
+        for product in Product.query.filter(
+            Product.company_id == int(payment.company_id),
+            Product.id.in_(product_ids),
+        ).all()
+    }
+    if len(products) != len(product_ids):
+        raise ValueError("Uno o más productos del QR ya no pertenecen a esta empresa.")
+    return reserve_branch_stock_for_payment(
+        payment,
+        [(products[product_id], quantity) for product_id, quantity in normalized],
+        int(branch_id),
+    )
 
 
 def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type=None, source_id=None,
