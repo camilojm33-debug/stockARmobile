@@ -39,6 +39,7 @@ class SaleService:
 
         sale = None
         final_total = Decimal("0.00")
+        sale_idempotency_key = None
         try:
             current_app.logger.info(
                 "[sales] checkout procesado: company_id=%s user_id=%s item_count=%s json_response=%s",
