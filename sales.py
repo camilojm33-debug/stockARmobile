@@ -1450,8 +1450,8 @@ def api_mp_qr_create():
 @tenant_required
 def api_mp_qr_status():
     _mp_qr_trace_enter("sales.api_mp_qr_status")
-    from app import Payment, BranchStockReservation
-    from services.payment_flow import is_stale_pos_draft
+    from app import Payment, BranchStockReservation, db
+    from services.payment_flow import expire_stale_pos_drafts, is_stale_pos_draft
 
     draft_id = request.args.get("draft_id", type=int)
     if not draft_id:
@@ -1477,7 +1477,10 @@ def api_mp_qr_status():
     approved_at = payment.paid_at or payment.updated_at
     status = (payment.status or "pending").lower()
     if is_stale_pos_draft(payment) and status in {"pending", "in_process", "authorized"}:
-        status = "expired"
+        expire_stale_pos_drafts(db.session, company_id=int(payment.company_id))
+        db.session.commit()
+        db.session.refresh(payment)
+        status = (payment.status or "expired").lower()
     snapshot = payload.get("snapshot") or {}
     items = snapshot.get("items") or []
     reservation_ready = True
@@ -1628,6 +1631,7 @@ def api_mp_qr_finalize():
     else:
         data = result
     if not isinstance(data, dict) or not data.get("sale_id"):
+        db.session.rollback()
         return result
 
     sale_id = data["sale_id"]
