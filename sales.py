@@ -1544,6 +1544,33 @@ def api_mp_qr_finalize():
         if existing_sale:
             return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
 
+    # Recover the rare crash window in which SaleService committed the sale but
+    # the follow-up Payment.sale_id write did not. The unique transaction token
+    # is authoritative and keeps a retry from attempting to consume stock twice.
+    payment_sale_token = f"pos-qr-payment-{payment.id}"
+    existing_sale = (
+        scope_query_to_company(Sale.query, Sale)
+        .filter(
+            Sale.client_txn_id == payment_sale_token,
+            Sale.branch_id == payment.branch_id,
+        )
+        .first()
+    )
+    if existing_sale is not None:
+        try:
+            persisted_payload = json.loads(payment.payload_json or "{}")
+        except (TypeError, ValueError):
+            persisted_payload = {}
+        if not isinstance(persisted_payload, dict):
+            persisted_payload = {}
+        payment.reference = f"sale_id:{existing_sale.id}"
+        payment.payload_json = json.dumps({**persisted_payload, "sale_id": existing_sale.id}, ensure_ascii=False)
+        db.session.commit()
+        return jsonify({
+            "sale_id": existing_sale.id,
+            "redirect_url": url_for("sales.success", sale_id=existing_sale.id),
+        })
+
     snapshot = draft_payload.get("snapshot") or {}
     items = snapshot.get("items") or []
     if int(snapshot.get("branch_id") or 0) != int(payment.branch_id or 0):
@@ -1562,7 +1589,7 @@ def api_mp_qr_finalize():
     # back on the Payment row.
     sale_payload = {
         "client_id": snapshot.get("client_id") or "",
-        "checkout_token": f"pos-qr-payment-{payment.id}",
+        "checkout_token": payment_sale_token,
         "quote_id": snapshot.get("quote_id") or "",
         "metodo_pago": "QR Mercado Pago",
         "payment_method": "QR Mercado Pago",
