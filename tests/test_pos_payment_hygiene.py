@@ -155,3 +155,20 @@ def test_expiring_pos_qr_releases_reserved_branch_stock(app):
         assert db.session.get(Payment, old.id).status == "expired"
         assert available_stock(product, branch.id) == 4
         assert BranchStockReservation.query.filter_by(payment_id=old.id, status="released").count() == 1
+
+
+def test_pos_qr_webhook_payload_merge_preserves_snapshot_and_provider_timestamps():
+    from services.webhook_service import _merge_pos_draft_payload
+    import json
+
+    snapshot = {"branch_id": 17, "items": [{"productId": 12, "quantity": 2}]}
+    existing = json.dumps({"flow": "pos_sale", "snapshot": snapshot})
+    updated = json.loads(_merge_pos_draft_payload(existing, {
+        "id": "mp-123", "status": "approved",
+        "date_last_updated": "2026-11-03T18:00:00.000-03:00",
+    }))
+
+    assert updated["snapshot"] == snapshot
+    assert updated["flow"] == "pos_sale"
+    assert updated["provider_response"]["status"] == "approved"
+    assert updated["date_last_updated"].startswith("2026-11-03")
