@@ -88,6 +88,12 @@ class Conversation(db.Model):
         db.ForeignKey("companies.id"),
         nullable=False,
     )
+    branch_id = db.Column(
+        db.Integer,
+        db.ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     agent_id = db.Column(
         db.Integer,
         db.ForeignKey("agents.id"),
