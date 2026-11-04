@@ -84,6 +84,10 @@ def release_pos_payment_reservation(db_session, payment) -> bool:
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict) or snapshot.get("stock_reservation_released"):
         return False
+    if not snapshot.get("stock_reserved"):
+        snapshot["stock_reservation_released"] = True
+        payment.payload_json = json.dumps(payload, ensure_ascii=False)
+        return False
     branch_id = getattr(payment, "branch_id", None) or snapshot.get("branch_id")
     if not branch_id:
         # Legacy drafts have no trustworthy origin branch and were never reserved.
