@@ -986,6 +986,7 @@ def test_reserved_stock_is_not_available_to_sales_or_transfers_and_releases_once
         db.session.flush()
         set_branch_stock(product, central.id, 5)
         set_branch_stock(product, north.id, 0)
+        db.session.commit()
         reserve_branch_stock(product, central.id, 3, note="QR pendiente")
         db.session.flush()
 
