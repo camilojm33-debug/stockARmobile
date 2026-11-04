@@ -483,3 +483,75 @@ def test_full_backup_contains_cash_treasury_ledgers_and_validates_their_links(ap
         assert len(payload["financial_accounts"]) == 1
         assert len(payload["financial_account_movements"]) == 1
         BackupService._validate_backup_tenant_scope(payload, company.id)
+
+        backup, _plan = BackupService.create_manual_backup(
+            company.id,
+            user_id=user.id,
+            trigger_type="cash_treasury_qa",
+        )
+        db.session.commit()
+        verification = BackupService.verify_restore_round_trip(
+            backup,
+            expected_company_id=company.id,
+        )
+        assert verification["valid"] is True
+        assert verification["rolled_back"] is True
+
+
+def test_sale_posts_mapped_digital_payment_to_the_branch_account_once(app):
+    from types import SimpleNamespace
+    from cash_treasury import record_sale_financial_movements
+
+    with app.app_context():
+        company = _company("Empresa ledger automático de ventas")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = _admin(company, "cash_sale_ledger")
+        central_account = FinancialAccount(
+            company_id=company.id,
+            branch_id=None,
+            name="Mercado Pago central",
+            code="MP-CENTRAL",
+            account_type="billetera",
+            payment_method_key="mercado_pago",
+            opening_balance=Decimal("100.00"),
+            active=True,
+        )
+        branch_account = FinancialAccount(
+            company_id=company.id,
+            branch_id=branch.id,
+            name="Mercado Pago sucursal",
+            code="MP-SUCURSAL",
+            account_type="billetera",
+            payment_method_key="mercado_pago",
+            opening_balance=Decimal("20.00"),
+            active=True,
+        )
+        db.session.add_all([central_account, branch_account])
+        db.session.flush()
+
+        sale = SimpleNamespace(
+            id=98765,
+            company_id=company.id,
+            branch_id=branch.id,
+            seller_id=user.id,
+        )
+        posted = record_sale_financial_movements(
+            sale,
+            {"efectivo": Decimal("10.00"), "mercado_pago": Decimal("85.50")},
+        )
+        assert len(posted) == 1
+        assert posted[0].account_id == branch_account.id
+        assert posted[0].amount == Decimal("85.50")
+        assert posted[0].source_type == "sale"
+        assert posted[0].source_id == sale.id
+        db.session.commit()
+
+        duplicate = record_sale_financial_movements(
+            sale,
+            {"efectivo": Decimal("10.00"), "mercado_pago": Decimal("85.50")},
+        )
+        assert duplicate == []
+        assert FinancialAccountMovement.query.filter_by(
+            company_id=company.id,
+            idempotency_key="sale:98765:mercado_pago",
+        ).count() == 1

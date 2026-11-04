@@ -55,6 +55,15 @@ def upgrade():
         op.create_index("ix_cash_registers_assigned_user_id", "cash_registers", ["assigned_user_id"])
     if "ix_cash_registers_company_branch_active" not in _indexes(bind, "cash_registers"):
         op.create_index("ix_cash_registers_company_branch_active", "cash_registers", ["company_id", "branch_id", "active"])
+    if "uq_cash_registers_default_branch" not in _indexes(bind, "cash_registers"):
+        op.create_index(
+            "uq_cash_registers_default_branch",
+            "cash_registers",
+            ["branch_id"],
+            unique=True,
+            postgresql_where=sa.text("is_default = TRUE AND active = TRUE"),
+            sqlite_where=sa.text("is_default = 1 AND active = 1"),
+        )
 
     if not _has_table(bind, "cash_session_events"):
         op.create_table(
@@ -129,6 +138,7 @@ def upgrade():
             sa.Column("name", sa.String(120), nullable=False),
             sa.Column("code", sa.String(40), nullable=False),
             sa.Column("account_type", sa.String(30), nullable=False, server_default="banco"),
+            sa.Column("payment_method_key", sa.String(30)),
             sa.Column("provider", sa.String(80)),
             sa.Column("currency", sa.String(10), nullable=False, server_default="ARS"),
             sa.Column("opening_balance", sa.Numeric(14, 2), nullable=False, server_default="0"),
@@ -145,6 +155,21 @@ def upgrade():
         op.create_index("ix_financial_accounts_active", "financial_accounts", ["active"])
         op.create_index("ix_financial_accounts_created_by_user_id", "financial_accounts", ["created_by_user_id"])
         op.create_index("ix_financial_accounts_company_branch_active", "financial_accounts", ["company_id", "branch_id", "active"])
+        op.create_index(
+            "uq_financial_accounts_company_central_code",
+            "financial_accounts",
+            ["company_id", "code"],
+            unique=True,
+            postgresql_where=sa.text("branch_id IS NULL"),
+            sqlite_where=sa.text("branch_id IS NULL"),
+        )
+        op.create_index("ix_financial_accounts_payment_method_key", "financial_accounts", ["payment_method_key"])
+
+    # Compatibility for an interrupted/pre-existing treasury table.
+    if "payment_method_key" not in _columns(bind, "financial_accounts"):
+        op.add_column("financial_accounts", sa.Column("payment_method_key", sa.String(30), nullable=True))
+    if "ix_financial_accounts_payment_method_key" not in _indexes(bind, "financial_accounts"):
+        op.create_index("ix_financial_accounts_payment_method_key", "financial_accounts", ["payment_method_key"])
 
     if not _has_table(bind, "financial_account_movements"):
         op.create_table(

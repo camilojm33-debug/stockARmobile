@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
+from sqlalchemy.exc import IntegrityError
 
 from app import (
     Branch,
@@ -15,6 +16,7 @@ from app import (
     CashTransfer,
     FinancialAccount,
     FinancialAccountMovement,
+    User,
     db,
     record_audit,
     tenant_required,
@@ -120,11 +122,80 @@ def financial_account_balance(account):
             balance += amount
     return balance.quantize(Decimal("0.01"))
 
+def record_sale_financial_movements(sale, payment_breakdown):
+    """Post configured non-cash sale portions into their mapped account ledgers.
 
-def _get_company_branch(branch_id, *, active=True):
-    query = Branch.query.filter_by(id=int(branch_id), company_id=_company_id())
+    Missing mappings never block a sale: only accounts explicitly associated
+    with the payment method receive automatic entries. The per-sale/method key
+    prevents duplicate ledger posts on retries.
+    """
+    company_id = getattr(sale, "company_id", None)
+    if not company_id:
+        return []
+    posted = []
+    method_keys = ("mercado_pago", "debito", "credito", "transferencia", "otros")
+    for method_key in method_keys:
+        amount = _to_decimal((payment_breakdown or {}).get(method_key, 0))
+        if amount <= 0:
+            continue
+        account_query = FinancialAccount.query.filter(
+            FinancialAccount.company_id == int(company_id),
+            FinancialAccount.active.is_(True),
+            FinancialAccount.payment_method_key == method_key,
+        )
+        branch_id = getattr(sale, "branch_id", None)
+        if branch_id is None:
+            account_query = account_query.filter(FinancialAccount.branch_id.is_(None))
+        else:
+            account_query = account_query.filter(
+                (FinancialAccount.branch_id == int(branch_id))
+                | (FinancialAccount.branch_id.is_(None))
+            )
+        account = (
+            account_query
+            .order_by(FinancialAccount.branch_id.is_(None).asc(), FinancialAccount.id.asc())
+            .with_for_update()
+            .first()
+        )
+        if account is None:
+            continue
+        idempotency_key = f"sale:{int(sale.id)}:{method_key}"
+        exists = FinancialAccountMovement.query.filter_by(
+            company_id=int(company_id),
+            idempotency_key=idempotency_key,
+        ).first()
+        if exists is not None:
+            continue
+        movement = FinancialAccountMovement(
+            company_id=int(company_id),
+            branch_id=getattr(sale, "branch_id", None),
+            account_id=int(account.id),
+            movement_type="ingreso",
+            amount=amount,
+            description=f"Venta #{sale.id} · {method_key.replace('_', ' ')}",
+            source_type="sale",
+            source_id=int(sale.id),
+            idempotency_key=idempotency_key,
+            created_by_user_id=getattr(sale, "seller_id", None),
+        )
+        db.session.add(movement)
+        posted.append(movement)
+    if posted:
+        db.session.flush()
+    return posted
+
+
+
+def _get_company_branch(branch_id, *, active=True, lock=False):
+    try:
+        branch_id = int(branch_id)
+    except (TypeError, ValueError):
+        abort(404)
+    query = Branch.query.filter_by(id=branch_id, company_id=_company_id())
     if active:
         query = query.filter_by(active=True)
+    if lock:
+        query = query.with_for_update()
     branch = query.first()
     if branch is None:
         abort(404)
@@ -165,6 +236,13 @@ def index():
         .order_by(CashSession.opened_at.desc())
         .all()
     )
+    session_summaries = {int(item.id): _session_summary(item) for item in open_sessions}
+    events = (
+        CashSessionEvent.query.filter_by(company_id=company_id)
+        .order_by(CashSessionEvent.created_at.desc(), CashSessionEvent.id.desc())
+        .limit(60)
+        .all()
+    )
     by_branch = {}
     for cash_session in open_sessions:
         by_branch.setdefault(int(cash_session.branch_id or 0), []).append(cash_session)
@@ -202,15 +280,30 @@ def index():
         {"account": account, "balance": financial_account_balance(account)}
         for account in accounts
     ]
+    employees = (
+        User.query.filter_by(company_id=company_id, active=True)
+        .filter(User.role != "superadmin")
+        .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
+        .all()
+    )
+    pending_transfers_count = CashTransfer.query.filter(
+        CashTransfer.company_id == company_id,
+        CashTransfer.status.in_(["pendiente", "en_transito"]),
+    ).count()
     return render_template(
         "caja/tesoreria.html",
         branches=branches,
         branch_rows=branch_rows,
         transfers=transfers,
         accounts=account_rows,
+        events=events,
+        employees=employees,
+        transfer_idempotency_key=uuid4().hex,
+        account_movement_idempotency_keys={int(row.id): uuid4().hex for row in accounts},
         open_sessions_count=len(open_sessions),
+        session_summaries=session_summaries,
         expected_cash_total=expected_total,
-        pending_transfers=sum(1 for transfer in transfers if transfer.status in {"pendiente", "en_transito"}),
+        pending_transfers=pending_transfers_count,
     )
 
 
@@ -220,7 +313,7 @@ def create_register():
     _require_admin()
     name = (request.form.get("name") or "").strip()[:100]
     code = (request.form.get("code") or "").strip().upper()[:40]
-    branch = _get_company_branch(request.form.get("branch_id", type=int))
+    branch = _get_company_branch(request.form.get("branch_id", type=int), lock=True)
     if len(name) < 2:
         flash("Ingresá un nombre de caja válido.", "danger")
         return redirect(url_for("cash_treasury.index"))
@@ -231,6 +324,15 @@ def create_register():
     ).first():
         flash("Ya existe una caja con ese código en la sucursal.", "warning")
         return redirect(url_for("cash_treasury.index"))
+
+    assigned_user_id = request.form.get("assigned_user_id", type=int)
+    if assigned_user_id:
+        assigned_user = User.query.filter_by(
+            id=assigned_user_id, company_id=_company_id(), active=True
+        ).first()
+        if assigned_user is None or assigned_user.role == "superadmin":
+            flash("El responsable seleccionado no pertenece a esta empresa o está inactivo.", "danger")
+            return redirect(url_for("cash_treasury.index"))
 
     make_default = request.form.get("is_default") == "1"
     if make_default:
@@ -244,12 +346,18 @@ def create_register():
         code=code,
         active=True,
         is_default=make_default,
+        assigned_user_id=assigned_user_id or None,
         created_by_user_id=current_user.id,
     )
     db.session.add(register)
-    db.session.flush()
-    _audit("cash_register_create", "cash_register", register.id, f"Caja {name} creada en {branch.name}")
-    db.session.commit()
+    try:
+        db.session.flush()
+        _audit("cash_register_create", "cash_register", register.id, f"Caja {name} creada en {branch.name}")
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Ya existe una caja con ese código o hay otra caja predeterminada en la sucursal.", "warning")
+        return redirect(url_for("cash_treasury.index"))
     flash("Caja física creada correctamente.", "success")
     return redirect(url_for("cash_treasury.index"))
 
@@ -304,13 +412,14 @@ def create_transfer():
             CashRegister.query.filter_by(
                 id=source_session.cash_register_id,
                 company_id=company_id,
+                branch_id=source_session.branch_id,
                 active=True,
             )
             .first()
         )
         if source_register is None:
             raise ValueError("La sesión de origen no tiene una caja física activa asignada.")
-        target_branch = _get_company_branch(request.form.get("target_branch_id", type=int))
+        target_branch = _get_company_branch(request.form.get("target_branch_id", type=int), lock=True)
         target_register = (
             CashRegister.query.filter_by(
                 id=request.form.get("target_register_id", type=int),
@@ -322,6 +431,8 @@ def create_transfer():
         )
         if target_register is None:
             raise ValueError("Seleccioná una caja física activa de la sucursal de destino.")
+        if int(target_branch.id) == int(source_register.branch_id):
+            raise ValueError("La sucursal de destino debe ser distinta de la sucursal de origen.")
         if int(target_register.id) == int(source_register.id):
             raise ValueError("La caja de destino debe ser distinta de la caja de origen.")
         summary = _session_summary(source_session)
@@ -354,6 +465,9 @@ def create_transfer():
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
+    except IntegrityError:
+        db.session.rollback()
+        flash("La solicitud ya existe o está siendo procesada. Revisá la lista de transferencias antes de reintentar.", "warning")
     return redirect(url_for("cash_treasury.index"))
 
 
@@ -540,12 +654,15 @@ def create_financial_account():
         name = (request.form.get("name") or "").strip()[:120]
         code = (request.form.get("code") or "").strip().upper()[:40]
         account_type = (request.form.get("account_type") or "banco").strip().lower()
+        payment_method_key = (request.form.get("payment_method_key") or "").strip().lower() or None
         if len(name) < 2:
             raise ValueError("Ingresá un nombre válido para la cuenta.")
         if account_type not in {"banco", "billetera", "tarjeta", "otros"}:
             raise ValueError("Tipo de cuenta no válido.")
+        if payment_method_key not in {None, "mercado_pago", "debito", "credito", "transferencia", "otros"}:
+            raise ValueError("El método de pago asociado no es válido.")
         branch_id = request.form.get("branch_id", type=int)
-        branch = _get_company_branch(branch_id) if branch_id else None
+        branch = _get_company_branch(branch_id, lock=True) if branch_id else None
         if not code:
             code = "CTA-" + uuid4().hex[:8].upper()
         if FinancialAccount.query.filter_by(
@@ -559,6 +676,7 @@ def create_financial_account():
             name=name,
             code=code,
             account_type=account_type,
+            payment_method_key=payment_method_key,
             provider=(request.form.get("provider") or "").strip()[:80] or None,
             currency="ARS",
             opening_balance=opening,
@@ -575,6 +693,9 @@ def create_financial_account():
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
+    except IntegrityError:
+        db.session.rollback()
+        flash("El código de cuenta ya existe. Revisá las cuentas registradas.", "warning")
     return redirect(url_for("cash_treasury.index"))
 
 
@@ -620,4 +741,7 @@ def create_financial_account_movement(account_id):
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
+    except IntegrityError:
+        db.session.rollback()
+        flash("El movimiento ya fue recibido o está siendo procesado. No se duplicó el asiento.", "warning")
     return redirect(url_for("cash_treasury.index"))

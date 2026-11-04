@@ -56,7 +56,7 @@
             <tr>
               <td><div class="fw-semibold">{{ cash_session.register.name if cash_session.register else 'Caja histórica' }}</div><div class="small text-muted">Sesión #{{ cash_session.id }}</div></td>
               <td>{{ cash_session.user.name if cash_session.user else 'Sin usuario' }}</td>
-              <td class="text-end">ARS {{ "%.2f"|format(cash_session.expected_amount or cash_session.opening_amount or 0) }}</td>
+              <td class="text-end">ARS {{ "%.2f"|format(session_summaries[cash_session.id].expected) }}</td>
             </tr>
           {% endfor %}</tbody>
         </table></div>
@@ -65,12 +65,40 @@
         <div class="small fw-semibold text-uppercase text-muted mb-2">Cajas físicas</div>
         <div class="d-flex flex-wrap gap-2">
           {% for register in row.registers %}
-            <span class="badge rounded-pill {{ 'text-bg-primary' if register.is_default else 'text-bg-light border text-dark' }}">{{ register.name }}{% if register.is_default %} · principal{% endif %}</span>
+            <span class="d-inline-flex align-items-center gap-1">
+              <span class="badge rounded-pill {{ 'text-bg-primary' if register.is_default else 'text-bg-light border text-dark' }}">{{ register.name }}{% if register.is_default %} · principal{% endif %}{% if register.assigned_user %} · {{ register.assigned_user.name }}{% endif %}</span>
+              {% if not register.is_default %}
+              <form method="post" action="{{ url_for('cash_treasury.toggle_register', register_id=register.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="active" value="0">
+                <button class="btn btn-sm btn-link text-danger p-0" title="Desactivar caja" aria-label="Desactivar {{ register.name }}"><i class="bi bi-x-circle"></i></button>
+              </form>
+              {% endif %}
+            </span>
           {% else %}<span class="small text-muted">Todavía no hay cajas físicas configuradas.</span>{% endfor %}
         </div>
       </div></div>
       {% else %}<div class="col-12"><div class="alert alert-light border mb-0">No hay sucursales activas para mostrar.</div></div>{% endfor %}
     </div>
+  </div></section>
+
+  <section class="card app-card mb-4"><div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div><span class="page-kicker"><i class="bi bi-shield-check"></i> Trazabilidad</span><h2 class="h5 fw-bold mb-0">Actividad y cierres recientes</h2></div>
+      <span class="small text-muted">Eventos históricos de caja y tesorería</span>
+    </div>
+    <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0">
+      <thead><tr><th>Fecha</th><th>Sucursal</th><th>Sesión</th><th>Evento</th><th>Responsable</th><th>Detalle</th></tr></thead>
+      <tbody>{% for event in events %}
+        <tr>
+          <td>{{ event.created_at.strftime('%d/%m/%Y %H:%M') if event.created_at else '-' }}</td>
+          <td>{{ event.cash_session.register.branch.name if event.cash_session and event.cash_session.register and event.cash_session.register.branch else '-' }}</td>
+          <td>#{{ event.cash_session_id }}</td>
+          <td><span class="badge text-bg-light">{{ event.event_type|replace('_',' ')|title }}</span></td>
+          <td>{{ event.actor.name if event.actor else 'Sistema / usuario no disponible' }}</td>
+          <td class="small text-muted">{{ event.note or '-' }}</td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-4">Todavía no hay eventos de caja.</td></tr>{% endfor %}</tbody>
+    </table></div>
   </div></section>
 
   <div class="row g-3 mb-4">
@@ -81,6 +109,11 @@
         <div class="col-12"><label class="form-label">Sucursal</label><select class="form-select" name="branch_id" required>{% for branch in branches %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
         <div class="col-md-7"><label class="form-label">Nombre</label><input class="form-control" name="name" maxlength="100" placeholder="Caja 2 / Depósito" required></div>
         <div class="col-md-5"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="CAJA-2"></div>
+        <div class="col-12">
+          <label class="form-label">Responsable asignado (opcional)</label>
+          <select class="form-select" name="assigned_user_id"><option value="">Sin asignación fija</option>{% for employee in employees %}<option value="{{ employee.id }}">{{ employee.name }} · {{ employee.username }}</option>{% endfor %}</select>
+          <div class="form-text">Si se asigna una persona, los demás empleados no podrán abrir esta caja física.</div>
+        </div>
         <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" value="1" name="is_default" id="treasury-default-register"><label class="form-check-label" for="treasury-default-register">Establecer como caja predeterminada de la sucursal</label></div></div>
         <div class="col-12"><button class="btn btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Crear caja</button></div>
       </form>
@@ -90,6 +123,7 @@
       <span class="page-kicker"><i class="bi bi-arrow-left-right"></i> Movimiento entre locales</span><h2 class="h5 fw-bold mb-3">Solicitar transferencia de efectivo</h2>
       <form method="post" action="{{ url_for('cash_treasury.create_transfer') }}" class="row g-3">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="idempotency_key" value="{{ transfer_idempotency_key }}">
         <div class="col-12"><label class="form-label">Caja de origen (sesión abierta)</label>
           <select class="form-select" name="source_session_id" required><option value="">Seleccionar caja de origen</option>
             {% for row in branch_rows %}{% for cash_session in row.sessions %}
@@ -149,6 +183,8 @@
         <div class="col-12"><label class="form-label">Nombre</label><input class="form-control" name="name" maxlength="120" placeholder="Mercado Pago / Banco Nación" required></div>
         <div class="col-md-6"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="MP-PRINCIPAL"></div>
         <div class="col-md-6"><label class="form-label">Tipo</label><select class="form-select" name="account_type"><option value="banco">Banco</option><option value="billetera">Billetera digital</option><option value="tarjeta">Tarjetas</option><option value="otros">Otros</option></select></div>
+        <div class="col-md-6"><label class="form-label">Método de pago asociado</label><select class="form-select" name="payment_method_key"><option value="">Sin asociación automática</option><option value="mercado_pago">Mercado Pago / QR</option><option value="debito">Tarjeta de débito</option><option value="credito">Tarjeta de crédito</option><option value="transferencia">Transferencia bancaria</option><option value="otros">Otros medios</option></select></div>
+        <div class="col-12 small text-muted">Al confirmar una venta, el importe cobrado por ese medio se ingresa automáticamente en esta cuenta.</div>
         <div class="col-12"><label class="form-label">Sucursal (opcional)</label><select class="form-select" name="branch_id"><option value="">Cuenta central de empresa</option>{% for branch in branches %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
         <div class="col-md-6"><label class="form-label">Saldo inicial</label><input class="form-control" name="opening_balance" type="number" min="0" step="0.01" value="0"></div>
         <div class="col-md-6"><label class="form-label">Proveedor</label><input class="form-control" name="provider" maxlength="80" placeholder="Mercado Pago / Banco"></div>
@@ -167,6 +203,7 @@
         </div>
         <form method="post" action="{{ url_for('cash_treasury.create_financial_account_movement', account_id=row.account.id) }}" class="row g-2">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="idempotency_key" value="{{ account_movement_idempotency_keys[row.account.id] }}">
           <div class="col-sm-3"><select class="form-select form-select-sm" name="movement_type"><option value="ingreso">Ingreso</option><option value="egreso">Egreso</option><option value="ajuste">Ajuste (+/-)</option></select></div>
           <div class="col-sm-3"><input class="form-control form-control-sm" name="amount" type="number" step="0.01" placeholder="Importe" required></div>
           <div class="col-sm-6"><input class="form-control form-control-sm" name="description" maxlength="255" placeholder="Descripción / conciliación"></div>

@@ -221,7 +221,7 @@ def _session_ticket_text(session):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import CashMovement, CashSession, Company, Sale, User, db, record_audit, scope_query_to_company, utcnow
+    from app import CashMovement, CashRegister, CashSession, Company, Sale, User, db, record_audit, scope_query_to_company, utcnow
 
     status_filter = (request.args.get("status") or "").strip().lower()
     user_filter = request.args.get("user_id", type=int)
@@ -250,26 +250,91 @@ def index():
     if request.method == "POST":
         action = (request.form.get("action") or "").strip().lower()
         session_id = request.form.get("session_id", type=int)
-        target_session = _get_session_or_404(session_id) if session_id else open_session
+        target_session = _get_session_or_404(session_id) if session_id else (_get_session_or_404(open_session.id) if open_session else None)
 
         if action == "open":
             if open_session is not None:
-                flash("Ya tienes una caja abierta.", "warning")
+                flash("Ya tienes una caja abierta en esta sucursal.", "warning")
             else:
+                from stockarmobile.branch_context import get_active_branch_id
+                from cash_treasury import ensure_default_cash_register, _record_session_event
+
+                company_id = getattr(current_user, "company_id", None)
+                branch_id = get_active_branch_id()
+                register = None
+                if branch_id is not None:
+                    requested_register_id = request.form.get("cash_register_id", type=int)
+                    if requested_register_id:
+                        register = (
+                            CashRegister.query.filter_by(
+                                id=requested_register_id,
+                                company_id=company_id,
+                                branch_id=branch_id,
+                                active=True,
+                            )
+                            .with_for_update()
+                            .first()
+                        )
+                        if register is None:
+                            abort(404)
+                    else:
+                        register = ensure_default_cash_register(
+                            company_id=company_id,
+                            branch_id=branch_id,
+                        )
+                    if (
+                        getattr(register, "assigned_user_id", None)
+                        and int(register.assigned_user_id) != int(current_user.id)
+                        and not _is_admin()
+                    ):
+                        abort(403)
+                    occupied = (
+                        CashSession.query.filter_by(
+                            company_id=company_id,
+                            cash_register_id=register.id,
+                            status="abierta",
+                        )
+                        .with_for_update()
+                        .first()
+                    )
+                    if occupied is not None:
+                        flash(
+                            f"{register.name} ya está ocupada por otra sesión. Elegí otra caja o cerrá la sesión activa.",
+                            "warning",
+                        )
+                        return redirect(url_for("cash.index"))
+                opening_amount = _to_decimal(request.form.get("opening_amount"))
+                if opening_amount < 0:
+                    flash("El fondo inicial no puede ser negativo.", "danger")
+                    return redirect(url_for("cash.index"))
                 target_session = CashSession(
                     user_id=current_user.id,
-                    company_id=getattr(current_user, "company_id", None),
-                    branch_id=__import__("stockarmobile.branch_context", fromlist=["get_active_branch_id"]).get_active_branch_id(),
+                    company_id=company_id,
+                    branch_id=branch_id,
+                    cash_register_id=(register.id if register else None),
                     opened_by_user_id=current_user.id,
-                    opening_amount=_to_decimal(request.form.get("opening_amount")),
+                    opening_amount=opening_amount,
+                    expected_amount=opening_amount,
                     note=request.form.get("note"),
                     status="abierta",
                 )
                 db.session.add(target_session)
                 db.session.flush()
-                record_audit(action="cash_open", entity="cash_session", entity_id=target_session.id, detail="Apertura de caja")
+                _record_session_event(
+                    target_session,
+                    "apertura",
+                    note=target_session.note,
+                    summary=_session_summary(target_session),
+                    payload='{"register_id":%d}' % int(register.id) if register else None,
+                )
+                record_audit(
+                    action="cash_open",
+                    entity="cash_session",
+                    entity_id=target_session.id,
+                    detail=f"Apertura de caja física {register.name if register else 'legacy'}",
+                )
                 db.session.commit()
-                flash("Caja abierta.", "success")
+                flash("Caja abierta correctamente.", "success")
         elif action == "movement":
             if target_session is None or target_session.status != "abierta":
                 flash("Debes tener una caja abierta para registrar movimientos.", "warning")
@@ -279,29 +344,46 @@ def index():
                     flash("El movimiento debe tener un importe positivo.", "danger")
                 else:
                     movement_type = (request.form.get("movement_type") or "ingreso").strip().lower()
-                    db.session.add(
-                        CashMovement(
-                            session_id=target_session.id,
-                            user_id=current_user.id,
-                            company_id=getattr(current_user, "company_id", None),
-                            branch_id=getattr(target_session, "branch_id", None),
-                            movement_type=movement_type,
-                            category=request.form.get("category"),
-                            amount=amount,
-                            description=request.form.get("description"),
+                    if movement_type not in {"ingreso", "egreso", "retiro"}:
+                        flash("El tipo de movimiento no es válido.", "danger")
+                    else:
+                        db.session.add(
+                            CashMovement(
+                                session_id=target_session.id,
+                                user_id=current_user.id,
+                                company_id=getattr(current_user, "company_id", None),
+                                branch_id=getattr(target_session, "branch_id", None),
+                                movement_type=movement_type,
+                                category=request.form.get("category"),
+                                amount=amount,
+                                description=request.form.get("description"),
+                            )
                         )
-                    )
-                    db.session.flush()
-                    record_audit(action="cash_movement", entity="cash_movement", detail=f"Movimiento {movement_type} por {amount}")
-                    db.session.commit()
-                    flash("Movimiento registrado.", "success")
+                        db.session.flush()
+                        record_audit(action="cash_movement", entity="cash_movement", detail=f"Movimiento {movement_type} por {amount}")
+                        db.session.commit()
+                        flash("Movimiento registrado.", "success")
         elif action == "close":
             if target_session is None or target_session.status != "abierta":
                 flash("No hay una caja abierta para cerrar.", "warning")
             else:
                 summary = _session_summary(target_session)
                 counted_amount = _to_decimal(request.form.get("counted_amount") or request.form.get("closing_amount") or summary["expected"])
+                if counted_amount < 0:
+                    flash("El efectivo contado no puede ser negativo.", "danger")
+                    return redirect(url_for("cash.index"))
                 opening_vs_closing_difference = counted_amount - summary["opening"]
+                from cash_treasury import _record_session_event
+                _record_session_event(
+                    target_session,
+                    "cierre",
+                    note=request.form.get("closing_note"),
+                    summary={
+                        **summary,
+                        "counted": counted_amount,
+                        "difference": counted_amount - summary["expected"],
+                    },
+                )
                 target_session.closed_at = utcnow()
                 target_session.expected_amount = summary["expected"]
                 target_session.counted_amount = counted_amount
@@ -330,29 +412,98 @@ def index():
         elif action == "reopen":
             if not _is_admin():
                 abort(403)
-            if target_session is None:
-                flash("Selecciona una caja para reabrir.", "warning")
+            if target_session is None or target_session.status != "cerrada":
+                flash("Seleccioná una sesión cerrada para abrir un nuevo turno.", "warning")
             else:
-                target_session.status = "abierta"
-                target_session.closed_at = None
-                target_session.closing_amount = None
-                target_session.counted_amount = None
-                target_session.difference_amount = None
-                target_session.closing_note = None
-                target_session.reopened_at = utcnow()
-                target_session.reopened_by_user_id = current_user.id
-                target_session.voided_at = None
-                target_session.voided_by_user_id = None
-                target_session.void_reason = None
-                record_audit(action="cash_reopen", entity="cash_session", entity_id=target_session.id, detail="Reapertura de caja")
+                from cash_treasury import _record_session_event, ensure_default_cash_register
+
+                register = None
+                if target_session.branch_id is not None:
+                    register = (
+                        CashRegister.query.filter_by(
+                            id=target_session.cash_register_id,
+                            company_id=getattr(current_user, "company_id", None),
+                            branch_id=target_session.branch_id,
+                            active=True,
+                        )
+                        .with_for_update()
+                        .first()
+                        if target_session.cash_register_id
+                        else ensure_default_cash_register(
+                            company_id=getattr(current_user, "company_id", None),
+                            branch_id=target_session.branch_id,
+                        )
+                    )
+                    if register is None:
+                        flash("La caja física original ya no está disponible. No se reabrió la sesión.", "danger")
+                        return redirect(url_for("cash.index"))
+                    occupied = (
+                        CashSession.query.filter_by(
+                            company_id=target_session.company_id,
+                            cash_register_id=register.id,
+                            status="abierta",
+                        )
+                        .with_for_update()
+                        .first()
+                    )
+                    if occupied is not None:
+                        flash(f"{register.name} ya tiene una sesión abierta. No se puede iniciar otro turno en ese puesto.", "warning")
+                        return redirect(url_for("cash.index"))
+
+                previous_summary = _session_summary(target_session)
+                _record_session_event(
+                    target_session,
+                    "reapertura_solicitada",
+                    note=(request.form.get("reopen_reason") or "Reapertura autorizada"),
+                    summary=previous_summary,
+                    payload='{"previous_status":"cerrada","new_session_required":true}',
+                )
+                opening_balance = (
+                    _to_decimal(target_session.counted_amount)
+                    if target_session.counted_amount is not None
+                    else _to_decimal(target_session.expected_amount or previous_summary["expected"])
+                )
+                new_session = CashSession(
+                    user_id=current_user.id,
+                    company_id=target_session.company_id,
+                    branch_id=target_session.branch_id,
+                    cash_register_id=(register.id if register else None),
+                    opened_by_user_id=current_user.id,
+                    opening_amount=opening_balance,
+                    expected_amount=opening_balance,
+                    note=f"Reapertura de turno originada en sesión #{target_session.id}",
+                    status="abierta",
+                )
+                db.session.add(new_session)
+                db.session.flush()
+                _record_session_event(
+                    new_session,
+                    "apertura_reapertura",
+                    note=f"Nuevo turno a partir de la sesión cerrada #{target_session.id}",
+                    summary=_session_summary(new_session),
+                    payload='{"previous_session_id":%d}' % int(target_session.id),
+                )
+                record_audit(
+                    action="cash_reopen",
+                    entity="cash_session",
+                    entity_id=new_session.id,
+                    detail=f"Nuevo turno basado en la sesión cerrada #{target_session.id}",
+                )
                 db.session.commit()
-                flash("Caja reabierta.", "success")
+                flash(f"Se abrió una nueva sesión #{new_session.id}. La sesión #{target_session.id} conserva su cierre original.", "success")
         elif action == "void":
             if not _is_admin():
                 abort(403)
             if target_session is None:
                 flash("Selecciona una caja para anular.", "warning")
             else:
+                from cash_treasury import _record_session_event
+                _record_session_event(
+                    target_session,
+                    "anulacion",
+                    note=(request.form.get("void_reason") or "Anulación administrativa"),
+                    summary=_session_summary(target_session),
+                )
                 target_session.status = "anulada"
                 target_session.voided_at = utcnow()
                 target_session.voided_by_user_id = current_user.id
@@ -394,6 +545,22 @@ def index():
         for pending_sale in pending_comprobantes:
             pending_comprobantes_total += _to_decimal(getattr(pending_sale, "total_amount", 0))
 
+    cash_registers = []
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        register_query = CashRegister.query.filter_by(
+            company_id=getattr(current_user, "company_id", None),
+            branch_id=active_branch_id,
+            active=True,
+        )
+        if not _is_admin():
+            register_query = register_query.filter(
+                (CashRegister.assigned_user_id.is_(None))
+                | (CashRegister.assigned_user_id == current_user.id)
+            )
+        cash_registers = register_query.order_by(CashRegister.is_default.desc(), CashRegister.name.asc()).all()
+
     employees = []
     if _is_admin():
         employees = scope_query_to_company(User.query.filter_by(active=True), User).order_by(User.username).all()
@@ -408,6 +575,7 @@ def index():
         sessions=sessions,
         movements=movements,
         employees=employees,
+        cash_registers=cash_registers,
         status_filter=status_filter,
         selected_user_id=user_filter,
         search_query=request.args.get("q", ""),

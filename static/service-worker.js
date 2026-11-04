@@ -40,8 +40,8 @@ const SYNCABLE_POST_PREFIXES = [
   '/clientes/api/quick-create',
   '/compras/',
   '/compras/proveedores',
-  '/gastos/',
-  '/caja/',
+  // Expenses and cash operations require the original online branch and session context.
+
 ];
 const ONLINE_NAVIGATION_POST_PREFIXES = [
   '/admin/subscription/mercadopago/create',

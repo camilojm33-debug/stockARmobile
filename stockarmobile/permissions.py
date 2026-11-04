@@ -57,6 +57,8 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
         return "clients"
     if ep.startswith(("reports.",)):
         return "reports"
+    if ep.startswith(("cash_treasury.",)):
+        return EMPLOYEE_ADMIN_ONLY
     if ep.startswith(("cash.",)):
         return "cash"
     if ep.startswith(("qr_labels.",)):
