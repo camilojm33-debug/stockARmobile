@@ -129,14 +129,39 @@ def pos_payment_has_live_stock_reservation(payment) -> bool:
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict):
         return False
-    return bool(
+    if not (
         int(snapshot.get("branch_id") or 0) == int(payment.branch_id)
         and int(snapshot.get("cash_session_id") or 0) > 0
         and isinstance(snapshot.get("items"), list)
         and snapshot.get("items")
         and snapshot.get("stock_reserved")
         and not snapshot.get("stock_reservation_released")
-    )
+    ):
+        return False
+
+    # Verify that the persisted branch ledger still holds every unit claimed
+    # by the draft. The JSON flag alone is not sufficient after restores/manual
+    # data repair or a partially migrated legacy payment.
+    from decimal import Decimal, InvalidOperation
+    from app import BranchStock
+    for item in snapshot["items"]:
+        try:
+            product_id = int(item.get("productId") or item.get("product_id") or 0)
+            quantity = Decimal(str(item.get("quantity") or 0))
+            if product_id <= 0 or not quantity.is_finite() or quantity <= 0:
+                return False
+        except (TypeError, ValueError, InvalidOperation):
+            return False
+        stock_row = BranchStock.query.filter_by(
+            company_id=int(payment.company_id),
+            branch_id=int(payment.branch_id),
+            product_id=product_id,
+        ).first()
+        if stock_row is None:
+            return False
+        if Decimal(str(stock_row.reserved_stock or 0)) < quantity:
+            return False
+    return True
 
 
 def merge_pos_payment_provider_payload(payment, provider_payload: dict) -> None:
