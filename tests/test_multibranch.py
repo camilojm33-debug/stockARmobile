@@ -1406,12 +1406,18 @@ def test_pos_webhook_approval_preserves_a_valid_branch_reserved_draft(app, monke
         }
         service = WebhookService()
         refunded = []
-        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
-        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
         monkeypatch.setattr(
-            service.mp_service,
-            "refund_payment",
-            lambda payment_id: refunded.append(str(payment_id)) or {"id": "unexpected-refund", "status": "approved"},
+            "services.webhook_service.MercadoPagoService.validate_webhook_signature",
+            lambda self, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.get_payment",
+            lambda self, payment_id, **kwargs: approved_payment,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.refund_payment",
+            lambda self, payment_id: refunded.append(str(payment_id))
+            or {"id": "unexpected-refund", "status": "approved"},
         )
 
         result = service.process(
@@ -1491,4 +1497,119 @@ def test_qr_status_can_be_checked_after_switching_to_another_assigned_branch(app
             ).id == payment.id
             with pytest.raises(NotFound):
                 _authorized_pos_qr_payment(payment.id, require_active_branch=True)
+        db.session.rollback()
+
+
+def test_pos_webhook_approval_after_draft_expiry_refunds_and_releases_stock(app, monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with app.app_context():
+        company = _company("Empresa QR expirado webhook")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = User(
+            username="qr-expired-owner",
+            email="qr-expired-owner@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        product = Product(
+            company_id=company.id,
+            barcode="QR-WEBHOOK-EXP-001",
+            name="Producto QR expirado",
+            stock=5,
+            min_stock=0,
+            active=True,
+        )
+        db.session.add_all([user, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 5)
+        reserve_branch_stock(product, branch.id, 2, note="QR vencido")
+        draft = Payment(
+            company_id=company.id,
+            branch_id=branch.id,
+            user_id=user.id,
+            amount=200,
+            currency="ARS",
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft",
+            created_at=datetime.utcnow() - timedelta(hours=80),
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": branch.id,
+                    "cash_session_id": 124,
+                    "items": [{"productId": product.id, "quantity": 2}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                    "cart_hash": "webhook-expired-branch-check",
+                },
+            }),
+        )
+        db.session.add(draft)
+        db.session.flush()
+        external_reference = (
+            f"flow:pos_sale|draft_payment_id:{draft.id}|company_id:{company.id}|"
+            f"user_id:{user.id}|branch_id:{branch.id}|cart_hash:webhook-expired-branch-check"
+        )
+        draft.external_reference = external_reference
+        db.session.commit()
+
+        approved_payment = {
+            "id": "987654321098765432",
+            "status": "approved",
+            "date_last_updated": "2026-11-03T20:30:00Z",
+            "date_approved": "2026-11-03T20:30:00Z",
+            "transaction_amount": 200,
+            "currency_id": "ARS",
+            "payment_method_id": "qr",
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "pos_sale",
+                "company_id": company.id,
+                "user_id": user.id,
+                "draft_payment_id": draft.id,
+                "branch_id": branch.id,
+                "total_amount": 200,
+            },
+        }
+        service = WebhookService()
+        refunded = []
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.validate_webhook_signature",
+            lambda self, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.get_payment",
+            lambda self, payment_id, **kwargs: approved_payment,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.refund_payment",
+            lambda self, payment_id: refunded.append(str(payment_id))
+            or {"id": "refund-expired-pos", "status": "approved"},
+        )
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-qr-expired-1", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-qr-expired-1", "type": "payment", "data": {"id": "987654321098765432"}},
+        )
+        db.session.refresh(draft)
+        stored = json.loads(draft.payload_json)
+
+        assert result["status"] == "late_pos_qr_refunded"
+        assert result["payment_status"] == "refunded"
+        assert draft.status == "refunded"
+        assert draft.payment_id == "987654321098765432"
+        assert stored["snapshot"]["stock_reservation_released"] is True
+        assert refunded == ["987654321098765432"]
+        assert Decimal(str(get_branch_stock(product, branch.id).reserved_stock)) == Decimal("0")
+        assert available_stock(product, branch.id) == 5.0
+        assert PaymentHistory.query.filter_by(
+            payment_id=draft.id,
+            event="pos_qr_late_approval_refund",
+        ).count() == 1
         db.session.rollback()
