@@ -109,15 +109,15 @@ def test_pos_payment_rejects_expired_or_mismatched_reservations(app):
 
     with app.app_context():
         payload = {
-        "flow": "pos_sale",
-        "snapshot": {
-            "branch_id": 17,
-            "cash_session_id": 91,
-            "items": [{"productId": 8, "quantity": 2}],
-            "stock_reserved": True,
-            "stock_reservation_released": False,
-        },
-    }
+            "flow": "pos_sale",
+            "snapshot": {
+                "branch_id": 17,
+                "cash_session_id": 91,
+                "items": [{"productId": 8, "quantity": 2}],
+                "stock_reserved": True,
+                "stock_reservation_released": False,
+            },
+        }
         payment = SimpleNamespace(
             provider="mercadopago_pos",
             branch_id=17,
