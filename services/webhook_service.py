@@ -126,7 +126,14 @@ class WebhookService:
 
     @staticmethod
     def _event_updated_at(payment_data: dict):
-        return WebhookService._parse_mp_datetime(payment_data.get("date_last_updated") or payment_data.get("date_approved"))
+        # POS payment payloads retain the original local cart snapshot and store
+        # Mercado Pago's latest status under "mercadopago".
+        source = payment_data
+        if isinstance(payment_data, dict) and isinstance(payment_data.get("mercadopago"), dict):
+            source = payment_data["mercadopago"]
+        return WebhookService._parse_mp_datetime(
+            source.get("date_last_updated") or source.get("date_approved")
+        )
 
     @staticmethod
     def _payment_event_key(payment_data: dict, fallback_key: str) -> str:
