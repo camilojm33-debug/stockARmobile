@@ -134,3 +134,51 @@ def test_pos_payment_rejects_expired_or_mismatched_reservations(app):
         payload["snapshot"]["branch_id"] = 18
         payment.payload_json = json.dumps(payload)
         assert pos_payment_has_live_stock_reservation(payment) is False
+
+
+def test_pos_qr_cart_hash_includes_total_discounts_and_customer_but_not_cash_session():
+    from sales import _pos_qr_snapshot
+
+    items = [{
+        "productId": 8,
+        "name": "Producto de prueba",
+        "price": 100,
+        "quantity": 1,
+        "discount": 0,
+    }]
+    original = _pos_qr_snapshot(
+        items,
+        {"client_id": 10, "general_discount": 0, "tax_amount": 0},
+        total_amount=100,
+        currency="ARS",
+        branch_id=3,
+        cash_session_id=100,
+    )
+    new_cash_session = _pos_qr_snapshot(
+        items,
+        {"client_id": 10, "general_discount": 0, "tax_amount": 0},
+        total_amount=100,
+        currency="ARS",
+        branch_id=3,
+        cash_session_id=101,
+    )
+    changed_discount = _pos_qr_snapshot(
+        items,
+        {"client_id": 10, "general_discount": 10, "tax_amount": 0},
+        total_amount=90,
+        currency="ARS",
+        branch_id=3,
+        cash_session_id=101,
+    )
+    changed_customer = _pos_qr_snapshot(
+        items,
+        {"client_id": 11, "general_discount": 0, "tax_amount": 0},
+        total_amount=100,
+        currency="ARS",
+        branch_id=3,
+        cash_session_id=101,
+    )
+
+    assert original["cart_hash"] == new_cash_session["cart_hash"]
+    assert original["cart_hash"] != changed_discount["cart_hash"]
+    assert original["cart_hash"] != changed_customer["cart_hash"]
