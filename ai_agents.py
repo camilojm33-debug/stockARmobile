@@ -259,8 +259,10 @@ def _context():
         ).filter(
             Product.company_id == company_id,
             Product.active.is_(True),
-            db.func.coalesce(BranchStock.stock, 0)
-            <= db.func.coalesce(BranchStock.min_stock, Product.min_stock),
+            (
+                db.func.coalesce(BranchStock.stock, 0)
+                - db.func.coalesce(BranchStock.reserved_stock, 0)
+            ) <= db.func.coalesce(BranchStock.min_stock, Product.min_stock),
         ).count()
     else:
         critical_stock = Product.query.filter(
@@ -272,7 +274,19 @@ def _context():
     if active_branch_id is not None:
         sold_products_query = sold_products_query.filter(Sale.branch_id == active_branch_id)
     sold_product_ids = sold_products_query.distinct()
-    low_rotation = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), ~Product.id.in_(sold_product_ids)).count()
+    low_rotation_query = Product.query.filter(
+        Product.company_id == company_id,
+        Product.active.is_(True),
+        ~Product.id.in_(sold_product_ids),
+    )
+    if active_branch_id is not None:
+        low_rotation_query = low_rotation_query.join(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == active_branch_id),
+        ).filter(BranchStock.stock > 0)
+    low_rotation = low_rotation_query.count()
     vendor_metrics = _vendor_dashboard_metrics(company_id, month_start, branch_id=active_branch_id)
     ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
