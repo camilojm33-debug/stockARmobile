@@ -5,7 +5,7 @@ import json
 import pytest
 from werkzeug.exceptions import NotFound
 
-from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Company, Payment, Plan, Product, Subscription, User, db
+from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Company, Payment, PaymentHistory, Plan, Product, Subscription, User, db
 from stockarmobile.branch_inventory import (
     adjust_branch_stock, available_stock, get_branch_stock, set_branch_stock,
     reserve_branch_stock, transfer_branch_stock_batch,
