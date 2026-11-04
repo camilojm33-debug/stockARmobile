@@ -146,6 +146,88 @@ class WebhookService:
         }
 
     @staticmethod
+    def _merge_pos_sale_draft_payload(payment, payment_data: dict, external_reference: str | None) -> str:
+        """Keep the immutable POS sale snapshot when Mercado Pago updates a QR draft."""
+        try:
+            previous = json.loads(getattr(payment, "payload_json", None) or "{}")
+        except (TypeError, ValueError):
+            previous = {}
+        if not isinstance(previous, dict) or previous.get("flow") != "pos_sale":
+            return json.dumps(payment_data, ensure_ascii=False)
+
+        snapshot = previous.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return json.dumps(payment_data, ensure_ascii=False)
+
+        snapshot = dict(snapshot)
+        reference_parts = WebhookService._external_reference_parts(
+            external_reference or getattr(payment, "external_reference", None)
+        )
+        metadata = payment_data.get("metadata") if isinstance(payment_data.get("metadata"), dict) else {}
+
+        def _optional_positive_id(value, label):
+            if value in (None, ""):
+                return None
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                raise RuntimeError(f"Webhook Mercado Pago POS con {label} inválido.") from None
+            if parsed <= 0:
+                raise RuntimeError(f"Webhook Mercado Pago POS con {label} inválido.")
+            return parsed
+
+        snapshot_branch_id = _optional_positive_id(snapshot.get("branch_id"), "sucursal guardada")
+        reference_branch_id = _optional_positive_id(reference_parts.get("branch_id"), "sucursal en external_reference")
+        metadata_branch_id = _optional_positive_id(metadata.get("branch_id"), "sucursal en metadata")
+        supplied_branch_ids = {
+            value for value in (reference_branch_id, metadata_branch_id) if value is not None
+        }
+        if len(supplied_branch_ids) > 1:
+            raise RuntimeError("Webhook Mercado Pago POS con sucursales distintas en referencia y metadata.")
+        supplied_branch_id = next(iter(supplied_branch_ids), None)
+        if (
+            snapshot_branch_id is not None
+            and supplied_branch_id is not None
+            and snapshot_branch_id != supplied_branch_id
+        ):
+            raise RuntimeError("Webhook Mercado Pago POS con sucursal distinta al borrador original.")
+        if snapshot_branch_id is None and supplied_branch_id is not None:
+            snapshot["branch_id"] = supplied_branch_id
+
+        cash_session_id = _optional_positive_id(
+            snapshot.get("cash_session_id"), "caja guardada"
+        )
+        reference_cash_session_id = _optional_positive_id(
+            reference_parts.get("cash_session_id"), "caja en external_reference"
+        )
+        metadata_cash_session_id = _optional_positive_id(
+            metadata.get("cash_session_id"), "caja en metadata"
+        )
+        supplied_cash_session_ids = {
+            value
+            for value in (reference_cash_session_id, metadata_cash_session_id)
+            if value is not None
+        }
+        if len(supplied_cash_session_ids) > 1:
+            raise RuntimeError("Webhook Mercado Pago POS con cajas distintas en referencia y metadata.")
+        supplied_cash_session_id = next(iter(supplied_cash_session_ids), None)
+        if (
+            cash_session_id is not None
+            and supplied_cash_session_id is not None
+            and cash_session_id != supplied_cash_session_id
+        ):
+            raise RuntimeError("Webhook Mercado Pago POS con caja distinta al borrador original.")
+        if cash_session_id is None and supplied_cash_session_id is not None:
+            snapshot["cash_session_id"] = supplied_cash_session_id
+
+        merged_payload = dict(payment_data)
+        merged_payload["flow"] = "pos_sale"
+        merged_payload["snapshot"] = snapshot
+        if previous.get("sale_id") not in (None, ""):
+            merged_payload["sale_id"] = previous["sale_id"]
+        return json.dumps(merged_payload, ensure_ascii=False)
+
+    @staticmethod
     def _merchant_connection_for_payment_event(*, data_id: str, payload: dict, Payment, MercadoPagoConnection):
         """Resolve the tenant before querying Mercado Pago with a seller token.
 
@@ -970,7 +1052,9 @@ class WebhookService:
                         payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method or "QR Mercado Pago"
                         payment.reference = external_reference or payment.reference
                         payment.provider = "mercadopago_pos"
-                        payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        payment.payload_json = self._merge_pos_sale_draft_payload(
+                            payment, payment_data, external_reference
+                        )
                         payment.paid_at = paid_at or payment.paid_at
                     else:
                         payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=None, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago_pos", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
@@ -1015,7 +1099,11 @@ class WebhookService:
                 payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
                 payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method
                 payment.reference = external_reference or payment.reference
-                payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                payment.payload_json = (
+                    self._merge_pos_sale_draft_payload(payment, payment_data, external_reference)
+                    if flow == "pos_sale"
+                    else json.dumps(payment_data, ensure_ascii=False)
+                )
                 payment.paid_at = paid_at or payment.paid_at
 
             subscription = None
@@ -1049,7 +1137,9 @@ class WebhookService:
                         draft_payment.payment_method = payment.payment_method or draft_payment.payment_method or "QR Mercado Pago"
                         draft_payment.provider = "mercadopago_pos"
                         draft_payment.reference = external_reference or draft_payment.reference
-                        draft_payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        draft_payment.payload_json = self._merge_pos_sale_draft_payload(
+                            draft_payment, payment_data, external_reference
+                        )
                         draft_payment.paid_at = paid_at or draft_payment.paid_at
                         payment = draft_payment
                 result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
