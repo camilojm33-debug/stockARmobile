@@ -1153,7 +1153,8 @@ def test_backup_inventory_restore_preserves_live_qr_reservations(app):
 
         north_row = BranchStock.query.filter_by(branch_id=north.id, product_id=product.id).one()
         north_row.stock = Decimal("4.000")
-        product.stock = 11
+        # Product.stock is restored from the selected backup before this helper runs.
+        product.stock = 12
         db.session.flush()
 
         BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
