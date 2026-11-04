@@ -293,23 +293,39 @@ def _qr_data_uri(content: str) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def _authorized_pos_qr_payment(draft_id, *, lock=False):
-    """Resolve a POS QR payment only for its owner/admin and active branch."""
-    from app import Payment
-    from stockarmobile.branch_context import get_active_branch_id
+def _authorized_pos_qr_payment(draft_id, *, lock=False, require_active_branch=True):
+    """Resolve a POS QR payment for its owner and assigned branch.
 
+    Status polling may continue after a user switches branches, but the user
+    must still be assigned to the payment's origin branch. Finalization always
+    requires that the origin branch is the currently active branch.
+    """
+    from app import Payment
+    from stockarmobile.branch_context import accessible_branches, get_active_branch_id
+
+    role = getattr(current_user, "role", None)
+    is_admin = role in {"admin", "superadmin"}
     query = Payment.query.filter_by(
         id=int(draft_id),
         company_id=getattr(current_user, "company_id", None),
         provider="mercadopago_pos",
     )
-    if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+    if not is_admin:
         query = query.filter(Payment.user_id == int(current_user.id))
-    active_branch_id = get_active_branch_id()
-    if active_branch_id is None:
-        query = query.filter(Payment.branch_id.is_(None))
-    else:
-        query = query.filter(Payment.branch_id == int(active_branch_id))
+
+    if require_active_branch or not is_admin:
+        active_branch_id = get_active_branch_id()
+        if require_active_branch:
+            if active_branch_id is None:
+                query = query.filter(Payment.branch_id.is_(None))
+            else:
+                query = query.filter(Payment.branch_id == int(active_branch_id))
+        elif not is_admin:
+            allowed_branch_ids = [int(branch.id) for branch in accessible_branches()]
+            if allowed_branch_ids:
+                query = query.filter(Payment.branch_id.in_(allowed_branch_ids))
+            elif active_branch_id is None:
+                query = query.filter(Payment.branch_id.is_(None))
     if lock:
         query = query.with_for_update()
     return query.first_or_404()
@@ -1472,12 +1488,18 @@ def api_mp_qr_status():
     draft_id = request.args.get("draft_id", type=int)
     if not draft_id:
         return jsonify({"error": "draft_id requerido"}), 400
-    payment = _authorized_pos_qr_payment(draft_id)
+    payment = _authorized_pos_qr_payment(draft_id, require_active_branch=False)
     payload = json.loads(payment.payload_json) if payment.payload_json else {}
     snapshot = payload.get("snapshot") if isinstance(payload, dict) else None
     snapshot = snapshot if isinstance(snapshot, dict) else {}
     if payment.branch_id != snapshot.get("branch_id"):
         return jsonify({"error": "El borrador QR no tiene una sucursal de origen verificable."}), 409
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    origin_branch_active = (
+        int(active_branch_id or 0) == int(payment.branch_id or 0)
+        and (payment.branch_id is not None or active_branch_id is None)
+    )
     approved_at = payment.paid_at or payment.updated_at
     status = (payment.status or "pending").lower()
     if is_stale_pos_draft(payment) and status in {"pending", "in_process", "authorized"}:
@@ -1487,12 +1509,13 @@ def api_mp_qr_status():
         and bool(snapshot.get("items"))
         and bool(snapshot.get("stock_reserved"))
         and not snapshot.get("stock_reservation_released")
+        and origin_branch_active
     )
     return jsonify({
         "payment_id": payment.id,
         "status": status,
         "status_label": (
-            "Pago recibido"
+            ("Pago recibido" if origin_branch_active else "Pago recibido · volvé a la sucursal de origen")
             if status == "approved"
             else "Pago pendiente"
             if status in {"pending", "in_process", "authorized"}
@@ -1506,6 +1529,9 @@ def api_mp_qr_status():
         "operation_number": payment.payment_id or payment.preference_id or f"pos-{payment.id}",
         "approved_at": approved_at.strftime("%Y-%m-%d %H:%M") if approved_at else None,
         "can_process_sale": can_process,
+        "origin_branch_id": payment.branch_id,
+        "origin_branch_active": origin_branch_active,
+        "requires_origin_branch": status == "approved" and not origin_branch_active,
         "sale_id": payload.get("sale_id"),
         "finalize_url": url_for("sales.api_mp_qr_finalize", draft_id=payment.id),
     })
@@ -1578,8 +1604,9 @@ def api_mp_qr_finalize():
     open_session = _require_open_cash_session(json_response=True)
     if isinstance(open_session, tuple):
         return open_session
-    if int(snapshot.get("cash_session_id") or 0) != int(open_session.id):
-        return jsonify({"error": "El QR fue creado con otra caja. Reabrí la caja de origen para finalizar este cobro."}), 409
+    # The originating cash session is retained in the payment snapshot for
+    # audit. A new open session in the SAME branch may finalize an approved QR;
+    # the sale and cash movement will be booked into that currently open session.
     if not items:
         return jsonify({"error": "No hay items para procesar."}), 400
 
