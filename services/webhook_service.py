@@ -1139,47 +1139,74 @@ class WebhookService:
                     if not origin_is_fulfillable:
                         # Expired, legacy or malformed drafts have no live stock
                         # reservation. Never silently create a sale against a new
-                        # branch; refund the late charge instead.
-                        refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
-                        refund_status = str(refund.get("status") or "").strip().lower()
-                        if refund_status not in {"approved", "refunded", "pending", "in_process"}:
-                            raise RuntimeError(
-                                "Mercado Pago no confirmó el reembolso de un cobro QR tardío sin reserva de stock."
-                            )
-                        local_status = (
-                            "refunded"
-                            if refund_status in {"approved", "refunded"}
-                            else "refund_pending"
-                        )
-                        payment.status = local_status
-                        if payment.branch_id:
-                            from services.payment_flow import release_pos_payment_reservation
-                            release_pos_payment_reservation(db_session, payment)
+                        # branch; refund the late charge instead. The payment row
+                        # is locked above, so webhook retries serialize through
+                        # this history check and cannot request duplicate refunds.
                         from app import PaymentHistory
-                        db_session.add(PaymentHistory(
-                            payment_id=payment.id,
-                            company_id=payment.company_id,
-                            event="pos_qr_late_approval_refund",
-                            detail=(
-                                "Se solicitó el reembolso de una aprobación tardía porque el QR ya no "
-                                "conservaba una reserva de stock verificable en su sucursal de origen."
-                            ),
-                            source="mercadopago",
-                            event_id=f"pos-qr-late-refund:{payment.payment_id}",
-                            status=local_status,
-                            payload_json=json.dumps({
-                                "refund_id": refund.get("id"),
+                        refund_event = (
+                            PaymentHistory.query
+                            .filter_by(
+                                payment_id=payment.id,
+                                event="pos_qr_late_approval_refund",
+                            )
+                            .with_for_update()
+                            .first()
+                        )
+                        if refund_event is not None:
+                            local_status = (
+                                str(refund_event.status or previous_payment_status or "refund_pending")
+                                .strip()
+                                .lower()
+                            )
+                            if local_status not in {"refunded", "refund_pending"}:
+                                local_status = "refund_pending"
+                            payment.status = local_status
+                            payment_status = local_status
+                            result = {
+                                "status": "late_pos_qr_refund_already_requested",
+                                "payment_status": local_status,
+                                "event_key": event_key,
+                            }
+                        else:
+                            refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
+                            refund_status = str(refund.get("status") or "").strip().lower()
+                            if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                                raise RuntimeError(
+                                    "Mercado Pago no confirmó el reembolso de un cobro QR tardío sin reserva de stock."
+                                )
+                            local_status = (
+                                "refunded"
+                                if refund_status in {"approved", "refunded"}
+                                else "refund_pending"
+                            )
+                            payment.status = local_status
+                            if payment.branch_id:
+                                from services.payment_flow import release_pos_payment_reservation
+                                release_pos_payment_reservation(db_session, payment)
+                            db_session.add(PaymentHistory(
+                                payment_id=payment.id,
+                                company_id=payment.company_id,
+                                event="pos_qr_late_approval_refund",
+                                detail=(
+                                    "Se solicitó el reembolso de una aprobación tardía porque el QR ya no "
+                                    "conservaba una reserva de stock verificable en su sucursal de origen."
+                                ),
+                                source="mercadopago",
+                                event_id=f"pos-qr-late-refund:{payment.payment_id}",
+                                status=local_status,
+                                payload_json=json.dumps({
+                                    "refund_id": refund.get("id"),
+                                    "refund_status": refund_status,
+                                    "branch_id": payment.branch_id,
+                                }, ensure_ascii=False),
+                            ))
+                            payment_status = local_status
+                            result = {
+                                "status": "late_pos_qr_refunded",
+                                "payment_status": local_status,
                                 "refund_status": refund_status,
-                                "branch_id": payment.branch_id,
-                            }, ensure_ascii=False),
-                        ))
-                        payment_status = local_status
-                        result = {
-                            "status": "late_pos_qr_refunded",
-                            "payment_status": local_status,
-                            "refund_status": refund_status,
-                            "event_key": event_key,
-                        }
+                                "event_key": event_key,
+                            }
                     else:
                         result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
                 else:
