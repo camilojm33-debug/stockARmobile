@@ -1514,7 +1514,11 @@ function updateMpQrPanel(payload) {
     mpQrModalImage.classList.remove('d-none');
   }
   if (mpQrModalStatus) {
-    mpQrModalStatus.textContent = mpQrDraftState.approved ? 'Pago aprobado. Podés finalizar la venta.' : 'Escaneá el QR o abrí Mercado Pago para pagar.';
+    mpQrModalStatus.textContent = mpQrDraftState.approved
+      ? 'Pago aprobado. Podés finalizar la venta.'
+      : payload.status === 'approved'
+        ? (payload.status_label || 'Pago aprobado. Volvé a la sucursal de origen para finalizar.')
+        : 'Escaneá el QR o abrí Mercado Pago para pagar.';
   }
   if (mpQrPanelOpen && mpQrDraftState.checkoutUrl) {
     mpQrPanelOpen.href = mpQrDraftState.checkoutUrl;
