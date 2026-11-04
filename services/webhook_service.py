@@ -12,6 +12,18 @@ from services.referral_service import ReferralService
 from services.subscription_service import SubscriptionService
 
 
+def _merge_pos_draft_payload(existing_payload_json, provider_response):
+    """Preserve the immutable checkout snapshot while storing Mercado Pago's latest response."""
+    try:
+        stored = json.loads(existing_payload_json) if existing_payload_json else {}
+    except (TypeError, ValueError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    stored["provider_response"] = provider_response
+    return json.dumps(stored, ensure_ascii=False)
+
+
 class WebhookService:
     def __init__(self):
         self.mp_service = MercadoPagoService()
@@ -970,7 +982,7 @@ class WebhookService:
                         payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method or "QR Mercado Pago"
                         payment.reference = external_reference or payment.reference
                         payment.provider = "mercadopago_pos"
-                        payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        payment.payload_json = _merge_pos_draft_payload(payment.payload_json, payment_data)
                         payment.paid_at = paid_at or payment.paid_at
                     else:
                         payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=None, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago_pos", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
@@ -1015,7 +1027,11 @@ class WebhookService:
                 payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
                 payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method
                 payment.reference = external_reference or payment.reference
-                payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                payment.payload_json = (
+                    _merge_pos_draft_payload(payment.payload_json, payment_data)
+                    if flow == "pos_sale"
+                    else json.dumps(payment_data, ensure_ascii=False)
+                )
                 payment.paid_at = paid_at or payment.paid_at
 
             subscription = None
@@ -1049,9 +1065,12 @@ class WebhookService:
                         draft_payment.payment_method = payment.payment_method or draft_payment.payment_method or "QR Mercado Pago"
                         draft_payment.provider = "mercadopago_pos"
                         draft_payment.reference = external_reference or draft_payment.reference
-                        draft_payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        draft_payment.payload_json = _merge_pos_draft_payload(draft_payment.payload_json, payment_data)
                         draft_payment.paid_at = paid_at or draft_payment.paid_at
                         payment = draft_payment
+                if str(payment_status or "").strip().lower() in {"rejected", "cancelled", "canceled", "expired", "refunded", "charged_back"}:
+                    from stockarmobile.branch_inventory import release_branch_stock_reservations
+                    release_branch_stock_reservations(payment.id)
                 result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
             elif subscription and company:
                 metadata = payment_data.get("metadata") or {}
