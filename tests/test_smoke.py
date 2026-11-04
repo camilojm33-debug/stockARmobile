@@ -7162,6 +7162,12 @@ def test_webhook_approved_activates_subscription_and_creates_commission_automati
 
         service = WebhookService()
         monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        refunded = []
+        monkeypatch.setattr(
+            service.mp_service,
+            "refund_payment",
+            lambda payment_id: refunded.append(str(payment_id)) or {"id": "refund-legacy-pos", "status": "approved"},
+        )
         monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
 
         result = service.process(
@@ -7612,11 +7618,11 @@ def test_pos_qr_create_early_exception_breaks_before_json_return():
         assert "traceback" not in data
 
 
-def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
+def test_pos_qr_webhook_refunds_legacy_draft_without_origin_branch(monkeypatch):
     from services.webhook_service import WebhookService
 
     with stock_app.app.app_context():
-        from app import Payment, User, WebhookEvent
+        from app import Payment, PaymentHistory, User, WebhookEvent
 
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company is not None
@@ -7645,7 +7651,7 @@ def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
         db.session.commit()
 
         approved_payment = {
-            "id": "mp-pos-1",
+            "id": "123456789",
             "status": "approved",
             "date_last_updated": "2026-07-14T11:00:00Z",
             "date_approved": "2026-07-14T11:00:00Z",
@@ -7672,13 +7678,19 @@ def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
             payload={"id": "evt-pos-1", "type": "payment", "data": {"id": "mp-pos-1"}},
         )
 
-        assert result["status"] == "processed"
+        assert result["status"] == "late_pos_qr_refunded"
+        assert result["payment_status"] == "refunded"
+        assert refunded == ["123456789"]
 
         db.session.refresh(draft_payment)
-        assert draft_payment.payment_id == "mp-pos-1"
-        assert draft_payment.status == "approved"
+        assert draft_payment.payment_id == "123456789"
+        assert draft_payment.status == "refunded"
         assert draft_payment.provider == "mercadopago_pos"
         assert Payment.query.count() == 1
+        assert PaymentHistory.query.filter_by(
+            payment_id=draft_payment.id,
+            event="pos_qr_late_approval_refund",
+        ).count() == 1
         assert WebhookEvent.query.count() == 1
 
         duplicate = service.process(
