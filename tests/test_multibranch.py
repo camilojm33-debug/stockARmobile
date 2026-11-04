@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Subscription, User, db
+from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Quote, Subscription, User, db
 from stockarmobile.branch_inventory import adjust_branch_stock, available_stock, get_branch_stock, set_branch_stock
 from services.ai_agent.usage_service import can_use_commercial_feature
 
@@ -994,3 +994,62 @@ def test_pos_qr_draft_session_key_isolated_by_active_branch(app, monkeypatch):
             selected["branch_id"] = central.id
             assert _pos_qr_draft_session_key() == central_key
         db.session.rollback()
+
+
+def test_ai_vendor_order_and_quote_notifications_are_scoped_to_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from whatsapp_agent import _tenant_ai_order_quote_query
+    from services.notification_service_legacy import _build_recent_quote_acceptance_notifications
+
+    with app.app_context():
+        company = _company("Empresa pedidos IA por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="ai-orders-branch-admin",
+            email="ai-orders-branch-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+        central_quote = Quote(
+            company_id=company.id, branch_id=central.id, created_by_user_id=user.id,
+            observations=marker, status="APROBADO", total_amount=100,
+        )
+        north_quote = Quote(
+            company_id=company.id, branch_id=north.id, created_by_user_id=user.id,
+            observations=marker, status="APROBADO", total_amount=900,
+        )
+        db.session.add_all([central_quote, north_quote])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            order_ids = [row.id for row in _tenant_ai_order_quote_query(company.id).all()]
+            notifications = _build_recent_quote_acceptance_notifications()
+        assert central_quote.id in order_ids
+        assert north_quote.id not in order_ids
+        assert any(f"quote_id={central_quote.id}" in item["href"] for item in notifications)
+        assert all(f"quote_id={north_quote.id}" not in item["href"] for item in notifications)
+        db.session.rollback()
+
+
+def test_pos_qr_access_allows_owner_or_same_tenant_admin_only(app):
+    from types import SimpleNamespace
+    from sales import _pos_qr_user_can_access
+
+    payment = SimpleNamespace(user_id=10)
+    owner = SimpleNamespace(id=10, role="user")
+    other_employee = SimpleNamespace(id=11, role="user")
+    admin = SimpleNamespace(id=12, role="admin")
+    assert _pos_qr_user_can_access(payment, owner) is True
+    assert _pos_qr_user_can_access(payment, other_employee) is False
+    assert _pos_qr_user_can_access(payment, admin) is True
