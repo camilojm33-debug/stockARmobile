@@ -1076,21 +1076,31 @@ class WebhookService:
                     from stockarmobile.branch_inventory import release_branch_stock_reservations
                     release_branch_stock_reservations(payment.id)
                 if str(payment_status or "").strip().lower() == "approved" and payment.branch_id is not None:
+                    from app import Sale
                     from stockarmobile.branch_inventory import ensure_branch_stock_reservations_for_payment
                     try:
-                        ensure_branch_stock_reservations_for_payment(payment)
                         stored_payload = json.loads(payment.payload_json) if payment.payload_json else {}
-                        if isinstance(stored_payload, dict):
-                            stored_payload.pop("pos_stock_reservation_error", None)
-                            payment.payload_json = json.dumps(stored_payload, ensure_ascii=False)
-                    except ValueError as exc:
+                    except (TypeError, ValueError):
+                        stored_payload = {}
+                    if not isinstance(stored_payload, dict):
+                        stored_payload = {}
+                    existing_sale = None
+                    if not stored_payload.get("sale_id"):
+                        existing_sale = Sale.query.filter_by(
+                            company_id=int(payment.company_id),
+                            client_txn_id=f"pos-qr-{int(payment.id)}",
+                        ).first()
+                    if existing_sale is not None:
+                        stored_payload["sale_id"] = int(existing_sale.id)
+                        stored_payload.pop("pos_stock_reservation_error", None)
+                        payment.reference = f"sale_id:{existing_sale.id}"
+                        payment.payload_json = json.dumps(stored_payload, ensure_ascii=False)
+                    elif not stored_payload.get("sale_id"):
                         try:
-                            stored_payload = json.loads(payment.payload_json) if payment.payload_json else {}
-                        except (TypeError, ValueError):
-                            stored_payload = {}
-                        if not isinstance(stored_payload, dict):
-                            stored_payload = {}
-                        stored_payload["pos_stock_reservation_error"] = str(exc)[:500]
+                            ensure_branch_stock_reservations_for_payment(payment)
+                            stored_payload.pop("pos_stock_reservation_error", None)
+                        except ValueError as exc:
+                            stored_payload["pos_stock_reservation_error"] = str(exc)[:500]
                         payment.payload_json = json.dumps(stored_payload, ensure_ascii=False)
                 result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
             elif subscription and company:
