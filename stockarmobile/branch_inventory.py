@@ -77,7 +77,11 @@ def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inac
 
 def available_stock(product, branch_id, *, allow_inactive=False):
     row = get_branch_stock(product, branch_id, allow_inactive=allow_inactive)
-    return float(row.stock or 0) if row is not None else 0.0
+    if row is None:
+        return 0.0
+    physical = Decimal(str(row.stock or 0))
+    reserved = Decimal(str(row.reserved_stock or 0))
+    return float(max(Decimal("0"), physical - reserved))
 
 
 def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None):
@@ -101,8 +105,9 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     for branch_id in sorted((int(source.id), int(target.id))):
         locked_rows[branch_id] = get_branch_stock(product, branch_id, lock=True, create=True)
     source_stock = locked_rows[int(source.id)]
-    if Decimal(str(source_stock.stock or 0)) < amount:
-        raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {source_stock.stock}.")
+    available = Decimal(str(source_stock.stock or 0)) - Decimal(str(source_stock.reserved_stock or 0))
+    if available < amount:
+        raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {max(Decimal('0'), available)}.")
 
     transfer = BranchStockTransfer(
         company_id=company_id,
@@ -176,6 +181,9 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     new = validate_stock_quantity(quantity or 0, label="El stock de sucursal")
     if new < 0:
         raise ValueError("El stock de sucursal debe ser un número finito no negativo.")
+    reserved = Decimal(str(row.reserved_stock or 0))
+    if new < reserved:
+        raise ValueError("El stock físico no puede quedar por debajo de las unidades reservadas para cobros pendientes.")
     row.stock = new
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if new != old:
@@ -223,8 +231,13 @@ def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type
     row = get_branch_stock(product, branch_id, lock=True, create=True, allow_inactive=allow_inactive)
     current = Decimal(str(row.stock or 0))
     updated = current + delta
-    if updated < 0:
-        raise ValueError(f"Stock insuficiente en la sucursal para {product.name}. Disponible: {current}.")
+    reserved = Decimal(str(row.reserved_stock or 0))
+    if updated < reserved:
+        available = max(Decimal("0"), current - reserved)
+        raise ValueError(
+            f"Stock insuficiente en la sucursal para {product.name}. "
+            f"Disponible sin reservas: {available}."
+        )
     row.stock = updated
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if update_company_total:
@@ -235,3 +248,40 @@ def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type
         movement_type=movement_type, quantity_delta=delta, stock_after=updated,
         source_type=source_type, source_id=source_id, user_id=user_id, note=note))
     return row
+
+def reserve_branch_stock(product, branch_id, quantity, *, note=None):
+    """Reserve physical stock for a pending POS checkout without changing on-hand stock."""
+    amount = validate_stock_quantity(quantity, label="La cantidad a reservar")
+    if amount <= 0:
+        raise ValueError("La cantidad a reservar debe ser mayor que cero.")
+    lock_product_stock_row(product)
+    row = get_branch_stock(product, branch_id, lock=True, create=True)
+    physical = Decimal(str(row.stock or 0))
+    reserved = Decimal(str(row.reserved_stock or 0))
+    available = physical - reserved
+    if available < amount:
+        raise ValueError(
+            f"Stock insuficiente para reservar {product.name}. "
+            f"Disponible: {max(Decimal('0'), available)}."
+        )
+    row.reserved_stock = reserved + amount
+    return row
+
+
+def release_branch_stock_reservation(product, branch_id, quantity):
+    """Release a previously-created reservation; caller provides idempotency."""
+    amount = validate_stock_quantity(quantity, label="La cantidad a liberar")
+    if amount <= 0:
+        raise ValueError("La cantidad a liberar debe ser mayor que cero.")
+    lock_product_stock_row(product)
+    row = get_branch_stock(product, branch_id, lock=True, create=False, allow_inactive=True)
+    if row is None:
+        raise ValueError("No se encontró el saldo reservado para liberar.")
+    reserved = Decimal(str(row.reserved_stock or 0))
+    if reserved < amount:
+        raise ValueError(
+            f"La reserva de {product.name} cambió antes de poder liberarse."
+        )
+    row.reserved_stock = reserved - amount
+    return row
+
