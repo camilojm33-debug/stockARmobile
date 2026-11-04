@@ -1387,7 +1387,7 @@ def test_pos_webhook_approval_preserves_a_valid_branch_reserved_draft(app, monke
         db.session.commit()
 
         approved_payment = {
-            "id": "123456789",
+            "id": "987654321012345678",
             "status": "approved",
             "date_last_updated": "2026-11-03T20:30:00Z",
             "date_approved": "2026-11-03T20:30:00Z",
@@ -1417,7 +1417,7 @@ def test_pos_webhook_approval_preserves_a_valid_branch_reserved_draft(app, monke
         result = service.process(
             db_session=db.session,
             headers={"x-request-id": "rq-qr-branch-1", "x-signature": "ts=1,v1=abc"},
-            payload={"id": "evt-qr-branch-1", "type": "payment", "data": {"id": "123456789"}},
+            payload={"id": "evt-qr-branch-1", "type": "payment", "data": {"id": "987654321012345678"}},
         )
         db.session.refresh(draft)
         stored = json.loads(draft.payload_json)
