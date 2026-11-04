@@ -131,6 +131,9 @@ def _record_commercial_campaign_status(status_rows):
 
 
 def _get_or_create_conversation(company_id: int, sender: str):
+    from stockarmobile.branch_context import get_default_branch_id
+
+    default_branch_id = get_default_branch_id(company_id)
     agent = choose_agent(company_id, channel="whatsapp")
     conversation = db.session.query(Conversation).filter(
         Conversation.company_id == company_id,
@@ -139,9 +142,18 @@ def _get_or_create_conversation(company_id: int, sender: str):
         Conversation.external_conversation_id == sender,
     ).first()
     if conversation is None:
-        conversation = Conversation(company_id=company_id, agent_id=agent.id, channel="whatsapp", external_conversation_id=sender, metadata_json={"whatsapp_user": sender})
+        conversation = Conversation(
+            company_id=company_id,
+            branch_id=default_branch_id,
+            agent_id=agent.id,
+            channel="whatsapp",
+            external_conversation_id=sender,
+            metadata_json={"whatsapp_user": sender},
+        )
         db.session.add(conversation)
         db.session.flush()
+    elif conversation.branch_id is None and default_branch_id is not None:
+        conversation.branch_id = default_branch_id
     return conversation
 
 
@@ -790,6 +802,10 @@ def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, 
         agent_id=int(agent.id),
         channel="whatsapp",
     )
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        query = query.filter(Conversation.branch_id == int(active_branch_id))
     if lock:
         query = query.with_for_update()
     return query.first()
@@ -873,9 +889,15 @@ def ai_whatsapp_attention():
     if state not in {"all", "pending", "human", "ai", "resolved"}:
         state = "pending"
 
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    conversations_query = db.session.query(Conversation).filter_by(
+        company_id=company_id, agent_id=int(agent.id), channel="whatsapp"
+    )
+    if active_branch_id is not None:
+        conversations_query = conversations_query.filter(Conversation.branch_id == int(active_branch_id))
     conversations = (
-        db.session.query(Conversation)
-        .filter_by(company_id=company_id, agent_id=int(agent.id), channel="whatsapp")
+        conversations_query
         .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
         .limit(200)
         .all()
