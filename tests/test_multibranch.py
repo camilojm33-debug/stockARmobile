@@ -1053,3 +1053,16 @@ def test_pos_qr_access_allows_owner_or_same_tenant_admin_only(app):
     assert _pos_qr_user_can_access(payment, owner) is True
     assert _pos_qr_user_can_access(payment, other_employee) is False
     assert _pos_qr_user_can_access(payment, admin) is True
+
+
+def test_vendor_whatsapp_conversations_are_attached_to_default_fulfillment_branch(app):
+    from stockarmobile.models.conversations import Conversation
+    from whatsapp_agent import _get_or_create_conversation
+
+    with app.app_context():
+        company = _company("Empresa conversación WhatsApp por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        _branch(company, "Sucursal Norte", "NORTE")
+        conversation = _get_or_create_conversation(company.id, "5491112345678")
+        assert conversation.branch_id == central.id
+        db.session.commit()
