@@ -250,8 +250,7 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency, branch_id=None, 
                 "barcode": item.get("barcode") or "",
             }
         )
-    cart_hash = hashlib.sha256(json.dumps(normalized_items, sort_keys=True).encode("utf-8")).hexdigest()
-    return {
+    snapshot = {
         "items": normalized_items,
         "branch_id": int(branch_id) if branch_id is not None else None,
         "cash_session_id": int(cash_session_id) if cash_session_id is not None else None,
@@ -278,8 +277,21 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency, branch_id=None, 
         "charges_json": payload.get("charges_json"),
         "total_amount": float(total_amount),
         "currency": currency,
-        "cart_hash": cart_hash,
     }
+    # Reuse a pending QR only when the complete commercial snapshot is equal.
+    # This prevents a changed customer, discount, tax or surcharge from
+    # accidentally reusing a payment with a different amount. The current cash
+    # session is intentionally excluded so an approved pending QR can survive
+    # a same-branch cash-session rollover.
+    hash_payload = {
+        key: value
+        for key, value in snapshot.items()
+        if key not in {"cash_session_id", "stock_reservation_released"}
+    }
+    snapshot["cart_hash"] = hashlib.sha256(
+        json.dumps(hash_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return snapshot
 
 
 def _qr_data_uri(content: str) -> str:
