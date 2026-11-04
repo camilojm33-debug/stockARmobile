@@ -1142,9 +1142,10 @@ class BranchStockTransfer(db.Model):
     __tablename__ = "branch_stock_transfers"
     __table_args__ = (
         Index("ix_branch_stock_transfers_company_created", "company_id", "created_at"),
-        UniqueConstraint(
+        Index(
+            "uq_branch_transfer_operation_product",
             "company_id", "operation_key", "product_id",
-            name="uq_branch_transfer_operation_product",
+            unique=True,
         ),
     )
     id = db.Column(db.Integer, primary_key=True)
