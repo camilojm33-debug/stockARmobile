@@ -84,7 +84,7 @@ def available_stock(product, branch_id, *, allow_inactive=False):
     return float(max(Decimal("0"), physical - reserved))
 
 
-def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None):
+def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None, operation_key=None):
     """Move units between branches atomically; company aggregate stock is unchanged."""
     from decimal import Decimal, InvalidOperation
     from app import Branch, BranchStockTransfer, db
@@ -115,6 +115,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
         target_branch_id=target.id,
         product_id=product.id,
         quantity=amount,
+        operation_key=(str(operation_key).strip()[:80] or None) if operation_key else None,
         note=(str(note or "").strip()[:255] or None),
         created_by_user_id=user_id,
     )
@@ -133,7 +134,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     return transfer
 
 
-def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None):
+def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None, operation_key=None):
     """Transfer several products in one caller-controlled database transaction.
 
     Products are locked in ascending ID order so concurrent multi-product
@@ -155,12 +156,50 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
         seen_product_ids.add(product_id)
         normalized.append((product_id, product, quantity))
 
+    if operation_key is not None:
+        operation_key = str(operation_key).strip()
+        if not operation_key or len(operation_key) > 80:
+            raise ValueError("La clave de operación de la transferencia no es válida.")
+
     if not normalized:
         raise ValueError("Agregá al menos un producto a la transferencia.")
     if len(normalized) > 100:
         raise ValueError("Una transferencia puede incluir hasta 100 productos por operación.")
 
     normalized.sort(key=lambda row: row[0])
+    normalized_quantities = {
+        product_id: validate_stock_quantity(quantity, label="La cantidad de transferencia")
+        for product_id, _product, quantity in normalized
+    }
+    if any(quantity <= 0 for quantity in normalized_quantities.values()):
+        raise ValueError("La cantidad de transferencia debe ser mayor que cero.")
+
+    if operation_key:
+        from app import BranchStockTransfer
+        existing = (
+            BranchStockTransfer.query
+            .filter_by(company_id=int(normalized[0][1].company_id), operation_key=operation_key)
+            .order_by(BranchStockTransfer.product_id.asc())
+            .all()
+        )
+        if existing:
+            expected_ids = set(normalized_quantities)
+            existing_ids = {int(row.product_id) for row in existing}
+            matches = (
+                existing_ids == expected_ids
+                and all(
+                    int(row.source_branch_id) == int(source_branch_id)
+                    and int(row.target_branch_id) == int(target_branch_id)
+                    and validate_stock_quantity(row.quantity) == normalized_quantities[int(row.product_id)]
+                    for row in existing
+                )
+            )
+            if not matches:
+                raise ValueError(
+                    "La clave de esta solicitud ya fue utilizada para una transferencia diferente."
+                )
+            return existing
+
     transfers = []
     for _product_id, product, quantity in normalized:
         transfers.append(transfer_branch_stock(
@@ -170,6 +209,7 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
             quantity,
             user_id=user_id,
             note=note,
+            operation_key=operation_key,
         ))
     return transfers
 
