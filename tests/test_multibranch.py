@@ -1169,6 +1169,8 @@ def test_qr_payment_status_is_hidden_from_other_users_and_branches(app, monkeypa
             active=True,
             company_id=company.id,
         )
+        db.session.add_all([owner, other])
+        db.session.flush()
         payment = Payment(
             company_id=company.id,
             branch_id=central.id,
@@ -1182,7 +1184,7 @@ def test_qr_payment_status_is_hidden_from_other_users_and_branches(app, monkeypa
                 "snapshot": {"branch_id": central.id, "items": [{"productId": 1, "quantity": 1}]},
             }),
         )
-        db.session.add_all([owner, other, payment])
+        db.session.add(payment)
         db.session.commit()
 
         monkeypatch.setattr(
