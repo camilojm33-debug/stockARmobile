@@ -238,11 +238,27 @@ def _context():
         if getattr(current_user, "role", None) in {"admin", "superadmin"}
         else get_active_branch_id()
     )
-    # Administrators receive consolidated company KPIs; employees receive
-    # branch-scoped operational metrics. Conversations have no reliable branch
-    # identifier and therefore remain company-wide.
-    conversations = Conversation.query.filter(Conversation.company_id == company_id, Conversation.created_at >= month_start).count()
-    clients_attended = db.session.query(Conversation.external_conversation_id).filter(Conversation.company_id == company_id, Conversation.created_at >= month_start, Conversation.external_conversation_id.isnot(None)).distinct().count()
+    # Conversations have no reliable branch assignment yet. Keep those
+    # company-wide counts private to administrators instead of exposing totals
+    # from other branches to employees.
+    if active_branch_id is None:
+        conversations = Conversation.query.filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+        ).count()
+        clients_attended = (
+            db.session.query(Conversation.external_conversation_id)
+            .filter(
+                Conversation.company_id == company_id,
+                Conversation.created_at >= month_start,
+                Conversation.external_conversation_id.isnot(None),
+            )
+            .distinct()
+            .count()
+        )
+    else:
+        conversations = None
+        clients_attended = None
     quotes_query = Quote.query.filter(Quote.company_id == company_id, Quote.created_at >= month_start)
     sales_month = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= month_start, Sale.status.notin_(["cancelada", "anulada"]))
     sales_previous = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= previous_start, Sale.created_at < month_start, Sale.status.notin_(["cancelada", "anulada"]))
