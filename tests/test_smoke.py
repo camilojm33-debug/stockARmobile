@@ -92,7 +92,7 @@ def seed():
 
     db.session.add(
         Product(
-            barcode="123456789012",
+            barcode="987654321012345678012",
             name="Yerba kilo",
             price=18000,
             cost_price=10000,
@@ -2939,7 +2939,7 @@ def test_product_barcode_preserves_leading_zeroes_on_create():
     response = client.post(
         "/productos/add",
         data={
-            "barcode": "0012345678905",
+            "barcode": "0098765432101234567805",
             "name": "Producto codigo escaneado",
             "sale_type": "unidad",
             "unit_measure": "u",
@@ -2953,9 +2953,9 @@ def test_product_barcode_preserves_leading_zeroes_on_create():
     assert response.status_code in (301, 302)
 
     with stock_app.app.app_context():
-        product = Product.query.filter_by(barcode="0012345678905").first()
+        product = Product.query.filter_by(barcode="0098765432101234567805").first()
         assert product is not None
-        assert product.barcode == "0012345678905"
+        assert product.barcode == "0098765432101234567805"
 
 
 def test_product_edit_keeps_own_barcode_and_rejects_tenant_duplicate():
@@ -2964,7 +2964,7 @@ def test_product_edit_keeps_own_barcode_and_rejects_tenant_duplicate():
 
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
-        target = Product.query.filter_by(company_id=company.id, barcode="123456789012").first()
+        target = Product.query.filter_by(company_id=company.id, barcode="987654321012345678012").first()
         assert target is not None
         duplicate = Product(
             barcode="EDIT-DUPLICATE-001",
@@ -2994,14 +2994,14 @@ def test_product_edit_keeps_own_barcode_and_rejects_tenant_duplicate():
     }
     same_code = client.post(
         f"/productos/edit/{target_id}",
-        data={**base_form, "barcode": "123456789012"},
+        data={**base_form, "barcode": "987654321012345678012"},
         follow_redirects=False,
     )
     assert same_code.status_code in (301, 302)
 
     changed_code = client.post(
         f"/productos/edit/{target_id}",
-        data={**base_form, "barcode": "0012345678905"},
+        data={**base_form, "barcode": "0098765432101234567805"},
         follow_redirects=False,
     )
     assert changed_code.status_code in (301, 302)
@@ -3016,7 +3016,7 @@ def test_product_edit_keeps_own_barcode_and_rejects_tenant_duplicate():
     with stock_app.app.app_context():
         target = db.session.get(Product, target_id)
         assert target is not None
-        assert target.barcode == "0012345678905"
+        assert target.barcode == "0098765432101234567805"
 
 
 def test_pos_barcode_lookup_is_tenant_scoped_and_preserves_string_code():
@@ -3032,20 +3032,20 @@ def test_pos_barcode_lookup_is_tenant_scoped_and_preserves_string_code():
         user_b.set_password("admin123")
         db.session.add_all([
             user_b,
-            Product(barcode="0012345678905", name="Producto Scanner A", price=100, cost_price=50, stock=3, min_stock=0, active=True, company_id=company_a.id),
-            Product(barcode="0012345678905", name="Producto Scanner B", price=200, cost_price=100, stock=3, min_stock=0, active=True, company_id=company_b.id),
+            Product(barcode="0098765432101234567805", name="Producto Scanner A", price=100, cost_price=50, stock=3, min_stock=0, active=True, company_id=company_a.id),
+            Product(barcode="0098765432101234567805", name="Producto Scanner B", price=200, cost_price=100, stock=3, min_stock=0, active=True, company_id=company_b.id),
         ])
         db.session.commit()
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
-    first = client.get("/productos/api/0012345678905")
+    first = client.get("/productos/api/0098765432101234567805")
     assert first.status_code == 200
     assert first.get_json()["name"] == "Producto Scanner A"
     assert client.get("/productos/api/CODIGO-INEXISTENTE").status_code == 404
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "scanner_tenant_b", "password": "admin123"})
-    second = client.get("/productos/api/0012345678905")
+    second = client.get("/productos/api/0098765432101234567805")
     assert second.status_code == 200
     assert second.get_json()["name"] == "Producto Scanner B"
 
@@ -3287,14 +3287,14 @@ def test_product_edit_reciprocal_calculation():
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
     with stock_app.app.app_context():
-        product = Product.query.filter_by(barcode="123456789012").first()
+        product = Product.query.filter_by(barcode="987654321012345678012").first()
         assert product is not None
         product_id = product.id
 
     edit_by_percent = client.post(
         f"/productos/edit/{product_id}",
         data={
-            "barcode": "123456789012",
+            "barcode": "987654321012345678012",
             "name": "Yerba kilo",
             "sale_type": "unidad",
             "unit_measure": "u",
@@ -3323,7 +3323,7 @@ def test_product_edit_reciprocal_calculation():
     edit_by_price = client.post(
         f"/productos/edit/{product_id}",
         data={
-            "barcode": "123456789012",
+            "barcode": "987654321012345678012",
             "name": "Yerba kilo",
             "sale_type": "unidad",
             "unit_measure": "u",
@@ -3352,7 +3352,7 @@ def test_product_edit_reciprocal_calculation():
     edit_by_margin = client.post(
         f"/productos/edit/{product_id}",
         data={
-            "barcode": "123456789012",
+            "barcode": "987654321012345678012",
             "name": "Yerba kilo",
             "sale_type": "unidad",
             "unit_measure": "u",
@@ -3442,7 +3442,7 @@ def test_company_can_save_qr_payment_settings():
             "social_facebook": "https://facebook.com/empresa-demo",
             "social_instagram": "https://instagram.com/empresa-demo",
             "payment_alias": "negocio.demo",
-            "payment_cbu": "1234567890123456789012",
+            "payment_cbu": "9876543210123456780987654321012345678012",
             "payment_cvu": "0001234500001234500001",
             "payment_qr_text": "Cobro caja principal",
             "payment_qr_url": "https://example.com/pago",
@@ -3456,7 +3456,7 @@ def test_company_can_save_qr_payment_settings():
         assert company is not None
         company_id = company.id
         assert company.payment_alias == "negocio.demo"
-        assert company.payment_cbu == "1234567890123456789012"
+        assert company.payment_cbu == "9876543210123456780987654321012345678012"
         assert company.payment_cvu == "0001234500001234500001"
         assert company.payment_qr_text == "Cobro caja principal"
         assert company.payment_qr_url == "https://example.com/pago"
@@ -7388,7 +7388,7 @@ def test_pos_qr_create_generates_qr_and_reuses_pending_draft(monkeypatch):
         monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
 
         payload = {
-            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "987654321012345678012"}],
             "client_id": "",
             "document_type": "venta",
             "note": "",
@@ -7515,7 +7515,7 @@ def test_pos_qr_create_requires_selected_pos_when_catalog_available(monkeypatch)
 
         headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
         base_payload = {
-            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "987654321012345678012"}],
             "client_id": "",
             "document_type": "venta",
             "note": "",
@@ -7570,7 +7570,7 @@ def test_pos_qr_create_returns_real_exception_traceback(monkeypatch):
 
         headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
         payload = {
-            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "987654321012345678012"}],
             "client_id": "",
             "document_type": "venta",
             "note": "",
@@ -7651,7 +7651,7 @@ def test_pos_qr_webhook_refunds_legacy_draft_without_origin_branch(monkeypatch):
         db.session.commit()
 
         approved_payment = {
-            "id": "123456789",
+            "id": "987654321012345678",
             "status": "approved",
             "date_last_updated": "2026-07-14T11:00:00Z",
             "date_approved": "2026-07-14T11:00:00Z",
@@ -7680,10 +7680,10 @@ def test_pos_qr_webhook_refunds_legacy_draft_without_origin_branch(monkeypatch):
 
         assert result["status"] == "late_pos_qr_refunded"
         assert result["payment_status"] == "refunded"
-        assert refunded == ["123456789"]
+        assert refunded == ["987654321012345678"]
 
         db.session.refresh(draft_payment)
-        assert draft_payment.payment_id == "123456789"
+        assert draft_payment.payment_id == "987654321012345678"
         assert draft_payment.status == "refunded"
         assert draft_payment.provider == "mercadopago_pos"
         assert Payment.query.count() == 1
@@ -7918,7 +7918,7 @@ def test_pos_qr_create_uses_company_connected_token(monkeypatch):
         monkeypatch.setattr(MercadoPagoService, "create_pos_checkout_preference", fake_create_pos_checkout_preference)
 
         payload = {
-            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "987654321012345678012"}],
             "client_id": "",
             "document_type": "venta",
             "note": "",
@@ -8856,8 +8856,8 @@ def test_products_import_accepts_shuffled_columns_and_human_headers():
         sheet = workbook.active
         sheet.title = "Carga"
         sheet.append(["Precio de venta unitario", "Columna extra", "Nombre del artículo", "Existencia actual", "Código de Barra / EAN", "Costo unitario"])
-        sheet.append(["$ 4.250,50", "ignorar", "Aceite Girasol 900ml", "12", "7791234567890", "2.300,25"])
-        sheet.append(["5250.00", "ignorar", "Arroz 1 kg", "8", "7791234567891", "3100.00"])
+        sheet.append(["$ 4.250,50", "ignorar", "Aceite Girasol 900ml", "12", "7799876543210123456780", "2.300,25"])
+        sheet.append(["5250.00", "ignorar", "Arroz 1 kg", "8", "7799876543210123456781", "3100.00"])
 
         response = client.post(
             "/productos/import",
@@ -8868,8 +8868,8 @@ def test_products_import_accepts_shuffled_columns_and_human_headers():
 
         assert response.status_code == 200
 
-        aceite = Product.query.filter_by(barcode="7791234567890").first()
-        arroz = Product.query.filter_by(barcode="7791234567891").first()
+        aceite = Product.query.filter_by(barcode="7799876543210123456780").first()
+        arroz = Product.query.filter_by(barcode="7799876543210123456781").first()
         assert aceite is not None
         assert arroz is not None
         assert aceite.name == "Aceite Girasol 900ml"
