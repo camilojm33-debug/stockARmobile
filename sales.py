@@ -1523,10 +1523,6 @@ def api_mp_qr_finalize():
     if not draft_id:
         return jsonify({"error": "draft_id requerido"}), 400
 
-    open_session = _require_open_cash_session(json_response=True)
-    if isinstance(open_session, tuple):
-        return open_session
-
     payment = _authorized_pos_qr_payment(draft_id, lock=True)
     if payment.branch_id is None:
         return jsonify({"error": "Este cobro QR no tiene una sucursal de origen verificable y requiere revisión administrativa."}), 409
@@ -1579,6 +1575,9 @@ def api_mp_qr_finalize():
         return jsonify({"error": "Este cobro no conserva una reserva de stock activa y verificable."}), 409
     if int(snapshot.get("cash_session_id") or 0) <= 0:
         return jsonify({"error": "El borrador QR no conserva la caja de origen."}), 409
+    open_session = _require_open_cash_session(json_response=True)
+    if isinstance(open_session, tuple):
+        return open_session
     if int(snapshot.get("cash_session_id") or 0) != int(open_session.id):
         return jsonify({"error": "El QR fue creado con otra caja. Reabrí la caja de origen para finalizar este cobro."}), 409
     if not items:
@@ -1637,6 +1636,9 @@ def api_mp_qr_finalize():
     else:
         data = result
     if not isinstance(data, dict) or not data.get("sale_id"):
+        # SaleService can return a validation/cash error without committing;
+        # restore the reservation release so the approved QR remains retryable.
+        db.session.rollback()
         return result
 
     sale_id = data["sale_id"]
