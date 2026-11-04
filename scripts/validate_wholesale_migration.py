@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261102_01_multibranch_opening"
+HEAD_REVISION = "20261103_01_pos_qr_multibranch"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -99,9 +99,10 @@ def main() -> None:
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
             # Remove tables/columns introduced by multisucursal so the revision must
             # create them as it would on an existing production tenant.
+            connection.execute(text("DROP TABLE IF EXISTS \"branch_stock_reservations\" CASCADE"))
             for table_name in ("branch_stock_transfers", "branch_stock_movements", "branch_stock", "user_branch_access", "branches"):
                 connection.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
-            for table_name in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents"):
+            for table_name in ("sales", "purchase_orders", "cash_sessions", "cash_movements", "expenses", "business_documents", "payments", "conversations"):
                 connection.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
             connection.execute(text('ALTER TABLE "plans" DROP COLUMN IF EXISTS "max_branches" CASCADE'))
             for table_name, columns in (
@@ -213,6 +214,15 @@ def main() -> None:
                 migration_module.upgrade()
         _progress("Direct second execution of opening-ledger migration completed")
 
+        qr_migration_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "versions", "20261103_01_pos_qr_multibranch.py")
+        qr_migration_spec = importlib.util.spec_from_file_location("pos_qr_multibranch_migration", qr_migration_path)
+        qr_migration_module = importlib.util.module_from_spec(qr_migration_spec)
+        qr_migration_spec.loader.exec_module(qr_migration_module)
+        with db.engine.begin() as connection:
+            with Operations.context(MigrationContext.configure(connection)):
+                qr_migration_module.upgrade()
+        _progress("Direct second execution of POS QR multisucursal migration completed")
+
         _progress("Inspecting migrated schema, columns, tables and constraints")
         inspector = inspect(db.engine)
         expected_columns = {
@@ -227,6 +237,9 @@ def main() -> None:
             "cash_movements": {"branch_id"},
             "expenses": {"branch_id"},
             "business_documents": {"branch_id"},
+            "payments": {"branch_id"},
+            "conversations": {"branch_id"},
+            "branch_stock_transfers": {"request_key"},
             "plans": {"max_branches"},
         }
         for table_name, expected in expected_columns.items():
@@ -235,7 +248,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers", "branch_stock_reservations"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")

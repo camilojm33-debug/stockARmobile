@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Subscription, User, db
+from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Quote, Subscription, User, db
 from stockarmobile.branch_inventory import adjust_branch_stock, available_stock, get_branch_stock, set_branch_stock
 from services.ai_agent.usage_service import can_use_commercial_feature
 
@@ -960,3 +960,284 @@ def test_company_settings_branch_panel_keeps_render_context_and_jinja_defaults_s
     assert "active_branch_count=active_branch_count" in company_billing
     assert "branch_user_access.get(branch.id, [])" in settings_template
     assert "branch_user_access.get(branch.id, set())" not in settings_template
+
+
+def test_pos_qr_draft_session_key_isolated_by_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _pos_qr_draft_session_key
+
+    with app.app_context():
+        company = _company("Empresa borrador QR por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="qr-branch-owner",
+            email="qr-branch-owner@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.commit()
+        selected = {"branch_id": central.id}
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: selected["branch_id"],
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            central_key = _pos_qr_draft_session_key()
+            selected["branch_id"] = north.id
+            north_key = _pos_qr_draft_session_key()
+            assert central_key != north_key
+            selected["branch_id"] = central.id
+            assert _pos_qr_draft_session_key() == central_key
+        db.session.rollback()
+
+
+def test_ai_vendor_order_and_quote_notifications_are_scoped_to_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from whatsapp_agent import _tenant_ai_order_quote_query
+    from services.notification_service_legacy import _build_recent_quote_acceptance_notifications
+
+    with app.app_context():
+        company = _company("Empresa pedidos IA por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="ai-orders-branch-admin",
+            email="ai-orders-branch-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+        central_quote = Quote(
+            company_id=company.id, branch_id=central.id, created_by_user_id=user.id,
+            observations=marker, status="APROBADO", total_amount=100,
+        )
+        north_quote = Quote(
+            company_id=company.id, branch_id=north.id, created_by_user_id=user.id,
+            observations=marker, status="APROBADO", total_amount=900,
+        )
+        db.session.add_all([central_quote, north_quote])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            order_ids = [row.id for row in _tenant_ai_order_quote_query(company.id).all()]
+            notifications = _build_recent_quote_acceptance_notifications()
+        assert central_quote.id in order_ids
+        assert north_quote.id not in order_ids
+        assert any(f"quote_id={central_quote.id}" in item["href"] for item in notifications)
+        assert all(f"quote_id={north_quote.id}" not in item["href"] for item in notifications)
+        db.session.rollback()
+
+
+def test_pos_qr_access_allows_owner_or_same_tenant_admin_only(app):
+    from types import SimpleNamespace
+    from sales import _pos_qr_user_can_access
+
+    payment = SimpleNamespace(user_id=10)
+    owner = SimpleNamespace(id=10, role="user")
+    other_employee = SimpleNamespace(id=11, role="user")
+    admin = SimpleNamespace(id=12, role="admin")
+    assert _pos_qr_user_can_access(payment, owner) is True
+    assert _pos_qr_user_can_access(payment, other_employee) is False
+    assert _pos_qr_user_can_access(payment, admin) is True
+
+
+def test_vendor_whatsapp_conversations_are_attached_to_default_fulfillment_branch(app):
+    from stockarmobile.models.conversations import Conversation
+    from whatsapp_agent import _get_or_create_conversation
+
+    with app.app_context():
+        company = _company("Empresa conversación WhatsApp por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        _branch(company, "Sucursal Norte", "NORTE")
+        conversation = _get_or_create_conversation(company.id, "5491112345678")
+        assert conversation.branch_id == central.id
+        db.session.commit()
+
+
+def test_vendor_whatsapp_attention_rejects_conversation_from_another_branch(app, monkeypatch):
+    from flask_login import login_user
+    from stockarmobile.models.conversations import Conversation
+    from services.ai_agent.config_service import choose_agent
+    from whatsapp_agent import _get_or_create_conversation, _tenant_vendor_whatsapp_conversation
+
+    with app.app_context():
+        company = _company("Empresa atención WhatsApp aislada")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="whatsapp-branch-admin",
+            email="whatsapp-branch-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        agent = choose_agent(company.id, channel="whatsapp")
+        central_conversation = _get_or_create_conversation(company.id, "5491111111111")
+        north_conversation = Conversation(
+            company_id=company.id,
+            branch_id=north.id,
+            agent_id=agent.id,
+            channel="whatsapp",
+            external_conversation_id="5492222222222",
+            metadata_json={},
+        )
+        db.session.add(north_conversation)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            assert _tenant_vendor_whatsapp_conversation(company.id, central_conversation.id) is not None
+            assert _tenant_vendor_whatsapp_conversation(company.id, north_conversation.id) is None
+        db.session.rollback()
+
+
+def test_backup_inventory_restore_preserves_live_qr_reservations(app):
+    from app import BranchStock, BranchStockReservation, Payment
+    from services.backup_service import BackupService
+    from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+
+    with app.app_context():
+        company = _company("Empresa backup con QR pendiente")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="BKP-QR-001", name="Producto QR backup",
+            stock=12, min_stock=1, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        set_branch_stock(product, north.id, Decimal("5"))
+        payment = Payment(
+            company_id=company.id, user_id=None, branch_id=north.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:backup",
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, Decimal("3"))], north.id)
+        db.session.flush()
+
+        snapshot = {
+            "company_id": company.id,
+            "branch_stock": [
+                {"company_id": company.id, "branch_id": central.id, "product_id": product.id,
+                 "stock": "7.000", "min_stock": "1.000", "reserved_stock": "0.000"},
+                {"company_id": company.id, "branch_id": north.id, "product_id": product.id,
+                 "stock": "5.000", "min_stock": "1.000", "reserved_stock": "0.000"},
+            ],
+            "branch_stock_movements": [],
+            "branch_stock_transfers": [],
+        }
+
+        north_row = BranchStock.query.filter_by(branch_id=north.id, product_id=product.id).one()
+        north_row.stock = Decimal("4.000")
+        # Product.stock is restored from the selected backup before this helper runs.
+        product.stock = 12
+        db.session.flush()
+
+        BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
+        db.session.flush()
+
+        db.session.refresh(north_row)
+        reservation = BranchStockReservation.query.filter_by(payment_id=payment.id).one()
+        assert reservation.status == "reserved"
+        assert north_row.reserved_stock == Decimal("3.000")
+        assert north_row.stock == Decimal("5.000")
+        assert available_stock(product, north.id) == 2.0
+        assert float(product.stock) == 12.0
+        db.session.rollback()
+
+
+def test_backup_inventory_restore_rejects_balance_below_live_qr_reservations(app):
+    from app import BranchStock, Payment
+    from services.backup_service import BackupService
+    from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+
+    with app.app_context():
+        company = _company("Empresa backup QR insuficiente")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="BKP-QR-002", name="Producto QR insuficiente",
+            stock=12, min_stock=1, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        set_branch_stock(product, north.id, Decimal("5"))
+        payment = Payment(
+            company_id=company.id, user_id=None, branch_id=north.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:backup-low",
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, Decimal("3"))], north.id)
+        db.session.flush()
+
+        snapshot = {
+            "company_id": company.id,
+            "branch_stock": [
+                {"company_id": company.id, "branch_id": central.id, "product_id": product.id,
+                 "stock": "7.000", "min_stock": "1.000"},
+                {"company_id": company.id, "branch_id": north.id, "product_id": product.id,
+                 "stock": "2.000", "min_stock": "1.000"},
+            ],
+            "branch_stock_movements": [],
+            "branch_stock_transfers": [],
+        }
+
+        with pytest.raises(ValueError, match="reservadas para cobros QR"):
+            BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
+        db.session.rollback()
+
+
+def test_ai_critical_stock_counts_only_units_not_reserved_by_qr(app):
+    from app import Payment
+    from ai_agents import _count_critical_stock
+    from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+
+    with app.app_context():
+        company = _company("Empresa stock crítico con reservas QR")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        product = Product(
+            company_id=company.id, barcode="AI-QR-CRIT-001",
+            name="Producto reservado", stock=10, min_stock=4, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        payment = Payment(
+            company_id=company.id, user_id=None, branch_id=central.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:critical",
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, Decimal("4"))], central.id)
+        db.session.commit()
+
+        assert _count_critical_stock(company.id, branch_id=central.id) == 1
+        db.session.rollback()

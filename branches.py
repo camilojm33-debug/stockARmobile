@@ -331,7 +331,7 @@ def search_transfer_products():
 def transfer_stock():
     import json
     from decimal import Decimal, InvalidOperation
-    from app import Product
+    from app import Product, BranchStockTransfer
 
     company_id = _company_id()
     company = Company.query.filter_by(id=company_id, active=True).first_or_404()
@@ -400,10 +400,42 @@ def transfer_stock():
                 raise ValueError("La cantidad de transferencia no es válida.") from None
             transfer_items = [(product, quantity)]
 
+        request_key = (request.form.get("request_key") or "").strip()[:80]
+        if request_key:
+            existing_transfers = (
+                BranchStockTransfer.query.filter_by(
+                    company_id=int(company_id), request_key=request_key
+                ).order_by(BranchStockTransfer.product_id.asc()).all()
+            )
+            if existing_transfers:
+                expected = {
+                    int(product.id): Decimal(str(quantity))
+                    for product, quantity in transfer_items
+                }
+                recorded = {
+                    int(row.product_id): Decimal(str(row.quantity))
+                    for row in existing_transfers
+                }
+                same_request = (
+                    len(recorded) == len(expected)
+                    and recorded == expected
+                    and all(
+                        int(row.source_branch_id) == int(source.id)
+                        and int(row.target_branch_id) == int(target.id)
+                        and int(row.created_by_user_id or 0) == int(current_user.id)
+                        for row in existing_transfers
+                    )
+                )
+                if same_request:
+                    flash("Esta solicitud de transferencia ya fue procesada. No se volvió a mover stock.", "info")
+                    return redirect(_safe_return_path(request.form.get("return_to"), fallback=url_for("company_billing.company_settings", panel="branches")))
+                raise ValueError("La clave de solicitud ya fue utilizada para otra transferencia. Recargá el panel e intentá nuevamente.")
+
         from stockarmobile.branch_inventory import transfer_branch_stock_batch
         transfers = transfer_branch_stock_batch(
             transfer_items, source.id, target.id,
             user_id=current_user.id, note=request.form.get("note"),
+            request_key=request_key or None,
         )
         db.session.commit()
         total_units = sum((quantity for _product, quantity in transfer_items), Decimal("0"))

@@ -76,11 +76,16 @@ def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inac
 
 
 def available_stock(product, branch_id, *, allow_inactive=False):
+    """Return physical stock minus units already reserved for pending POS payments."""
     row = get_branch_stock(product, branch_id, allow_inactive=allow_inactive)
-    return float(row.stock or 0) if row is not None else 0.0
+    if row is None:
+        return 0.0
+    stock = Decimal(str(row.stock or 0))
+    reserved = Decimal(str(row.reserved_stock or 0))
+    return float(max(stock - reserved, Decimal("0")))
 
 
-def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None):
+def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None, request_key=None):
     """Move units between branches atomically; company aggregate stock is unchanged."""
     from decimal import Decimal, InvalidOperation
     from app import Branch, BranchStockTransfer, db
@@ -101,8 +106,9 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     for branch_id in sorted((int(source.id), int(target.id))):
         locked_rows[branch_id] = get_branch_stock(product, branch_id, lock=True, create=True)
     source_stock = locked_rows[int(source.id)]
-    if Decimal(str(source_stock.stock or 0)) < amount:
-        raise ValueError(f"Stock insuficiente en {source.name}. Disponible: {source_stock.stock}.")
+    available = Decimal(str(source_stock.stock or 0)) - Decimal(str(source_stock.reserved_stock or 0))
+    if available < amount:
+        raise ValueError(f"Stock disponible insuficiente en {source.name}. Disponible: {max(available, Decimal('0'))}.")
 
     transfer = BranchStockTransfer(
         company_id=company_id,
@@ -110,6 +116,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
         target_branch_id=target.id,
         product_id=product.id,
         quantity=amount,
+        request_key=(str(request_key or "").strip()[:80] or None),
         note=(str(note or "").strip()[:255] or None),
         created_by_user_id=user_id,
     )
@@ -128,7 +135,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     return transfer
 
 
-def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None):
+def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None, request_key=None):
     """Transfer several products in one caller-controlled database transaction.
 
     Products are locked in ascending ID order so concurrent multi-product
@@ -165,6 +172,7 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
             quantity,
             user_id=user_id,
             note=note,
+            request_key=request_key,
         ))
     return transfers
 
@@ -176,6 +184,9 @@ def set_branch_stock(product, branch_id, quantity, *, movement_type="initial", u
     new = validate_stock_quantity(quantity or 0, label="El stock de sucursal")
     if new < 0:
         raise ValueError("El stock de sucursal debe ser un número finito no negativo.")
+    reserved = Decimal(str(row.reserved_stock or 0))
+    if new < reserved:
+        raise ValueError("El ajuste dejaría por debajo del stock reservado para cobros QR pendientes.")
     row.stock = new
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if new != old:
@@ -199,6 +210,146 @@ def set_branch_stock_and_reconcile(product, branch_id, quantity, *, movement_typ
     )
     reconcile_company_stock_total(product)
     return row
+
+
+
+def reserve_branch_stock_for_payment(payment, items, branch_id, *, user_id=None):
+    """Atomically reserve branch stock for a pending POS QR payment."""
+    from app import BranchStockReservation
+
+    if branch_id is None:
+        return []
+    normalized = []
+    for product, quantity in items or ():
+        qty = validate_stock_quantity(quantity, label="La cantidad reservada")
+        if product is None or qty <= 0:
+            raise ValueError("No se puede reservar una línea de producto inválida.")
+        normalized.append((int(product.id), product, qty))
+    if not normalized:
+        raise ValueError("No hay productos para reservar.")
+    if len({row[0] for row in normalized}) != len(normalized):
+        raise ValueError("No se puede reservar el mismo producto más de una vez.")
+
+    reservations = []
+    for product_id, product, qty in sorted(normalized, key=lambda row: row[0]):
+        lock_product_stock_row(product)
+        if int(product.company_id) != int(payment.company_id):
+            raise ValueError("El producto de la reserva pertenece a otra empresa.")
+        row = get_branch_stock(product, branch_id, lock=True, create=True)
+        existing = BranchStockReservation.query.filter_by(
+            payment_id=int(payment.id), product_id=product_id
+        ).with_for_update().first()
+        stock = Decimal(str(row.stock or 0))
+        reserved = Decimal(str(row.reserved_stock or 0))
+        if existing is not None:
+            if Decimal(str(existing.quantity)) != qty:
+                raise ValueError("El QR ya tiene una reserva de stock incompatible.")
+            if existing.status == "reserved":
+                reservations.append(existing)
+                continue
+            if existing.status == "released":
+                available = stock - reserved
+                if qty > available:
+                    raise ValueError(f"Stock insuficiente para reactivar la reserva de {product.name}. Disponible: {max(available, Decimal('0'))}.")
+                row.reserved_stock = reserved + qty
+                existing.status = "reserved"
+                existing.released_at = None
+                reservations.append(existing)
+                continue
+            raise ValueError("El QR ya tiene una reserva de stock incompatible.")
+        available = stock - reserved
+        if qty > available:
+            raise ValueError(f"Stock disponible insuficiente para reservar {product.name}. Disponible: {max(available, Decimal('0'))}.")
+        row.reserved_stock = reserved + qty
+        reservation = BranchStockReservation(
+            payment_id=int(payment.id),
+            company_id=int(payment.company_id),
+            branch_id=int(branch_id),
+            product_id=product_id,
+            quantity=qty,
+            status="reserved",
+        )
+        db.session.add(reservation)
+        reservations.append(reservation)
+    db.session.flush()
+    return reservations
+
+
+def release_branch_stock_reservations(payment_id, *, user_id=None):
+    """Release every active reservation belonging to one POS payment exactly once."""
+    from app import BranchStockReservation, Product, utcnow
+
+    rows = BranchStockReservation.query.filter_by(
+        payment_id=int(payment_id), status="reserved"
+    ).order_by(BranchStockReservation.product_id.asc()).with_for_update().all()
+    released = 0
+    for reservation in rows:
+        product = Product.query.filter_by(
+            id=int(reservation.product_id), company_id=int(reservation.company_id)
+        ).first()
+        if product is not None:
+            lock_product_stock_row(product)
+            stock_row = get_branch_stock(
+                product, reservation.branch_id, lock=True, create=False, allow_inactive=True
+            )
+            if stock_row is not None:
+                current_reserved = Decimal(str(stock_row.reserved_stock or 0))
+                quantity = Decimal(str(reservation.quantity or 0))
+                stock_row.reserved_stock = max(current_reserved - quantity, Decimal("0"))
+        reservation.status = "released"
+        reservation.released_at = utcnow()
+        released += 1
+    db.session.flush()
+    return released
+
+
+def ensure_branch_stock_reservations_for_payment(payment):
+    """Re-establish the complete source-branch reservation before an approved QR sale."""
+    import json
+    from app import Product
+
+    branch_id = getattr(payment, "branch_id", None)
+    if branch_id is None:
+        return []
+    try:
+        payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    except (TypeError, ValueError):
+        payload = {}
+    snapshot = payload.get("snapshot") if isinstance(payload, dict) else None
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    snapshot_branch_id = snapshot.get("branch_id")
+    if snapshot_branch_id is not None and int(snapshot_branch_id) != int(branch_id):
+        raise ValueError("La sucursal de la instantánea no coincide con la sucursal del pago.")
+    items = snapshot.get("items") or []
+    if not items:
+        raise ValueError("El QR aprobado no contiene una instantánea local de productos.")
+    normalized = []
+    product_ids = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("La instantánea del QR contiene una línea inválida.")
+        try:
+            product_id = int(item.get("productId") or item.get("product_id") or 0)
+        except (TypeError, ValueError):
+            product_id = 0
+        if product_id <= 0 or product_id in product_ids:
+            raise ValueError("La instantánea del QR contiene productos inválidos o repetidos.")
+        product_ids.add(product_id)
+        normalized.append((product_id, item.get("quantity")))
+    products = {
+        int(product.id): product
+        for product in Product.query.filter(
+            Product.company_id == int(payment.company_id),
+            Product.id.in_(product_ids),
+        ).all()
+    }
+    if len(products) != len(product_ids):
+        raise ValueError("Uno o más productos del QR ya no pertenecen a esta empresa.")
+    return reserve_branch_stock_for_payment(
+        payment,
+        [(products[product_id], quantity) for product_id, quantity in normalized],
+        int(branch_id),
+    )
 
 
 def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type=None, source_id=None,
@@ -225,6 +376,9 @@ def adjust_branch_stock(product, branch_id, delta, *, movement_type, source_type
     updated = current + delta
     if updated < 0:
         raise ValueError(f"Stock insuficiente en la sucursal para {product.name}. Disponible: {current}.")
+    reserved = Decimal(str(row.reserved_stock or 0))
+    if delta < 0 and updated < reserved:
+        raise ValueError(f"Stock reservado para cobros pendientes en {product.name}. Disponible para operar: {max(current - reserved, Decimal('0'))}.")
     row.stock = updated
     row.min_stock = Decimal(str(getattr(product, "min_stock", 0) or 0))
     if update_company_total:

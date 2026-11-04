@@ -959,8 +959,9 @@ class BackupService:
             for row in current_rows
         }
         for row in current_rows:
+            # Outstanding QR reservations are live operational commitments, not
+            # historical backup data. Keep them while restoring physical balances.
             row.stock = Decimal("0.000")
-            row.reserved_stock = Decimal("0.000")
 
         if has_branch_snapshot:
             for raw in snapshot_rows:
@@ -973,16 +974,15 @@ class BackupService:
                     product_id = product_id_map.get(source_product_id, source_product_id)
                     stock = Decimal(str(raw.get("stock") or 0))
                     minimum = Decimal(str(raw.get("min_stock") or 0))
-                    reserved = Decimal(str(raw.get("reserved_stock") or 0))
                 except (TypeError, ValueError, InvalidOperation):
                     raise ValueError("El respaldo contiene cantidades de stock inválidas.") from None
                 if row_company_id != company_id:
                     raise ValueError("El saldo de sucursal pertenece a otra empresa.")
                 if branch_id not in branches or product_id not in products:
                     raise ValueError("El respaldo contiene una sucursal o producto fuera de la empresa.")
-                if not stock.is_finite() or not minimum.is_finite() or not reserved.is_finite():
+                if not stock.is_finite() or not minimum.is_finite():
                     raise ValueError("El respaldo contiene cantidades de stock no finitas.")
-                if stock < 0 or minimum < 0 or reserved < 0 or reserved > stock:
+                if stock < 0 or minimum < 0:
                     raise ValueError("El respaldo contiene cantidades de stock inconsistentes.")
                 key = (branch_id, product_id)
                 row = rows_by_key.get(key)
@@ -999,7 +999,6 @@ class BackupService:
                     rows_by_key[key] = row
                 row.stock = stock
                 row.min_stock = minimum
-                row.reserved_stock = reserved
         else:
             # Compatibility path for backups produced before branch stock existed.
             for product in products.values():
@@ -1022,7 +1021,6 @@ class BackupService:
                     raise ValueError("El respaldo contiene stock histórico inválido.")
                 row.stock = legacy_stock
                 row.min_stock = legacy_minimum
-                row.reserved_stock = Decimal("0.000")
 
         if has_branch_snapshot:
             # Product.stock remains the company-wide aggregate for compatibility.
@@ -1058,8 +1056,26 @@ class BackupService:
                     rows_by_key[central_key] = central_row
 
                 central_target = max(Decimal("0.000"), aggregate_stock - secondary_stock)
-                # Never restore a central balance below an already reserved amount.
-                central_row.stock = max(central_target, central_row.reserved_stock or Decimal("0.000"))
+                central_reserved = Decimal(str(central_row.reserved_stock or 0))
+                if central_target < central_reserved:
+                    raise ValueError(
+                        "No se puede restaurar el stock de Casa Central por debajo de las "
+                        "unidades reservadas para cobros QR pendientes."
+                    )
+                central_row.stock = central_target
+
+        # Never let a restore erase stock backing a currently pending QR payment.
+        # The reservation table and BranchStock.reserved_stock represent live
+        # commitments; an older backup's reserved_stock field is deliberately ignored.
+        for (branch_id, product_id), row in rows_by_key.items():
+            live_reserved = Decimal(str(row.reserved_stock or 0))
+            restored_stock = Decimal(str(row.stock or 0))
+            if live_reserved < 0 or restored_stock < live_reserved:
+                raise ValueError(
+                    "No se puede restaurar el inventario: la copia dejaría la sucursal "
+                    f"{branch_id}, producto {product_id} por debajo de las unidades "
+                    "reservadas para cobros QR pendientes."
+                )
 
         # Keep the legacy aggregate as the sum of all physical locations.
         totals = db.session.query(

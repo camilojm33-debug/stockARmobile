@@ -1142,6 +1142,7 @@ class BranchStockTransfer(db.Model):
     __tablename__ = "branch_stock_transfers"
     __table_args__ = (
         Index("ix_branch_stock_transfers_company_created", "company_id", "created_at"),
+        UniqueConstraint("company_id", "request_key", "product_id", name="uq_branch_transfer_request_product"),
     )
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -1149,11 +1150,32 @@ class BranchStockTransfer(db.Model):
     target_branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
     quantity = db.Column(db.Numeric(18, 3), nullable=False)
+    request_key = db.Column(db.String(80), nullable=True, index=True)
     note = db.Column(db.Text)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
     source_branch = db.relationship("Branch", foreign_keys=[source_branch_id])
     target_branch = db.relationship("Branch", foreign_keys=[target_branch_id])
+    product = db.relationship("Product")
+
+
+class BranchStockReservation(db.Model):
+    __tablename__ = "branch_stock_reservations"
+    __table_args__ = (
+        UniqueConstraint("payment_id", "product_id", name="uq_branch_stock_reservation_payment_product"),
+        Index("ix_branch_stock_reservations_company_branch_status", "company_id", "branch_id", "status"),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    payment_id = db.Column(db.Integer, db.ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
+    quantity = db.Column(db.Numeric(18, 3), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="reserved", index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    released_at = db.Column(db.DateTime)
+    payment = db.relationship("Payment")
+    branch = db.relationship("Branch")
     product = db.relationship("Product")
 
 
@@ -1279,6 +1301,7 @@ class Payment(db.Model):
     __tablename__ = "payments"
     __table_args__ = (
         Index("ix_payments_company_status", "company_id", "status"),
+        Index("ix_payments_company_branch", "company_id", "branch_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1288,6 +1311,7 @@ class Payment(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
     subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"))
     amount = db.Column(MONEY, default=Decimal("0.00"))
     currency = db.Column(db.String(10), default="USD")
@@ -1304,6 +1328,7 @@ class Payment(db.Model):
     company = db.relationship("Company", backref="payments")
     subscription = db.relationship("Subscription", backref="payments")
     user = db.relationship("User")
+    branch = db.relationship("Branch")
     invoice = db.relationship("Invoice", backref="payments")
 
 

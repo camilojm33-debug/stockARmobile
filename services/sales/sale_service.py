@@ -39,6 +39,7 @@ class SaleService:
 
         sale = None
         final_total = Decimal("0.00")
+        sale_idempotency_key = None
         try:
             current_app.logger.info(
                 "[sales] checkout procesado: company_id=%s user_id=%s item_count=%s json_response=%s",
@@ -80,6 +81,16 @@ class SaleService:
                 raise ValueError("El presupuesto y el token de conversión no coinciden.")
 
             quote_id = requested_quote_id or token_quote_id
+            sale_idempotency_key = ValidationService.sanitize_checkout_token(data.get("sale_idempotency_key"))
+            if sale_idempotency_key:
+                existing_idempotent_sale = scope_query_to_company(Sale.query, Sale).filter(
+                    Sale.client_txn_id == sale_idempotency_key
+                ).first()
+                if existing_idempotent_sale is not None:
+                    if json_response:
+                        return jsonify({"sale_id": existing_idempotent_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_idempotent_sale.id)})
+                    return redirect(url_for("sales.success", sale_id=existing_idempotent_sale.id))
+
             if checkout_token:
                 existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == checkout_token).first()
                 if existing_sale is not None:
@@ -307,7 +318,7 @@ class SaleService:
                 surcharge_value=sale_totals["surcharge_adjustment"]["value"],
                 surcharge_reason=sale_totals["surcharge_adjustment"]["reason"],
                 charges_json=(quote_snapshot.charges_json if quote_snapshot is not None else data.get("charges_json")),
-                client_txn_id=checkout_token,
+                client_txn_id=(sale_idempotency_key or checkout_token),
                 document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
                 requiere_comprobante=requiere_comprobante,
                 tipo_comprobante=tipo_comprobante,
@@ -375,6 +386,14 @@ class SaleService:
         except IntegrityError:
             db.session.rollback()
             token = ValidationService.sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
+            if sale_idempotency_key:
+                existing_sale = scope_query_to_company(Sale.query, Sale).filter(
+                    Sale.client_txn_id == sale_idempotency_key
+                ).first()
+                if existing_sale is not None:
+                    if json_response:
+                        return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                    return redirect(url_for("sales.success", sale_id=existing_sale.id))
             if token:
                 existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == token).first()
                 if existing_sale is not None:

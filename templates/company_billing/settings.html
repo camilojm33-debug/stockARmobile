@@ -1250,6 +1250,7 @@
           <form method="post" action="{{ url_for('branches.transfer_stock') }}" id="branch-transfer-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="items_json" id="branch-transfer-items-json">
+            <input type="hidden" name="request_key" id="branch-transfer-request-key" value="">
             <input type="hidden" name="return_to" value="{{ request.full_path }}">
             <div class="row g-2 align-items-end">
               <div class="col-md-4">

@@ -54,6 +54,9 @@ def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: d
     rows = query.order_by(Payment.id.asc()).all()
     for payment in rows:
         payment.status = "expired"
+        if _text(getattr(payment, "provider", None)) == "mercadopago_pos":
+            from stockarmobile.branch_inventory import release_branch_stock_reservations
+            release_branch_stock_reservations(payment.id)
         db_session.add(
             PaymentHistory(
                 payment_id=payment.id,

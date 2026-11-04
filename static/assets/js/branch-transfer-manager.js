@@ -296,6 +296,14 @@
     }
   });
 
+  const requestKeyInput = form.querySelector('[name="request_key"]');
+  if (requestKeyInput && !requestKeyInput.value) {
+    const makeKey = () => (window.crypto && typeof window.crypto.randomUUID === 'function')
+      ? window.crypto.randomUUID()
+      : 'transfer-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    requestKeyInput.value = makeKey();
+  }
+
   form.addEventListener('submit', event => {
     const entries = Array.from(selected.values());
     const valid = entries.length > 0 && source.value !== target.value &&
