@@ -1620,4 +1620,19 @@ def test_pos_webhook_approval_after_draft_expiry_refunds_and_releases_stock(app,
             payment_id=draft.id,
             event="pos_qr_late_approval_refund",
         ).count() == 1
+
+        # A second, distinct webhook event for the same approved payment must
+        # not request a second refund while the first refund is pending/settled.
+        repeated_result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-qr-expired-2", "x-signature": "ts=2,v1=abc"},
+            payload={"id": "evt-qr-expired-2", "type": "payment", "data": {"id": "987654321098765432"}},
+        )
+        assert repeated_result["status"] == "late_pos_qr_refund_already_requested"
+        assert repeated_result["payment_status"] == "refunded"
+        assert refunded == ["987654321098765432"]
+        assert PaymentHistory.query.filter_by(
+            payment_id=draft.id,
+            event="pos_qr_late_approval_refund",
+        ).count() == 1
         db.session.rollback()
