@@ -400,10 +400,13 @@ def transfer_stock():
                 raise ValueError("La cantidad de transferencia no es válida.") from None
             transfer_items = [(product, quantity)]
 
+        operation_key = (request.form.get("operation_key") or "").strip() or None
         from stockarmobile.branch_inventory import transfer_branch_stock_batch
         transfers = transfer_branch_stock_batch(
             transfer_items, source.id, target.id,
-            user_id=current_user.id, note=request.form.get("note"),
+            user_id=current_user.id,
+            note=request.form.get("note"),
+            operation_key=operation_key,
         )
         db.session.commit()
         total_units = sum((quantity for _product, quantity in transfer_items), Decimal("0"))

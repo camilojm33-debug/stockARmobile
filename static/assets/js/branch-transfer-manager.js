@@ -18,7 +18,13 @@
   const submitButton = document.getElementById('branch-transfer-submit');
   const submitStatus = document.getElementById('branch-transfer-submit-status');
   const itemsJson = document.getElementById('branch-transfer-items-json');
+  const operationKey = document.getElementById('branch-transfer-operation-key');
   const pageSize = 30;
+  if (operationKey && !operationKey.value) {
+    operationKey.value = (window.crypto && typeof window.crypto.randomUUID === 'function')
+      ? window.crypto.randomUUID()
+      : 'transfer-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  }
   const selected = new Map();
   let visibleProducts = [];
   let offset = 0;

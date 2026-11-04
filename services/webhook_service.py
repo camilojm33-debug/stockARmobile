@@ -126,7 +126,14 @@ class WebhookService:
 
     @staticmethod
     def _event_updated_at(payment_data: dict):
-        return WebhookService._parse_mp_datetime(payment_data.get("date_last_updated") or payment_data.get("date_approved"))
+        # POS payment payloads retain the original local cart snapshot and store
+        # Mercado Pago's latest status under "mercadopago".
+        source = payment_data
+        if isinstance(payment_data, dict) and isinstance(payment_data.get("mercadopago"), dict):
+            source = payment_data["mercadopago"]
+        return WebhookService._parse_mp_datetime(
+            source.get("date_last_updated") or source.get("date_approved")
+        )
 
     @staticmethod
     def _payment_event_key(payment_data: dict, fallback_key: str) -> str:
@@ -916,10 +923,16 @@ class WebhookService:
                 db_session.commit()
                 return result
 
-            payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
+            # Serialize distinct Mercado Pago notifications for the same payment.
+            # This prevents an expiry/release and approval from consuming or
+            # releasing the same reservation concurrently.
+            payment = Payment.query.filter_by(
+                payment_id=str(payment_data.get("id"))
+            ).with_for_update().first()
             if merchant_connection is not None and payment is not None and int(payment.company_id or 0) != int(merchant_connection.company_id or 0):
                 raise RuntimeError("Webhook Mercado Pago con pago perteneciente a otra empresa")
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
+            pos_draft_expired_before_approval = False
             if payment is None:
                 company_id = int(metadata.get("company_id") or ref_parts.get("company_id") or 0)
                 subscription_id = int(metadata.get("subscription_id") or 0) or None
@@ -952,10 +965,48 @@ class WebhookService:
                     draft_payment = None
                     draft_payment_id = ref_parts.get("draft_payment_id")
                     if draft_payment_id and str(draft_payment_id).isdigit():
-                        draft_payment = Payment.query.filter_by(id=int(draft_payment_id), company_id=company_id).first()
+                        draft_payment = Payment.query.filter_by(
+                            id=int(draft_payment_id),
+                            company_id=company_id,
+                        ).with_for_update().first()
                     if draft_payment is None:
-                        draft_payment = Payment.query.filter_by(external_reference=external_reference, company_id=company_id).first()
+                        draft_payment = Payment.query.filter_by(
+                            external_reference=external_reference,
+                            company_id=company_id,
+                        ).with_for_update().first()
 
+                    if draft_payment is None:
+                        raise RuntimeError("Webhook POS sin borrador local de cobro verificable.")
+                    from services.payment_flow import (
+                        is_stale_pos_draft,
+                        release_pos_payment_reservation,
+                    )
+                    pos_draft_expired_before_approval = (
+                        is_stale_pos_draft(draft_payment)
+                        or str(draft_payment.status or "").strip().lower() in {"expired", "cancelled", "canceled"}
+                    )
+                    if pos_draft_expired_before_approval:
+                        release_pos_payment_reservation(db_session, draft_payment)
+                    expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
+                    expected_user_id = int(ref_parts.get("user_id") or 0) or None
+                    metadata_branch_id = int(metadata.get("branch_id") or 0) or None
+                    metadata_user_id = int(metadata.get("user_id") or 0) or None
+                    metadata_draft_payment_id = int(metadata.get("draft_payment_id") or 0) or None
+                    reference_draft_payment_id = int(ref_parts.get("draft_payment_id") or 0) or None
+                    if metadata_branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook POS con sucursal inconsistente entre metadata y referencia externa.")
+                    if metadata_user_id and expected_user_id and metadata_user_id != expected_user_id:
+                        raise RuntimeError("Webhook POS con usuario inconsistente entre metadata y referencia externa.")
+                    if metadata_draft_payment_id and reference_draft_payment_id and metadata_draft_payment_id != reference_draft_payment_id:
+                        raise RuntimeError("Webhook POS con borrador inconsistente entre metadata y referencia externa.")
+                    if draft_payment.provider != "mercadopago_pos":
+                        raise RuntimeError("Webhook POS vinculado a un tipo de pago incompatible.")
+                    if draft_payment.branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook POS con sucursal distinta a la del borrador original.")
+                    if expected_user_id and int(draft_payment.user_id or 0) != expected_user_id:
+                        raise RuntimeError("Webhook POS con usuario distinto al propietario del borrador.")
+                    if draft_payment.external_reference and draft_payment.external_reference != external_reference:
+                        raise RuntimeError("Webhook POS con referencia externa distinta al borrador original.")
                     if draft_payment is not None:
                         payment = draft_payment
                         payment.payment_id = str(payment_data.get("id"))
@@ -970,12 +1021,9 @@ class WebhookService:
                         payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method or "QR Mercado Pago"
                         payment.reference = external_reference or payment.reference
                         payment.provider = "mercadopago_pos"
-                        payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        from services.payment_flow import merge_pos_payment_provider_payload
+                        merge_pos_payment_provider_payload(payment, payment_data)
                         payment.paid_at = paid_at or payment.paid_at
-                    else:
-                        payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=None, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago_pos", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
-                        db_session.add(payment)
-                        db_session.flush()
                 else:
                     payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=subscription_id, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
                     db_session.add(payment)
@@ -989,6 +1037,18 @@ class WebhookService:
                         raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en metadata para POS")
                     if ref_company_id and ref_company_id != expected_company_id:
                         raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en external_reference para POS")
+                    expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
+                    expected_user_id = int(ref_parts.get("user_id") or 0) or None
+                    metadata_branch_id = int(metadata.get("branch_id") or 0) or None
+                    metadata_user_id = int(metadata.get("user_id") or 0) or None
+                    if metadata_branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook POS con sucursal inconsistente entre metadata y referencia externa.")
+                    if metadata_user_id and expected_user_id and metadata_user_id != expected_user_id:
+                        raise RuntimeError("Webhook POS con usuario inconsistente entre metadata y referencia externa.")
+                    if payment.branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook Mercado Pago con sucursal inconsistente para POS")
+                    if expected_user_id and int(payment.user_id or 0) != expected_user_id:
+                        raise RuntimeError("Webhook Mercado Pago con propietario inconsistente para POS")
 
                 previous_payload = json.loads(payment.payload_json) if payment.payload_json else {}
                 previous_updated_at = self._event_updated_at(previous_payload)
@@ -1015,7 +1075,11 @@ class WebhookService:
                 payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
                 payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method
                 payment.reference = external_reference or payment.reference
-                payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                if flow == "pos_sale":
+                    from services.payment_flow import merge_pos_payment_provider_payload
+                    merge_pos_payment_provider_payload(payment, payment_data)
+                else:
+                    payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
                 payment.paid_at = paid_at or payment.paid_at
 
             subscription = None
@@ -1038,7 +1102,10 @@ class WebhookService:
             if flow == "pos_sale":
                 draft_payment_id = ref_parts.get("draft_payment_id")
                 if draft_payment_id and str(draft_payment_id).isdigit():
-                    draft_payment = Payment.query.filter_by(id=int(draft_payment_id), company_id=payment.company_id).first()
+                    draft_payment = Payment.query.filter_by(
+                        id=int(draft_payment_id),
+                        company_id=payment.company_id,
+                    ).with_for_update().first()
                     if draft_payment:
                         draft_payment.payment_id = payment.payment_id or draft_payment.payment_id
                         draft_payment.preference_id = payment.preference_id or draft_payment.preference_id
@@ -1049,10 +1116,104 @@ class WebhookService:
                         draft_payment.payment_method = payment.payment_method or draft_payment.payment_method or "QR Mercado Pago"
                         draft_payment.provider = "mercadopago_pos"
                         draft_payment.reference = external_reference or draft_payment.reference
-                        draft_payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        from services.payment_flow import merge_pos_payment_provider_payload
+                        merge_pos_payment_provider_payload(draft_payment, payment_data)
                         draft_payment.paid_at = paid_at or draft_payment.paid_at
                         payment = draft_payment
-                result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                try:
+                    payment_payload = json.loads(payment.payload_json or "{}")
+                except (TypeError, ValueError):
+                    payment_payload = {}
+                snapshot = payment_payload.get("snapshot") if isinstance(payment_payload, dict) else None
+                snapshot = snapshot if isinstance(snapshot, dict) else {}
+                already_finalized = bool(
+                    (payment_payload.get("sale_id") if isinstance(payment_payload, dict) else None)
+                    or snapshot.get("sale_id")
+                )
+                if payment_status == "approved" and not already_finalized:
+                    from services.payment_flow import pos_payment_has_live_stock_reservation
+                    origin_is_fulfillable = (
+                        not pos_draft_expired_before_approval
+                        and pos_payment_has_live_stock_reservation(payment)
+                    )
+                    if not origin_is_fulfillable:
+                        # Expired, legacy or malformed drafts have no live stock
+                        # reservation. Never silently create a sale against a new
+                        # branch; refund the late charge instead. The payment row
+                        # is locked above, so webhook retries serialize through
+                        # this history check and cannot request duplicate refunds.
+                        from app import PaymentHistory
+                        refund_event = (
+                            PaymentHistory.query
+                            .filter_by(
+                                payment_id=payment.id,
+                                event="pos_qr_late_approval_refund",
+                            )
+                            .with_for_update()
+                            .first()
+                        )
+                        if refund_event is not None:
+                            local_status = (
+                                str(refund_event.status or previous_payment_status or "refund_pending")
+                                .strip()
+                                .lower()
+                            )
+                            if local_status not in {"refunded", "refund_pending"}:
+                                local_status = "refund_pending"
+                            payment.status = local_status
+                            payment_status = local_status
+                            result = {
+                                "status": "late_pos_qr_refund_already_requested",
+                                "payment_status": local_status,
+                                "event_key": event_key,
+                            }
+                        else:
+                            refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
+                            refund_status = str(refund.get("status") or "").strip().lower()
+                            if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                                raise RuntimeError(
+                                    "Mercado Pago no confirmó el reembolso de un cobro QR tardío sin reserva de stock."
+                                )
+                            local_status = (
+                                "refunded"
+                                if refund_status in {"approved", "refunded"}
+                                else "refund_pending"
+                            )
+                            payment.status = local_status
+                            if payment.branch_id:
+                                from services.payment_flow import release_pos_payment_reservation
+                                release_pos_payment_reservation(db_session, payment)
+                            db_session.add(PaymentHistory(
+                                payment_id=payment.id,
+                                company_id=payment.company_id,
+                                event="pos_qr_late_approval_refund",
+                                detail=(
+                                    "Se solicitó el reembolso de una aprobación tardía porque el QR ya no "
+                                    "conservaba una reserva de stock verificable en su sucursal de origen."
+                                ),
+                                source="mercadopago",
+                                event_id=f"pos-qr-late-refund:{payment.payment_id}",
+                                status=local_status,
+                                payload_json=json.dumps({
+                                    "refund_id": refund.get("id"),
+                                    "refund_status": refund_status,
+                                    "branch_id": payment.branch_id,
+                                }, ensure_ascii=False),
+                            ))
+                            payment_status = local_status
+                            result = {
+                                "status": "late_pos_qr_refunded",
+                                "payment_status": local_status,
+                                "refund_status": refund_status,
+                                "event_key": event_key,
+                            }
+                    else:
+                        result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                else:
+                    if payment_status in {"rejected", "cancelled", "canceled", "refunded", "charged_back"}:
+                        from services.payment_flow import release_pos_payment_reservation
+                        release_pos_payment_reservation(db_session, payment)
+                    result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
             elif subscription and company:
                 metadata = payment_data.get("metadata") or {}
                 validation_errors = []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 from typing import Any
 
 from sqlalchemy import and_, func, not_, or_
@@ -32,6 +33,32 @@ def is_stale_pos_draft(payment, *, now: datetime | None = None, max_age_hours: i
     return created_at < current - timedelta(hours=max(1, int(max_age_hours)))
 
 
+def expire_pos_payment_draft(
+    db_session,
+    payment,
+    *,
+    now: datetime | None = None,
+    max_age_hours: int = POS_DRAFT_TTL_HOURS,
+) -> bool:
+    """Expire one abandoned local POS draft and release its stock reservation."""
+    if not is_stale_pos_draft(payment, now=now, max_age_hours=max_age_hours):
+        return False
+    release_pos_payment_reservation(db_session, payment)
+    payment.status = "expired"
+    from app import PaymentHistory
+    db_session.add(
+        PaymentHistory(
+            payment_id=payment.id,
+            company_id=payment.company_id,
+            event="expired_stale_pos_draft",
+            detail=f"POS draft expired after {max(1, int(max_age_hours))} hours without payment_id.",
+            source="system",
+            status="expired",
+        )
+    )
+    return True
+
+
 def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: datetime | None = None, max_age_hours: int = POS_DRAFT_TTL_HOURS) -> int:
     """Expire abandoned local POS drafts without blocking a later Mercado Pago webhook.
 
@@ -47,24 +74,133 @@ def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: d
         Payment.status.in_(POS_DRAFT_PENDING_STATUSES),
         Payment.payment_id.is_(None),
         Payment.created_at < cutoff,
-    )
+    ).with_for_update()
     if company_id is not None:
         query = query.filter(Payment.company_id == int(company_id))
 
     rows = query.order_by(Payment.id.asc()).all()
+    expired = 0
     for payment in rows:
-        payment.status = "expired"
-        db_session.add(
-            PaymentHistory(
-                payment_id=payment.id,
-                company_id=payment.company_id,
-                event="expired_stale_pos_draft",
-                detail=f"POS draft expired after {max(1, int(max_age_hours))} hours without payment_id.",
-                source="system",
-                status="expired",
-            )
-        )
-    return len(rows)
+        if expire_pos_payment_draft(
+            db_session,
+            payment,
+            now=current,
+            max_age_hours=max_age_hours,
+        ):
+            expired += 1
+    return expired
+
+
+
+
+def release_pos_payment_reservation(db_session, payment) -> bool:
+    """Release a POS draft's reserved branch stock exactly once."""
+    if payment_flow(payment) != FLOW_POS:
+        return False
+    try:
+        payload = json.loads(getattr(payment, "payload_json", None) or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("stock_reservation_released"):
+        return False
+    if not snapshot.get("stock_reserved"):
+        snapshot["stock_reservation_released"] = True
+        payment.payload_json = json.dumps(payload, ensure_ascii=False)
+        return False
+    branch_id = getattr(payment, "branch_id", None) or snapshot.get("branch_id")
+    if not branch_id:
+        # Legacy drafts have no trustworthy origin branch and were never reserved.
+        snapshot["stock_reservation_released"] = True
+        payment.payload_json = json.dumps(payload, ensure_ascii=False)
+        return False
+
+    from app import Product
+    from stockarmobile.branch_inventory import release_branch_stock_reservation
+    reservation_items = sorted(
+        snapshot.get("items") or [],
+        key=lambda item: int(item.get("productId") or item.get("product_id") or 0),
+    )
+    for item in reservation_items:
+        product_id = int(item.get("productId") or item.get("product_id") or 0)
+        quantity = item.get("quantity") or 0
+        if product_id <= 0 or not quantity:
+            continue
+        product = Product.query.filter_by(
+            id=product_id,
+            company_id=int(payment.company_id),
+        ).first()
+        if product is None:
+            raise ValueError("No se pudo localizar un producto reservado del cobro QR.")
+        release_branch_stock_reservation(product, int(branch_id), quantity)
+
+    snapshot["stock_reservation_released"] = True
+    snapshot["stock_reservation_released_at"] = datetime.utcnow().isoformat()
+    payment.payload_json = json.dumps(payload, ensure_ascii=False)
+    return True
+
+
+def pos_payment_has_live_stock_reservation(payment) -> bool:
+    """Whether a POS payment still owns a verifiable reservation at its origin."""
+    if payment_flow(payment) != FLOW_POS or not getattr(payment, "branch_id", None):
+        return False
+    try:
+        payload = json.loads(getattr(payment, "payload_json", None) or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    if not (
+        int(snapshot.get("branch_id") or 0) == int(payment.branch_id)
+        and int(snapshot.get("cash_session_id") or 0) > 0
+        and isinstance(snapshot.get("items"), list)
+        and snapshot.get("items")
+        and snapshot.get("stock_reserved")
+        and not snapshot.get("stock_reservation_released")
+    ):
+        return False
+
+    # Verify that the persisted branch ledger still holds every unit claimed
+    # by the draft. The JSON flag alone is not sufficient after restores/manual
+    # data repair or a partially migrated legacy payment.
+    from decimal import Decimal, InvalidOperation
+    from app import BranchStock
+    for item in snapshot["items"]:
+        try:
+            product_id = int(item.get("productId") or item.get("product_id") or 0)
+            quantity = Decimal(str(item.get("quantity") or 0))
+            if product_id <= 0 or not quantity.is_finite() or quantity <= 0:
+                return False
+        except (TypeError, ValueError, InvalidOperation):
+            return False
+        stock_row = BranchStock.query.filter_by(
+            company_id=int(payment.company_id),
+            branch_id=int(payment.branch_id),
+            product_id=product_id,
+        ).first()
+        if stock_row is None:
+            return False
+        if Decimal(str(stock_row.reserved_stock or 0)) < quantity:
+            return False
+    return True
+
+
+def merge_pos_payment_provider_payload(payment, provider_payload: dict) -> None:
+    """Persist Mercado Pago data without discarding the locally trusted sale snapshot."""
+    try:
+        payload = json.loads(getattr(payment, "payload_json", None) or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload.setdefault("flow", FLOW_POS)
+    payload["mercadopago"] = provider_payload if isinstance(provider_payload, dict) else {}
+    payment.payload_json = json.dumps(payload, ensure_ascii=False)
 
 
 def _text(value: Any) -> str:

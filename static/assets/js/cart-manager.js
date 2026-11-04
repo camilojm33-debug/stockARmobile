@@ -1494,7 +1494,9 @@ function updateMpQrPanel(payload) {
   mpQrDraftState.finalizeUrl = payload.finalize_url || mpQrDraftState.finalizeUrl;
   mpQrDraftState.checkoutUrl = payload.checkout_url || mpQrDraftState.checkoutUrl;
   mpQrDraftState.qrDataUri = payload.qr_data_uri || mpQrDraftState.qrDataUri;
-  mpQrDraftState.approved = payload.can_process_sale === true || payload.status === 'approved';
+  // The server decides whether this approved payment can be finalized in
+  // the currently active branch; "approved" alone is not sufficient.
+  mpQrDraftState.approved = payload.can_process_sale === true;
 
   if (mpQrPanelTitle) mpQrPanelTitle.textContent = 'Cobro generado con Mercado Pago';
   if (mpQrPanelBadge) {
@@ -1512,7 +1514,11 @@ function updateMpQrPanel(payload) {
     mpQrModalImage.classList.remove('d-none');
   }
   if (mpQrModalStatus) {
-    mpQrModalStatus.textContent = mpQrDraftState.approved ? 'Pago aprobado. Podés finalizar la venta.' : 'Escaneá el QR o abrí Mercado Pago para pagar.';
+    mpQrModalStatus.textContent = mpQrDraftState.approved
+      ? 'Pago aprobado. Podés finalizar la venta.'
+      : payload.status === 'approved'
+        ? (payload.status_label || 'Pago aprobado. Volvé a la sucursal de origen para finalizar.')
+        : 'Escaneá el QR o abrí Mercado Pago para pagar.';
   }
   if (mpQrPanelOpen && mpQrDraftState.checkoutUrl) {
     mpQrPanelOpen.href = mpQrDraftState.checkoutUrl;

@@ -732,6 +732,21 @@ def _ai_order_row(company_id: int, quote):
     }
 
 
+def _tenant_ai_order_quotes(company_id, Quote):
+    """Scope Vendedor IA orders to the logged-in user's active, assigned branch."""
+    from stockarmobile.branch_context import get_active_branch_id
+
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    query = Quote.query.filter(
+        Quote.company_id == int(company_id),
+        Quote.observations == marker,
+    )
+    branch_id = get_active_branch_id()
+    if branch_id is not None and getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+        query = query.filter(Quote.branch_id == int(branch_id))
+    return query
+
+
 @bp.get("/pedidos-ia")
 @login_required
 def ai_orders():
@@ -739,9 +754,8 @@ def ai_orders():
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
     quotes = (
-        Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == marker)
+        _tenant_ai_order_quotes(company_id, Quote)
         .order_by(Quote.date.desc(), Quote.id.desc())
         .limit(100)
         .all()
@@ -782,8 +796,25 @@ def ai_orders():
     return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
 
 
+def _tenant_can_access_vendor_whatsapp(company_id: int) -> bool:
+    """Vendor WhatsApp attention belongs to the default order-fulfillment branch."""
+    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
+        return True
+    from stockarmobile.branch_context import get_active_branch_id
+    from services.ai_agent.vendor_order_service import _vendor_fulfillment_branch_id
+    active_branch_id = get_active_branch_id()
+    fulfillment_branch_id = _vendor_fulfillment_branch_id(int(company_id))
+    return bool(
+        active_branch_id is not None
+        and fulfillment_branch_id is not None
+        and int(active_branch_id) == int(fulfillment_branch_id)
+    )
+
+
 def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, *, lock: bool = False):
     """Resolve only this tenant's Vendedor IA WhatsApp conversation."""
+    if not _tenant_can_access_vendor_whatsapp(int(company_id)):
+        return None
     agent = choose_agent(int(company_id), channel="whatsapp")
     query = db.session.query(Conversation).filter_by(
         id=int(conversation_id),
@@ -816,11 +847,8 @@ def ai_order_mark_picked_up(quote_id: int):
     from app import Quote, QuoteDelivery
     from stockarmobile.helpers.dates import utcnow_naive
 
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
-        id=int(quote_id),
-        company_id=int(company_id),
-        observations=marker,
+    quote = _tenant_ai_order_quotes(company_id, Quote).filter(
+        Quote.id == int(quote_id)
     ).with_for_update().first()
     if quote is None:
         abort(404)
@@ -854,6 +882,8 @@ def ai_order_mark_picked_up(quote_id: int):
 @login_required
 def ai_whatsapp_attention():
     company_id, company = _tenant_attention_actor()
+    if not _tenant_can_access_vendor_whatsapp(company_id):
+        abort(403)
     agent = choose_agent(company_id, channel="whatsapp")
     query_text = str(request.args.get("q") or "").strip().lower()
     state = str(request.args.get("state") or "all").strip().lower()
@@ -1115,6 +1145,9 @@ def ai_order_shipping(quote_id: int):
     company_id = get_current_company_id()
     if not company_id:
         abort(403)
+    from app import Quote
+    if _tenant_ai_order_quotes(company_id, Quote).filter(Quote.id == int(quote_id)).first() is None:
+        abort(404)
     raw_cost = str(request.form.get("shipping_cost") or "").strip().replace(",", ".")
     try:
         from decimal import Decimal, InvalidOperation
@@ -1178,11 +1211,8 @@ def ai_order_attention(quote_id: int):
         abort(403)
     from app import Quote, record_audit
 
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
-        id=int(quote_id),
-        company_id=int(company_id),
-        observations=marker,
+    quote = _tenant_ai_order_quotes(company_id, Quote).filter(
+        Quote.id == int(quote_id)
     ).first()
     if quote is None:
         abort(404)
@@ -1250,8 +1280,7 @@ def ai_order_detail(quote_id: int):
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id), observations=marker).first()
+    quote = _tenant_ai_order_quotes(company_id, Quote).filter(Quote.id == int(quote_id)).first()
     if quote is None:
         abort(404)
     return render_template(

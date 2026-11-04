@@ -23,12 +23,20 @@ def build_ai_order_notifications():
 
     cutoff = utcnow() - timedelta(days=7)
     marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote_query = Quote.query.filter(
+        Quote.company_id == int(company_id),
+        Quote.observations == marker,
+        Quote.date >= cutoff,
+    )
+    # Employees only receive actionable order notifications for their current
+    # branch. Company admins retain the consolidated company-wide queue.
+    if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+        from stockarmobile.branch_context import get_active_branch_id
+        active_branch_id = get_active_branch_id()
+        if active_branch_id is not None:
+            quote_query = quote_query.filter(Quote.branch_id == int(active_branch_id))
     quotes = (
-        Quote.query.filter(
-            Quote.company_id == int(company_id),
-            Quote.observations == marker,
-            Quote.date >= cutoff,
-        )
+        quote_query
         .order_by(Quote.date.desc(), Quote.id.desc())
         .limit(8)
         .all()

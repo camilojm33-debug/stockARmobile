@@ -1,9 +1,16 @@
 from decimal import Decimal
+from datetime import datetime, timedelta
+import json
 
 import pytest
+from werkzeug.exceptions import NotFound
 
-from app import Branch, BranchStock, BranchStockMovement, Company, Plan, Product, Subscription, User, db
-from stockarmobile.branch_inventory import adjust_branch_stock, available_stock, get_branch_stock, set_branch_stock
+from app import Branch, BranchStock, BranchStockMovement, BranchStockTransfer, Company, Payment, PaymentHistory, Plan, Product, Subscription, User, db
+from stockarmobile.branch_inventory import (
+    adjust_branch_stock, available_stock, get_branch_stock, set_branch_stock,
+    reserve_branch_stock, transfer_branch_stock_batch,
+)
+from services.payment_flow import expire_stale_pos_drafts, release_pos_payment_reservation
 from services.ai_agent.usage_service import can_use_commercial_feature
 
 
@@ -960,3 +967,672 @@ def test_company_settings_branch_panel_keeps_render_context_and_jinja_defaults_s
     assert "active_branch_count=active_branch_count" in company_billing
     assert "branch_user_access.get(branch.id, [])" in settings_template
     assert "branch_user_access.get(branch.id, set())" not in settings_template
+
+
+def test_reserved_stock_is_not_available_to_sales_or_transfers_and_releases_once(app):
+    with app.app_context():
+        company = _company("Empresa reservas QR")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id,
+            barcode="QR-RES-01",
+            name="Producto reservado",
+            stock=Decimal("5"),
+            min_stock=Decimal("0"),
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, 5)
+        set_branch_stock(product, north.id, 0)
+        db.session.commit()
+        reserve_branch_stock(product, central.id, 3, note="QR pendiente")
+        db.session.flush()
+
+        row = get_branch_stock(product, central.id)
+        assert Decimal(str(row.stock)) == Decimal("5")
+        assert Decimal(str(row.reserved_stock)) == Decimal("3")
+        assert available_stock(product, central.id) == 2.0
+
+        with pytest.raises(ValueError, match="Stock insuficiente"):
+            adjust_branch_stock(
+                product, central.id, -3, movement_type="sale",
+                update_company_total=True,
+            )
+        with pytest.raises(ValueError, match="Stock insuficiente"):
+            transfer_branch_stock_batch(
+                [(product, 3)], central.id, north.id,
+                operation_key="reserve-protect-qr",
+            )
+        db.session.rollback()
+
+        # Recreate reservation after the expected failed operations rolled back.
+        reserve_branch_stock(product, central.id, 3, note="QR pendiente")
+        payment = Payment(
+            company_id=company.id,
+            branch_id=central.id,
+            amount=300,
+            currency="ARS",
+            status="pending",
+            provider="mercadopago_pos",
+            reference="pos_draft:reserve",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": central.id,
+                    "items": [{"productId": product.id, "quantity": 3}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                },
+            }),
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        assert release_pos_payment_reservation(db.session, payment) is True
+        assert release_pos_payment_reservation(db.session, payment) is False
+        db.session.flush()
+        assert Decimal(str(get_branch_stock(product, central.id).reserved_stock)) == Decimal("0")
+        assert available_stock(product, central.id) == 5.0
+        db.session.rollback()
+
+
+def test_expiring_stale_pos_draft_releases_branch_reservation(app):
+    with app.app_context():
+        company = _company("Empresa QR vencimiento")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        product = Product(
+            company_id=company.id,
+            barcode="QR-EXP-01",
+            name="Producto vencido",
+            stock=Decimal("4"),
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, branch.id, 4)
+        reserve_branch_stock(product, branch.id, 2, note="QR expirado")
+        payment = Payment(
+            company_id=company.id,
+            branch_id=branch.id,
+            amount=200,
+            currency="ARS",
+            status="pending",
+            provider="mercadopago_pos",
+            reference="pos_draft:expired",
+            created_at=datetime.utcnow() - timedelta(hours=80),
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": branch.id,
+                    "items": [{"productId": product.id, "quantity": 2}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                },
+            }),
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        count = expire_stale_pos_drafts(
+            db.session,
+            company_id=company.id,
+            now=datetime.utcnow(),
+        )
+        db.session.commit()
+
+        assert count == 1
+        assert db.session.get(Payment, payment.id).status == "expired"
+        assert Decimal(str(get_branch_stock(product, branch.id).reserved_stock)) == Decimal("0")
+        assert available_stock(product, branch.id) == 4.0
+        db.session.rollback()
+
+
+def test_branch_transfer_batch_is_idempotent_for_retried_operation_key(app):
+    with app.app_context():
+        company = _company("Empresa transferencias idempotentes")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id,
+            barcode="TR-IDEMP-01",
+            name="Producto idempotente",
+            stock=Decimal("10"),
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, 10)
+        set_branch_stock(product, north.id, 0)
+        db.session.commit()
+
+        first = transfer_branch_stock_batch(
+            [(product, Decimal("3"))],
+            central.id,
+            north.id,
+            operation_key="same-client-operation-001",
+        )
+        db.session.commit()
+        original_ids = [row.id for row in first]
+        original_movement_count = BranchStockMovement.query.filter_by(
+            company_id=company.id,
+            source_type="branch_transfer",
+        ).count()
+        assert original_movement_count == 2
+
+        repeated = transfer_branch_stock_batch(
+            [(product, Decimal("3"))],
+            central.id,
+            north.id,
+            operation_key="same-client-operation-001",
+        )
+        db.session.commit()
+        assert [row.id for row in repeated] == original_ids
+        assert available_stock(product, central.id) == 7.0
+        assert available_stock(product, north.id) == 3.0
+        assert BranchStockMovement.query.filter_by(
+            company_id=company.id,
+            source_type="branch_transfer",
+        ).count() == 2
+
+        with pytest.raises(ValueError, match="clave de esta solicitud"):
+            transfer_branch_stock_batch(
+                [(product, Decimal("2"))],
+                central.id,
+                north.id,
+                operation_key="same-client-operation-001",
+            )
+        db.session.rollback()
+        assert available_stock(product, central.id) == 7.0
+        assert available_stock(product, north.id) == 3.0
+
+
+def test_qr_payment_status_is_hidden_from_other_users_and_branches(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _authorized_pos_qr_payment
+
+    with app.app_context():
+        company = _company("Empresa autorización QR")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        owner = User(
+            username="qr-owner",
+            email="qr-owner@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        other = User(
+            username="qr-other",
+            email="qr-other@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([owner, other])
+        db.session.flush()
+        payment = Payment(
+            company_id=company.id,
+            branch_id=central.id,
+            user_id=owner.id,
+            amount=100,
+            currency="ARS",
+            status="approved",
+            provider="mercadopago_pos",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {"branch_id": central.id, "items": [{"productId": 1, "quantity": 1}]},
+            }),
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(owner)
+            assert _authorized_pos_qr_payment(payment.id).id == payment.id
+
+        with app.test_request_context("/"):
+            login_user(other)
+            with pytest.raises(NotFound):
+                _authorized_pos_qr_payment(payment.id)
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: north.id,
+        )
+        with app.test_request_context("/"):
+            login_user(owner)
+            with pytest.raises(NotFound):
+                _authorized_pos_qr_payment(payment.id)
+        db.session.rollback()
+
+
+def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_admins_see_company(app, monkeypatch):
+    from flask_login import login_user
+    from app import Quote
+    from whatsapp_agent import _tenant_ai_order_quotes
+    from services.notification_service_legacy import _build_recent_quote_acceptance_notifications
+    from services.ai_agent.order_notifications import build_ai_order_notifications
+
+    with app.app_context():
+        company = _company("Empresa pedidos IA por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="ai-orders-employee",
+            email="ai-orders-employee@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        admin = User(
+            username="ai-orders-admin",
+            email="ai-orders-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([employee, admin])
+        db.session.flush()
+        marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+        central_quote = Quote(
+            number="AI-CENTRAL-001",
+            date=datetime.utcnow(),
+            company_id=company.id,
+            branch_id=central.id,
+            created_by_user_id=employee.id,
+            seller_id=employee.id,
+            observations=marker,
+            status="APROBADO",
+            total_amount=100,
+            updated_at=datetime.utcnow(),
+        )
+        north_quote = Quote(
+            number="AI-NORTE-001",
+            date=datetime.utcnow(),
+            company_id=company.id,
+            branch_id=north.id,
+            created_by_user_id=employee.id,
+            seller_id=employee.id,
+            observations=marker,
+            status="APROBADO",
+            total_amount=900,
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add_all([central_quote, north_quote])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(employee)
+            order_ids = {
+                row.id for row in _tenant_ai_order_quotes(company.id, Quote).all()
+            }
+            notifications = _build_recent_quote_acceptance_notifications()
+            ai_order_notifications = build_ai_order_notifications()
+            assert order_ids == {central_quote.id}
+            assert len(notifications) == 1
+            assert str(central_quote.id) in notifications[0]["href"]
+            assert len(ai_order_notifications) == 1
+            assert "AI-CENTRAL-001" in ai_order_notifications[0]["body"]
+
+        with app.test_request_context("/"):
+            login_user(admin)
+            order_ids = {
+                row.id for row in _tenant_ai_order_quotes(company.id, Quote).all()
+            }
+            notifications = _build_recent_quote_acceptance_notifications()
+            ai_order_notifications = build_ai_order_notifications()
+            assert order_ids == {central_quote.id, north_quote.id}
+            assert len(notifications) == 2
+            assert len(ai_order_notifications) == 2
+        db.session.rollback()
+
+
+def test_pos_qr_draft_session_key_is_separated_by_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _pos_qr_draft_session_key
+
+    with app.app_context():
+        company = _company("Empresa sesiones QR")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="qr-session-admin",
+            email="qr-session-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        selected = {"branch_id": central.id}
+        monkeypatch.setattr(
+            "sales._active_cart_branch_scope",
+            lambda: selected["branch_id"],
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            central_key = _pos_qr_draft_session_key()
+            selected["branch_id"] = north.id
+            north_key = _pos_qr_draft_session_key()
+            assert central_key != north_key
+            assert str(central.id) in central_key
+            assert str(north.id) in north_key
+        db.session.rollback()
+
+
+def test_pos_webhook_approval_preserves_a_valid_branch_reserved_draft(app, monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with app.app_context():
+        company = _company("Empresa QR webhook multisucursal")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = User(
+            username="qr-webhook-owner",
+            email="qr-webhook-owner@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        product = Product(
+            company_id=company.id,
+            barcode="QR-WEBHOOK-001",
+            name="Producto webhook",
+            stock=5,
+            min_stock=0,
+            active=True,
+        )
+        db.session.add_all([user, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 5)
+        reserve_branch_stock(product, branch.id, 2, note="QR webhook pendiente")
+
+        draft = Payment(
+            company_id=company.id,
+            branch_id=branch.id,
+            user_id=user.id,
+            amount=200,
+            currency="ARS",
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": branch.id,
+                    "cash_session_id": 123,
+                    "items": [{"productId": product.id, "quantity": 2}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                    "cart_hash": "webhook-branch-check",
+                },
+            }),
+        )
+        db.session.add(draft)
+        db.session.flush()
+        external_reference = (
+            f"flow:pos_sale|draft_payment_id:{draft.id}|company_id:{company.id}|"
+            f"user_id:{user.id}|branch_id:{branch.id}|cart_hash:webhook-branch-check"
+        )
+        draft.external_reference = external_reference
+        db.session.commit()
+
+        approved_payment = {
+            "id": "987654321012345678",
+            "status": "approved",
+            "date_last_updated": "2026-11-03T20:30:00Z",
+            "date_approved": "2026-11-03T20:30:00Z",
+            "transaction_amount": 200,
+            "currency_id": "ARS",
+            "payment_method_id": "qr",
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "pos_sale",
+                "company_id": company.id,
+                "user_id": user.id,
+                "draft_payment_id": draft.id,
+                "branch_id": branch.id,
+                "total_amount": 200,
+            },
+        }
+        service = WebhookService()
+        refunded = []
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.validate_webhook_signature",
+            lambda self, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.get_payment",
+            lambda self, payment_id, **kwargs: approved_payment,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.refund_payment",
+            lambda self, payment_id: refunded.append(str(payment_id))
+            or {"id": "unexpected-refund", "status": "approved"},
+        )
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-qr-branch-1", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-qr-branch-1", "type": "payment", "data": {"id": "987654321012345678"}},
+        )
+        db.session.refresh(draft)
+        stored = json.loads(draft.payload_json)
+
+        assert result["status"] == "processed"
+        assert draft.status == "approved"
+        assert draft.branch_id == branch.id
+        assert stored["snapshot"]["branch_id"] == branch.id
+        assert stored["snapshot"]["items"] == [{"productId": product.id, "quantity": 2}]
+        assert stored["mercadopago"]["status"] == "approved"
+        assert refunded == []
+        assert Decimal(str(get_branch_stock(product, branch.id).reserved_stock)) == Decimal("2")
+        db.session.rollback()
+
+
+def test_qr_status_can_be_checked_after_switching_to_another_assigned_branch(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _authorized_pos_qr_payment
+
+    with app.app_context():
+        company = _company("Empresa QR consulta multibranch")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="qr-switch-employee",
+            email="qr-switch-employee@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(employee)
+        db.session.flush()
+        payment = Payment(
+            company_id=company.id,
+            branch_id=central.id,
+            user_id=employee.id,
+            amount=100,
+            currency="ARS",
+            status="approved",
+            provider="mercadopago_pos",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": central.id,
+                    "cash_session_id": 10,
+                    "items": [{"productId": 1, "quantity": 1}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                },
+            }),
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: north.id,
+        )
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.accessible_branches",
+            lambda: [central, north],
+        )
+        with app.test_request_context("/"):
+            login_user(employee)
+            # Status is visible because the employee remains assigned to A,
+            # even though B is active. Finalization remains bound to A.
+            assert _authorized_pos_qr_payment(
+                payment.id,
+                require_active_branch=False,
+            ).id == payment.id
+            with pytest.raises(NotFound):
+                _authorized_pos_qr_payment(payment.id, require_active_branch=True)
+        db.session.rollback()
+
+
+def test_pos_webhook_approval_after_draft_expiry_refunds_and_releases_stock(app, monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with app.app_context():
+        company = _company("Empresa QR expirado webhook")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = User(
+            username="qr-expired-owner",
+            email="qr-expired-owner@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        product = Product(
+            company_id=company.id,
+            barcode="QR-WEBHOOK-EXP-001",
+            name="Producto QR expirado",
+            stock=5,
+            min_stock=0,
+            active=True,
+        )
+        db.session.add_all([user, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 5)
+        reserve_branch_stock(product, branch.id, 2, note="QR vencido")
+        draft = Payment(
+            company_id=company.id,
+            branch_id=branch.id,
+            user_id=user.id,
+            amount=200,
+            currency="ARS",
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft",
+            created_at=datetime.utcnow() - timedelta(hours=80),
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": {
+                    "branch_id": branch.id,
+                    "cash_session_id": 124,
+                    "items": [{"productId": product.id, "quantity": 2}],
+                    "stock_reserved": True,
+                    "stock_reservation_released": False,
+                    "cart_hash": "webhook-expired-branch-check",
+                },
+            }),
+        )
+        db.session.add(draft)
+        db.session.flush()
+        external_reference = (
+            f"flow:pos_sale|draft_payment_id:{draft.id}|company_id:{company.id}|"
+            f"user_id:{user.id}|branch_id:{branch.id}|cart_hash:webhook-expired-branch-check"
+        )
+        draft.external_reference = external_reference
+        db.session.commit()
+
+        approved_payment = {
+            "id": "987654321098765432",
+            "status": "approved",
+            "date_last_updated": "2026-11-03T20:30:00Z",
+            "date_approved": "2026-11-03T20:30:00Z",
+            "transaction_amount": 200,
+            "currency_id": "ARS",
+            "payment_method_id": "qr",
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "pos_sale",
+                "company_id": company.id,
+                "user_id": user.id,
+                "draft_payment_id": draft.id,
+                "branch_id": branch.id,
+                "total_amount": 200,
+            },
+        }
+        service = WebhookService()
+        refunded = []
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.validate_webhook_signature",
+            lambda self, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.get_payment",
+            lambda self, payment_id, **kwargs: approved_payment,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.refund_payment",
+            lambda self, payment_id: refunded.append(str(payment_id))
+            or {"id": "refund-expired-pos", "status": "approved"},
+        )
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-qr-expired-1", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-qr-expired-1", "type": "payment", "data": {"id": "987654321098765432"}},
+        )
+        db.session.refresh(draft)
+        stored = json.loads(draft.payload_json)
+
+        assert result["status"] == "late_pos_qr_refunded"
+        assert result["payment_status"] == "refunded"
+        assert draft.status == "refunded"
+        assert draft.payment_id == "987654321098765432"
+        assert stored["snapshot"]["stock_reservation_released"] is True
+        assert refunded == ["987654321098765432"]
+        assert Decimal(str(get_branch_stock(product, branch.id).reserved_stock)) == Decimal("0")
+        assert available_stock(product, branch.id) == 5.0
+        assert PaymentHistory.query.filter_by(
+            payment_id=draft.id,
+            event="pos_qr_late_approval_refund",
+        ).count() == 1
+
+        # A second, distinct webhook event for the same approved payment must
+        # not request a second refund while the first refund is pending/settled.
+        repeated_result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-qr-expired-2", "x-signature": "ts=2,v1=abc"},
+            payload={"id": "evt-qr-expired-2", "type": "payment", "data": {"id": "987654321098765432"}},
+        )
+        assert repeated_result["status"] == "late_pos_qr_refund_already_requested"
+        assert repeated_result["payment_status"] == "refunded"
+        assert refunded == ["987654321098765432"]
+        assert PaymentHistory.query.filter_by(
+            payment_id=draft.id,
+            event="pos_qr_late_approval_refund",
+        ).count() == 1
+        db.session.rollback()

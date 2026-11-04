@@ -1142,6 +1142,11 @@ class BranchStockTransfer(db.Model):
     __tablename__ = "branch_stock_transfers"
     __table_args__ = (
         Index("ix_branch_stock_transfers_company_created", "company_id", "created_at"),
+        Index(
+            "uq_branch_transfer_operation_product",
+            "company_id", "operation_key", "product_id",
+            unique=True,
+        ),
     )
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -1149,6 +1154,8 @@ class BranchStockTransfer(db.Model):
     target_branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
     quantity = db.Column(db.Numeric(18, 3), nullable=False)
+    # A repeated client request can safely resolve to the original transfer set.
+    operation_key = db.Column(db.String(80), nullable=True, index=True)
     note = db.Column(db.Text)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
@@ -1286,6 +1293,9 @@ class Payment(db.Model):
     preference_id = db.Column(db.String(120), index=True)
     external_reference = db.Column(db.String(255), index=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    # POS QR drafts are bound to the branch where the charge was initiated.
+    # Nullable for historical subscription payments and legacy POS records.
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"))
