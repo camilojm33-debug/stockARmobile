@@ -24,10 +24,11 @@ def upgrade():
     if "request_key" not in transfer_columns:
         op.add_column("branch_stock_transfers", sa.Column("request_key", sa.String(length=80), nullable=True))
         op.create_index("ix_branch_stock_transfers_request_key", "branch_stock_transfers", ["request_key"])
-        op.create_unique_constraint(
+        op.create_index(
             "uq_branch_transfer_request_product",
             "branch_stock_transfers",
             ["company_id", "request_key", "product_id"],
+            unique=True,
         )
 
     if not inspector.has_table("branch_stock_reservations"):
