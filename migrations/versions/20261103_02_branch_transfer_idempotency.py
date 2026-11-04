@@ -26,15 +26,13 @@ def upgrade():
             "branch_stock_transfers",
             ["operation_key"],
         )
-    constraints = {
-        constraint.get("name")
-        for constraint in sa.inspect(bind).get_unique_constraints("branch_stock_transfers")
-    }
-    if "uq_branch_transfer_operation_product" not in constraints:
-        op.create_unique_constraint(
+    indexes = {index["name"] for index in sa.inspect(bind).get_indexes("branch_stock_transfers")}
+    if "uq_branch_transfer_operation_product" not in indexes:
+        op.create_index(
             "uq_branch_transfer_operation_product",
             "branch_stock_transfers",
             ["company_id", "operation_key", "product_id"],
+            unique=True,
         )
 
 
@@ -43,17 +41,12 @@ def downgrade():
     inspector = sa.inspect(bind)
     if not inspector.has_table("branch_stock_transfers"):
         return
-    constraints = {
-        constraint.get("name")
-        for constraint in sa.inspect(bind).get_unique_constraints("branch_stock_transfers")
-    }
-    if "uq_branch_transfer_operation_product" in constraints:
-        op.drop_constraint(
-            "uq_branch_transfer_operation_product",
-            "branch_stock_transfers",
-            type_="unique",
-        )
     indexes = {index["name"] for index in sa.inspect(bind).get_indexes("branch_stock_transfers")}
+    if "uq_branch_transfer_operation_product" in indexes:
+        op.drop_index(
+            "uq_branch_transfer_operation_product",
+            table_name="branch_stock_transfers",
+        )
     if "ix_branch_stock_transfers_operation_key" in indexes:
         op.drop_index("ix_branch_stock_transfers_operation_key", table_name="branch_stock_transfers")
     columns = {column["name"] for column in sa.inspect(bind).get_columns("branch_stock_transfers")}
