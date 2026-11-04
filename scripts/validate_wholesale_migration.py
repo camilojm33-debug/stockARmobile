@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261102_01_multibranch_opening"
+HEAD_REVISION = "20261103_02_transfer_idem"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -228,6 +228,8 @@ def main() -> None:
             "expenses": {"branch_id"},
             "business_documents": {"branch_id"},
             "plans": {"max_branches"},
+            "payments": {"branch_id"},
+            "branch_stock_transfers": {"operation_key"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -257,8 +259,11 @@ def main() -> None:
             raise AssertionError(f"Unexpected Alembic revision after upgrade: {version}")
 
         transfer_columns = {column["name"] for column in inspector.get_columns("branch_stock_transfers")}
-        if not {"source_branch_id", "target_branch_id", "product_id", "quantity", "created_by_user_id"}.issubset(transfer_columns):
+        if not {"source_branch_id", "target_branch_id", "product_id", "quantity", "created_by_user_id", "operation_key"}.issubset(transfer_columns):
             raise AssertionError("Branch stock transfer table is missing required fields.")
+        payment_columns = {column["name"] for column in inspector.get_columns("payments")}
+        if "branch_id" not in payment_columns:
+            raise AssertionError("Payment table is missing its originating branch column.")
         migrated_branch = db.session.execute(
             text("SELECT id FROM branches WHERE company_id = :company_id AND is_default = TRUE"),
             {"company_id": expected_company_id},
