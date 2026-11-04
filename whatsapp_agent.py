@@ -796,8 +796,25 @@ def ai_orders():
     return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
 
 
+def _tenant_can_access_vendor_whatsapp(company_id: int) -> bool:
+    """Vendor WhatsApp attention belongs to the default order-fulfillment branch."""
+    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
+        return True
+    from stockarmobile.branch_context import get_active_branch_id
+    from services.ai_agent.vendor_order_service import _vendor_fulfillment_branch_id
+    active_branch_id = get_active_branch_id()
+    fulfillment_branch_id = _vendor_fulfillment_branch_id(int(company_id))
+    return bool(
+        active_branch_id is not None
+        and fulfillment_branch_id is not None
+        and int(active_branch_id) == int(fulfillment_branch_id)
+    )
+
+
 def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, *, lock: bool = False):
     """Resolve only this tenant's Vendedor IA WhatsApp conversation."""
+    if not _tenant_can_access_vendor_whatsapp(int(company_id)):
+        return None
     agent = choose_agent(int(company_id), channel="whatsapp")
     query = db.session.query(Conversation).filter_by(
         id=int(conversation_id),
@@ -865,6 +882,8 @@ def ai_order_mark_picked_up(quote_id: int):
 @login_required
 def ai_whatsapp_attention():
     company_id, company = _tenant_attention_actor()
+    if not _tenant_can_access_vendor_whatsapp(company_id):
+        abort(403)
     agent = choose_agent(company_id, channel="whatsapp")
     query_text = str(request.args.get("q") or "").strip().lower()
     state = str(request.args.get("state") or "all").strip().lower()
