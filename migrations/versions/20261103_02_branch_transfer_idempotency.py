@@ -2,7 +2,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "20261103_02_branch_transfer_idempotency"
+revision = "20261103_02_transfer_idem"
 down_revision = "20261103_01_payment_branch_scope"
 branch_labels = None
 depends_on = None
