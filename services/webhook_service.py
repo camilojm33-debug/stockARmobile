@@ -956,6 +956,18 @@ class WebhookService:
                     if draft_payment is None:
                         draft_payment = Payment.query.filter_by(external_reference=external_reference, company_id=company_id).first()
 
+                    if draft_payment is None:
+                        raise RuntimeError("Webhook POS sin borrador local de cobro verificable.")
+                    expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
+                    expected_user_id = int(ref_parts.get("user_id") or 0) or None
+                    if draft_payment.provider != "mercadopago_pos":
+                        raise RuntimeError("Webhook POS vinculado a un tipo de pago incompatible.")
+                    if draft_payment.branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook POS con sucursal distinta a la del borrador original.")
+                    if expected_user_id and int(draft_payment.user_id or 0) != expected_user_id:
+                        raise RuntimeError("Webhook POS con usuario distinto al propietario del borrador.")
+                    if draft_payment.external_reference and draft_payment.external_reference != external_reference:
+                        raise RuntimeError("Webhook POS con referencia externa distinta al borrador original.")
                     if draft_payment is not None:
                         payment = draft_payment
                         payment.payment_id = str(payment_data.get("id"))
@@ -970,12 +982,9 @@ class WebhookService:
                         payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method or "QR Mercado Pago"
                         payment.reference = external_reference or payment.reference
                         payment.provider = "mercadopago_pos"
-                        payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        from services.payment_flow import merge_pos_payment_provider_payload
+                        merge_pos_payment_provider_payload(payment, payment_data)
                         payment.paid_at = paid_at or payment.paid_at
-                    else:
-                        payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=None, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago_pos", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
-                        db_session.add(payment)
-                        db_session.flush()
                 else:
                     payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=subscription_id, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
                     db_session.add(payment)
@@ -989,6 +998,12 @@ class WebhookService:
                         raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en metadata para POS")
                     if ref_company_id and ref_company_id != expected_company_id:
                         raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en external_reference para POS")
+                    expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
+                    expected_user_id = int(ref_parts.get("user_id") or 0) or None
+                    if payment.branch_id != expected_branch_id:
+                        raise RuntimeError("Webhook Mercado Pago con sucursal inconsistente para POS")
+                    if expected_user_id and int(payment.user_id or 0) != expected_user_id:
+                        raise RuntimeError("Webhook Mercado Pago con propietario inconsistente para POS")
 
                 previous_payload = json.loads(payment.payload_json) if payment.payload_json else {}
                 previous_updated_at = self._event_updated_at(previous_payload)
@@ -1015,7 +1030,11 @@ class WebhookService:
                 payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
                 payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method
                 payment.reference = external_reference or payment.reference
-                payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                if flow == "pos_sale":
+                    from services.payment_flow import merge_pos_payment_provider_payload
+                    merge_pos_payment_provider_payload(payment, payment_data)
+                else:
+                    payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
                 payment.paid_at = paid_at or payment.paid_at
 
             subscription = None
@@ -1049,9 +1068,13 @@ class WebhookService:
                         draft_payment.payment_method = payment.payment_method or draft_payment.payment_method or "QR Mercado Pago"
                         draft_payment.provider = "mercadopago_pos"
                         draft_payment.reference = external_reference or draft_payment.reference
-                        draft_payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        from services.payment_flow import merge_pos_payment_provider_payload
+                        merge_pos_payment_provider_payload(draft_payment, payment_data)
                         draft_payment.paid_at = paid_at or draft_payment.paid_at
                         payment = draft_payment
+                if payment_status in {"rejected", "cancelled", "canceled", "refunded", "charged_back"}:
+                    from services.payment_flow import release_pos_payment_reservation
+                    release_pos_payment_reservation(db_session, payment)
                 result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
             elif subscription and company:
                 metadata = payment_data.get("metadata") or {}
