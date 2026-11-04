@@ -923,7 +923,12 @@ class WebhookService:
                 db_session.commit()
                 return result
 
-            payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
+            # Serialize distinct Mercado Pago notifications for the same payment.
+            # This prevents an expiry/release and approval from consuming or
+            # releasing the same reservation concurrently.
+            payment = Payment.query.filter_by(
+                payment_id=str(payment_data.get("id"))
+            ).with_for_update().first()
             if merchant_connection is not None and payment is not None and int(payment.company_id or 0) != int(merchant_connection.company_id or 0):
                 raise RuntimeError("Webhook Mercado Pago con pago perteneciente a otra empresa")
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
@@ -959,9 +964,15 @@ class WebhookService:
                     draft_payment = None
                     draft_payment_id = ref_parts.get("draft_payment_id")
                     if draft_payment_id and str(draft_payment_id).isdigit():
-                        draft_payment = Payment.query.filter_by(id=int(draft_payment_id), company_id=company_id).first()
+                        draft_payment = Payment.query.filter_by(
+                            id=int(draft_payment_id),
+                            company_id=company_id,
+                        ).with_for_update().first()
                     if draft_payment is None:
-                        draft_payment = Payment.query.filter_by(external_reference=external_reference, company_id=company_id).first()
+                        draft_payment = Payment.query.filter_by(
+                            external_reference=external_reference,
+                            company_id=company_id,
+                        ).with_for_update().first()
 
                     if draft_payment is None:
                         raise RuntimeError("Webhook POS sin borrador local de cobro verificable.")
