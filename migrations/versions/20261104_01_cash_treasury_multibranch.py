@@ -170,6 +170,24 @@ def upgrade():
         op.add_column("financial_accounts", sa.Column("payment_method_key", sa.String(30), nullable=True))
     if "ix_financial_accounts_payment_method_key" not in _indexes(bind, "financial_accounts"):
         op.create_index("ix_financial_accounts_payment_method_key", "financial_accounts", ["payment_method_key"])
+    if "uq_financial_accounts_payment_mapping_branch" not in _indexes(bind, "financial_accounts"):
+        op.create_index(
+            "uq_financial_accounts_payment_mapping_branch",
+            "financial_accounts",
+            ["company_id", "branch_id", "payment_method_key"],
+            unique=True,
+            postgresql_where=sa.text("payment_method_key IS NOT NULL AND branch_id IS NOT NULL"),
+            sqlite_where=sa.text("payment_method_key IS NOT NULL AND branch_id IS NOT NULL"),
+        )
+    if "uq_financial_accounts_payment_mapping_central" not in _indexes(bind, "financial_accounts"):
+        op.create_index(
+            "uq_financial_accounts_payment_mapping_central",
+            "financial_accounts",
+            ["company_id", "payment_method_key"],
+            unique=True,
+            postgresql_where=sa.text("payment_method_key IS NOT NULL AND branch_id IS NULL"),
+            sqlite_where=sa.text("payment_method_key IS NOT NULL AND branch_id IS NULL"),
+        )
 
     if not _has_table(bind, "financial_account_movements"):
         op.create_table(

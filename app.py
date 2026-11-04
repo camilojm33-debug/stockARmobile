@@ -1607,6 +1607,23 @@ class FinancialAccount(db.Model):
             postgresql_where=text("branch_id IS NULL"),
             sqlite_where=text("branch_id IS NULL"),
         ),
+        Index(
+            "uq_financial_accounts_payment_mapping_branch",
+            "company_id",
+            "branch_id",
+            "payment_method_key",
+            unique=True,
+            postgresql_where=text("payment_method_key IS NOT NULL AND branch_id IS NOT NULL"),
+            sqlite_where=text("payment_method_key IS NOT NULL AND branch_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_financial_accounts_payment_mapping_central",
+            "company_id",
+            "payment_method_key",
+            unique=True,
+            postgresql_where=text("payment_method_key IS NOT NULL AND branch_id IS NULL"),
+            sqlite_where=text("payment_method_key IS NOT NULL AND branch_id IS NULL"),
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
