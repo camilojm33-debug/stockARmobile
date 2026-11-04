@@ -1110,3 +1110,104 @@ def test_vendor_whatsapp_attention_rejects_conversation_from_another_branch(app,
             assert _tenant_vendor_whatsapp_conversation(company.id, central_conversation.id) is not None
             assert _tenant_vendor_whatsapp_conversation(company.id, north_conversation.id) is None
         db.session.rollback()
+
+
+def test_backup_inventory_restore_preserves_live_qr_reservations(app):
+    from app import BranchStock, BranchStockReservation, Payment
+    from services.backup_service import BackupService
+    from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+
+    with app.app_context():
+        company = _company("Empresa backup con QR pendiente")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="BKP-QR-001", name="Producto QR backup",
+            stock=12, min_stock=1, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        set_branch_stock(product, north.id, Decimal("5"))
+        payment = Payment(
+            company_id=company.id, user_id=None, branch_id=north.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:backup",
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, Decimal("3"))], north.id)
+        db.session.flush()
+
+        snapshot = {
+            "company_id": company.id,
+            "branch_stock": [
+                {"company_id": company.id, "branch_id": central.id, "product_id": product.id,
+                 "stock": "7.000", "min_stock": "1.000", "reserved_stock": "0.000"},
+                {"company_id": company.id, "branch_id": north.id, "product_id": product.id,
+                 "stock": "5.000", "min_stock": "1.000", "reserved_stock": "0.000"},
+            ],
+            "branch_stock_movements": [],
+            "branch_stock_transfers": [],
+        }
+
+        north_row = BranchStock.query.filter_by(branch_id=north.id, product_id=product.id).one()
+        north_row.stock = Decimal("4.000")
+        product.stock = 11
+        db.session.flush()
+
+        BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
+        db.session.flush()
+
+        db.session.refresh(north_row)
+        reservation = BranchStockReservation.query.filter_by(payment_id=payment.id).one()
+        assert reservation.status == "reserved"
+        assert north_row.reserved_stock == Decimal("3.000")
+        assert north_row.stock == Decimal("5.000")
+        assert available_stock(product, north.id) == 2.0
+        assert float(product.stock) == 12.0
+        db.session.rollback()
+
+
+def test_backup_inventory_restore_rejects_balance_below_live_qr_reservations(app):
+    from app import BranchStock, Payment
+    from services.backup_service import BackupService
+    from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+
+    with app.app_context():
+        company = _company("Empresa backup QR insuficiente")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id, barcode="BKP-QR-002", name="Producto QR insuficiente",
+            stock=12, min_stock=1, active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, Decimal("7"))
+        set_branch_stock(product, north.id, Decimal("5"))
+        payment = Payment(
+            company_id=company.id, user_id=None, branch_id=north.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:backup-low",
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, Decimal("3"))], north.id)
+        db.session.flush()
+
+        snapshot = {
+            "company_id": company.id,
+            "branch_stock": [
+                {"company_id": company.id, "branch_id": central.id, "product_id": product.id,
+                 "stock": "7.000", "min_stock": "1.000"},
+                {"company_id": company.id, "branch_id": north.id, "product_id": product.id,
+                 "stock": "2.000", "min_stock": "1.000"},
+            ],
+            "branch_stock_movements": [],
+            "branch_stock_transfers": [],
+        }
+
+        with pytest.raises(ValueError, match="reservadas para cobros QR"):
+            BackupService._restore_branch_inventory(company_id=company.id, payload=snapshot)
+        db.session.rollback()
