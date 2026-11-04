@@ -7670,12 +7670,19 @@ def test_pos_qr_webhook_refunds_legacy_draft_without_origin_branch(monkeypatch):
 
         service = WebhookService()
         refunded = []
-        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
-        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
+        # Patch the service class, not only the current instance: webhook
+        # execution may construct or replace a provider client during tests.
         monkeypatch.setattr(
-            service.mp_service,
-            "refund_payment",
-            lambda payment_id: refunded.append(str(payment_id))
+            "services.webhook_service.MercadoPagoService.validate_webhook_signature",
+            lambda self, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.get_payment",
+            lambda self, payment_id, **kwargs: approved_payment,
+        )
+        monkeypatch.setattr(
+            "services.webhook_service.MercadoPagoService.refund_payment",
+            lambda self, payment_id: refunded.append(str(payment_id))
             or {"id": "refund-legacy-pos", "status": "approved"},
         )
 
