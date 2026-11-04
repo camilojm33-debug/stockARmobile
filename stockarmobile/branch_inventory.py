@@ -85,7 +85,7 @@ def available_stock(product, branch_id, *, allow_inactive=False):
     return float(max(stock - reserved, Decimal("0")))
 
 
-def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None):
+def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None, request_key=None):
     """Move units between branches atomically; company aggregate stock is unchanged."""
     from decimal import Decimal, InvalidOperation
     from app import Branch, BranchStockTransfer, db
@@ -116,6 +116,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
         target_branch_id=target.id,
         product_id=product.id,
         quantity=amount,
+        request_key=(str(request_key or "").strip()[:80] or None),
         note=(str(note or "").strip()[:255] or None),
         created_by_user_id=user_id,
     )
@@ -134,7 +135,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     return transfer
 
 
-def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None):
+def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None, request_key=None):
     """Transfer several products in one caller-controlled database transaction.
 
     Products are locked in ascending ID order so concurrent multi-product
@@ -171,6 +172,7 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
             quantity,
             user_id=user_id,
             note=note,
+            request_key=request_key,
         ))
     return transfers
 
