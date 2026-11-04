@@ -1549,7 +1549,11 @@ def api_mp_qr_finalize():
     if not draft_id:
         return jsonify({"error": "draft_id requerido"}), 400
 
-    payment = _authorized_pos_qr_payment(draft_id, lock=True)
+    payment = _authorized_pos_qr_payment(
+        draft_id,
+        lock=True,
+        require_active_branch=False,
+    )
     if payment.branch_id is None:
         return jsonify({"error": "Este cobro QR no tiene una sucursal de origen verificable y requiere revisión administrativa."}), 409
     from stockarmobile.branch_context import get_active_branch_id
