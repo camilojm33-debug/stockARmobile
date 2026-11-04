@@ -102,3 +102,33 @@ def test_pos_provider_payload_merge_preserves_trusted_sale_snapshot():
     assert merged["snapshot"] == snapshot
     assert merged["mercadopago"]["status"] == "approved"
     assert WebhookService._event_updated_at(merged) is not None
+
+
+def test_pos_payment_requires_a_live_reservation_for_late_approval_fulfillment():
+    from services.payment_flow import pos_payment_has_live_stock_reservation
+
+    payload = {
+        "flow": "pos_sale",
+        "snapshot": {
+            "branch_id": 17,
+            "cash_session_id": 91,
+            "items": [{"productId": 8, "quantity": 2}],
+            "stock_reserved": True,
+            "stock_reservation_released": False,
+        },
+    }
+    payment = SimpleNamespace(
+        provider="mercadopago_pos",
+        branch_id=17,
+        payload_json=json.dumps(payload),
+    )
+    assert pos_payment_has_live_stock_reservation(payment) is True
+
+    payload["snapshot"]["stock_reservation_released"] = True
+    payment.payload_json = json.dumps(payload)
+    assert pos_payment_has_live_stock_reservation(payment) is False
+
+    payload["snapshot"]["stock_reservation_released"] = False
+    payload["snapshot"]["branch_id"] = 18
+    payment.payload_json = json.dumps(payload)
+    assert pos_payment_has_live_stock_reservation(payment) is False
