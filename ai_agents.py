@@ -213,6 +213,42 @@ def _vendor_dashboard_metrics(company_id: int, month_start: datetime, branch_id=
     derived_sales = derived_query.scalar() or 0
     return {"orders": int(orders), "ai_sales": int(derived_sales)}
 
+
+def _count_critical_stock(company_id: int, branch_id=None) -> int:
+    """Count active products at/below minimum using stock not committed to QR drafts."""
+    from app import BranchStock, Product
+
+    products = Product.query.filter(
+        Product.company_id == int(company_id),
+        Product.active.is_(True),
+    )
+    if branch_id is not None:
+        available = (
+            db.func.coalesce(BranchStock.stock, 0)
+            - db.func.coalesce(BranchStock.reserved_stock, 0)
+        )
+        return products.outerjoin(
+            BranchStock,
+            (BranchStock.product_id == Product.id)
+            & (BranchStock.company_id == Product.company_id)
+            & (BranchStock.branch_id == int(branch_id)),
+        ).filter(
+            available <= db.func.coalesce(BranchStock.min_stock, Product.min_stock)
+        ).count()
+
+    reserved_total = (
+        db.session.query(db.func.coalesce(db.func.sum(BranchStock.reserved_stock), 0))
+        .filter(
+            BranchStock.company_id == Product.company_id,
+            BranchStock.product_id == Product.id,
+        )
+        .correlate(Product)
+        .scalar_subquery()
+    )
+    return products.filter(
+        (Product.stock - reserved_total) <= Product.min_stock
+    ).count()
+
 def _context():
     from app import Client, Company, Product, Quote, Sale, SaleItem, Payment
     from services.ai_agent.subscription_service import AISubscriptionService
@@ -247,25 +283,7 @@ def _context():
     sales_total = float(sales_month.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     previous_total = float(sales_previous.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     sales_change = None if previous_total == 0 else round(((sales_total - previous_total) / previous_total) * 100, 1)
-    if active_branch_id is not None:
-        from app import BranchStock
-        critical_stock = Product.query.outerjoin(
-            BranchStock,
-            (BranchStock.product_id == Product.id)
-            & (BranchStock.company_id == Product.company_id)
-            & (BranchStock.branch_id == active_branch_id),
-        ).filter(
-            Product.company_id == company_id,
-            Product.active.is_(True),
-            db.func.coalesce(BranchStock.stock, 0)
-            <= db.func.coalesce(BranchStock.min_stock, Product.min_stock),
-        ).count()
-    else:
-        critical_stock = Product.query.filter(
-            Product.company_id == company_id,
-            Product.active.is_(True),
-            Product.stock <= Product.min_stock,
-        ).count()
+    critical_stock = _count_critical_stock(company_id, branch_id=active_branch_id)
     sold_query = db.session.query(SaleItem.product_id).join(Sale).filter(
         Sale.company_id == company_id,
         Sale.created_at >= now - timedelta(days=90),
