@@ -105,8 +105,21 @@ def _build_recent_quote_acceptance_notifications():
     from app import Quote, scope_query_to_company, utcnow
 
     cutoff = utcnow() - timedelta(days=7)
+    query = scope_query_to_company(Quote.query, Quote)
+    # Quote notifications are operational: show only the branch selected by
+    # the authenticated recipient, including for company administrators.
+    try:
+        from flask_login import current_user
+        if getattr(current_user, "is_authenticated", False):
+            from stockarmobile.branch_context import get_active_branch_id
+            branch_id = get_active_branch_id()
+            if branch_id is not None:
+                query = query.filter(Quote.branch_id == int(branch_id))
+    except (ImportError, RuntimeError):
+        # Background/system notification builders retain their tenant-wide scope.
+        pass
     quotes = (
-        scope_query_to_company(Quote.query, Quote)
+        query
         .filter(
             Quote.status == "APROBADO",
             Quote.converted_sale_id.is_(None),
