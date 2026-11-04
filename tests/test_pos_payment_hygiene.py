@@ -69,3 +69,89 @@ def test_expire_stale_pos_drafts_updates_only_abandoned_local_pos_drafts(app):
         history = PaymentHistory.query.filter_by(payment_id=old.id, event="expired_stale_pos_draft").first()
         assert history is not None
         assert history.status == "expired"
+
+
+def test_pos_qr_reservation_reduces_available_stock_and_blocks_other_operations(app):
+    from app import Branch, Product, BranchStockReservation
+    from stockarmobile.branch_inventory import (
+        adjust_branch_stock,
+        available_stock,
+        reserve_branch_stock_for_payment,
+        release_branch_stock_reservations,
+        set_branch_stock,
+    )
+
+    with app.app_context():
+        company = Company(name="POS QR reservations", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch = Branch(company_id=company.id, name="Casa central", code="CENTRAL", active=True, is_default=True)
+        product = Product(company_id=company.id, barcode="POS-RES-001", name="Producto reservado", stock=5, min_stock=0, active=True)
+        db.session.add_all([branch, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 5)
+        payment = Payment(
+            company_id=company.id,
+            user_id=None,
+            branch_id=branch.id,
+            amount=300,
+            currency="ARS",
+            status="pending",
+            provider="mercadopago_pos",
+            reference="pos_draft:test",
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        reserve_branch_stock_for_payment(payment, [(product, 3)], branch.id)
+        db.session.commit()
+        assert BranchStockReservation.query.filter_by(payment_id=payment.id, status="reserved").count() == 1
+        assert available_stock(product, branch.id) == 2
+
+        try:
+            adjust_branch_stock(product, branch.id, -3, movement_type="sale")
+        except ValueError as exc:
+            assert "reservado" in str(exc).lower()
+            db.session.rollback()
+        else:
+            raise AssertionError("Una venta externa no debía consumir stock reservado.")
+
+        db.session.refresh(payment)
+        assert release_branch_stock_reservations(payment.id) == 1
+        db.session.commit()
+        assert available_stock(product, branch.id) == 5
+        assert BranchStockReservation.query.filter_by(payment_id=payment.id, status="released").count() == 1
+
+
+def test_expiring_pos_qr_releases_reserved_branch_stock(app):
+    from app import Branch, Product, BranchStockReservation
+    from stockarmobile.branch_inventory import available_stock, reserve_branch_stock_for_payment, set_branch_stock
+
+    with app.app_context():
+        now = datetime(2026, 9, 21, 21, 0, 0)
+        company = Company(name="POS QR reservation expiry", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch = Branch(company_id=company.id, name="Casa central", code="CENTRAL", active=True, is_default=True)
+        product = Product(company_id=company.id, barcode="POS-RES-002", name="Producto reservado expiry", stock=4, min_stock=0, active=True)
+        db.session.add_all([branch, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 4)
+        old = Payment(
+            company_id=company.id, user_id=None, branch_id=branch.id,
+            amount=100, currency="ARS", status="pending",
+            provider="mercadopago_pos", reference="pos_draft:expired",
+            created_at=now - timedelta(hours=80),
+        )
+        db.session.add(old)
+        db.session.flush()
+        reserve_branch_stock_for_payment(old, [(product, 2)], branch.id)
+        db.session.commit()
+
+        assert available_stock(product, branch.id) == 2
+        assert expire_stale_pos_drafts(db.session, company_id=company.id, now=now) == 1
+        db.session.commit()
+
+        assert db.session.get(Payment, old.id).status == "expired"
+        assert available_stock(product, branch.id) == 4
+        assert BranchStockReservation.query.filter_by(payment_id=old.id, status="released").count() == 1
