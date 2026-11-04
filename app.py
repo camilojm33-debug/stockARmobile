@@ -1286,6 +1286,9 @@ class Payment(db.Model):
     preference_id = db.Column(db.String(120), index=True)
     external_reference = db.Column(db.String(255), index=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    # POS QR drafts are bound to the branch where the charge was initiated.
+    # Nullable for historical subscription payments and legacy POS records.
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), index=True)
     subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"))
