@@ -175,7 +175,12 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
         raise ValueError("La cantidad de transferencia debe ser mayor que cero.")
 
     if operation_key:
-        from app import BranchStockTransfer
+        from app import BranchStockTransfer, Company
+        # Serialize the idempotency lookup per tenant. The unique index below
+        # remains the final guard; this lock makes concurrent retries return the
+        # already-created transfer set instead of racing into a duplicate write.
+        company_id = int(normalized[0][1].company_id)
+        Company.query.filter_by(id=company_id).with_for_update().first()
         existing = (
             BranchStockTransfer.query
             .filter_by(company_id=int(normalized[0][1].company_id), operation_key=operation_key)
