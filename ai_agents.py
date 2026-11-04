@@ -184,17 +184,20 @@ def _require_ai_access():
 VENDOR_AI_ORDER_OBSERVATION = "Pedido generado por el Vendedor 24 hs de StockARmobile."
 
 
-def _vendor_dashboard_metrics(company_id: int, month_start: datetime) -> dict:
-    """Return current-month Vendor IA order and derived-sale counts for the tenant."""
+def _vendor_dashboard_metrics(company_id: int, month_start: datetime, branch_id=None) -> dict:
+    """Return current-month Vendor IA order and derived-sale counts for a branch."""
     from app import Quote, Sale
 
-    orders = Quote.query.filter(
+    orders_query = Quote.query.filter(
         Quote.company_id == int(company_id),
         Quote.created_at >= month_start,
         Quote.observations == VENDOR_AI_ORDER_OBSERVATION,
-    ).count()
+    )
+    if branch_id is not None:
+        orders_query = orders_query.filter(Quote.branch_id == int(branch_id))
+    orders = orders_query.count()
 
-    derived_sales = (
+    derived_query = (
         db.session.query(db.func.count(Sale.id))
         .join(Quote, Quote.converted_sale_id == Sale.id)
         .filter(
@@ -204,9 +207,10 @@ def _vendor_dashboard_metrics(company_id: int, month_start: datetime) -> dict:
             Sale.created_at >= month_start,
             Sale.status.notin_(["cancelada", "anulada"]),
         )
-        .scalar()
-        or 0
     )
+    if branch_id is not None:
+        derived_query = derived_query.filter(Sale.branch_id == int(branch_id))
+    derived_sales = derived_query.scalar() or 0
     return {"orders": int(orders), "ai_sales": int(derived_sales)}
 
 def _context():
@@ -227,16 +231,22 @@ def _context():
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     previous_start = (month_start - timedelta(days=1)).replace(day=1)
 
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+
     conversations = Conversation.query.filter(Conversation.company_id == company_id, Conversation.created_at >= month_start).count()
     clients_attended = db.session.query(Conversation.external_conversation_id).filter(Conversation.company_id == company_id, Conversation.created_at >= month_start, Conversation.external_conversation_id.isnot(None)).distinct().count()
-    quotes = Quote.query.filter(Quote.company_id == company_id, Quote.created_at >= month_start).count()
+    quotes_query = Quote.query.filter(Quote.company_id == company_id, Quote.created_at >= month_start)
     sales_month = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= month_start, Sale.status.notin_(["cancelada", "anulada"]))
     sales_previous = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= previous_start, Sale.created_at < month_start, Sale.status.notin_(["cancelada", "anulada"]))
+    if active_branch_id is not None:
+        quotes_query = quotes_query.filter(Quote.branch_id == int(active_branch_id))
+        sales_month = sales_month.filter(Sale.branch_id == int(active_branch_id))
+        sales_previous = sales_previous.filter(Sale.branch_id == int(active_branch_id))
+    quotes = quotes_query.count()
     sales_total = float(sales_month.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     previous_total = float(sales_previous.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     sales_change = None if previous_total == 0 else round(((sales_total - previous_total) / previous_total) * 100, 1)
-    from stockarmobile.branch_context import get_active_branch_id
-    active_branch_id = get_active_branch_id()
     if active_branch_id is not None:
         from app import BranchStock
         critical_stock = Product.query.outerjoin(
@@ -256,9 +266,16 @@ def _context():
             Product.active.is_(True),
             Product.stock <= Product.min_stock,
         ).count()
-    sold_product_ids = db.session.query(SaleItem.product_id).join(Sale).filter(Sale.company_id == company_id, Sale.created_at >= now - timedelta(days=90), Sale.status.notin_(["cancelada", "anulada"])).distinct()
+    sold_query = db.session.query(SaleItem.product_id).join(Sale).filter(
+        Sale.company_id == company_id,
+        Sale.created_at >= now - timedelta(days=90),
+        Sale.status.notin_(["cancelada", "anulada"]),
+    )
+    if active_branch_id is not None:
+        sold_query = sold_query.filter(Sale.branch_id == int(active_branch_id))
+    sold_product_ids = sold_query.distinct()
     low_rotation = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), ~Product.id.in_(sold_product_ids)).count()
-    vendor_metrics = _vendor_dashboard_metrics(company_id, month_start)
+    vendor_metrics = _vendor_dashboard_metrics(company_id, month_start, branch_id=active_branch_id)
     ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
@@ -308,7 +325,7 @@ def _context():
                 public_vendor_url = publication["url"]
         except Exception:
             current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "metrics_scope": "Sucursal activa" if active_branch_id is not None else "Empresa", "conversation_metrics_scope": "Empresa (canal sin asignación de sucursal)", "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
