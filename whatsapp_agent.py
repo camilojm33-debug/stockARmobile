@@ -742,7 +742,7 @@ def _tenant_ai_order_quotes(company_id, Quote):
         Quote.observations == marker,
     )
     branch_id = get_active_branch_id()
-    if branch_id is not None:
+    if branch_id is not None and getattr(current_user, "role", None) not in {"admin", "superadmin"}:
         query = query.filter(Quote.branch_id == int(branch_id))
     return query
 
