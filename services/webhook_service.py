@@ -1075,6 +1075,23 @@ class WebhookService:
                 if str(payment_status or "").strip().lower() in {"rejected", "cancelled", "canceled", "expired", "refunded", "charged_back"}:
                     from stockarmobile.branch_inventory import release_branch_stock_reservations
                     release_branch_stock_reservations(payment.id)
+                if str(payment_status or "").strip().lower() == "approved" and payment.branch_id is not None:
+                    from stockarmobile.branch_inventory import ensure_branch_stock_reservations_for_payment
+                    try:
+                        ensure_branch_stock_reservations_for_payment(payment)
+                        stored_payload = json.loads(payment.payload_json) if payment.payload_json else {}
+                        if isinstance(stored_payload, dict):
+                            stored_payload.pop("pos_stock_reservation_error", None)
+                            payment.payload_json = json.dumps(stored_payload, ensure_ascii=False)
+                    except ValueError as exc:
+                        try:
+                            stored_payload = json.loads(payment.payload_json) if payment.payload_json else {}
+                        except (TypeError, ValueError):
+                            stored_payload = {}
+                        if not isinstance(stored_payload, dict):
+                            stored_payload = {}
+                        stored_payload["pos_stock_reservation_error"] = str(exc)[:500]
+                        payment.payload_json = json.dumps(stored_payload, ensure_ascii=False)
                 result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
             elif subscription and company:
                 metadata = payment_data.get("metadata") or {}
