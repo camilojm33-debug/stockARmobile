@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 from typing import Any
 
 from sqlalchemy import and_, func, not_, or_
@@ -53,6 +54,7 @@ def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: d
 
     rows = query.order_by(Payment.id.asc()).all()
     for payment in rows:
+        release_pos_payment_reservation(db_session, payment)
         payment.status = "expired"
         db_session.add(
             PaymentHistory(
@@ -65,6 +67,62 @@ def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: d
             )
         )
     return len(rows)
+
+
+
+
+def release_pos_payment_reservation(db_session, payment) -> bool:
+    """Release a POS draft's reserved branch stock exactly once."""
+    if payment_flow(payment) != FLOW_POS:
+        return False
+    try:
+        payload = json.loads(getattr(payment, "payload_json", None) or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("stock_reservation_released"):
+        return False
+    branch_id = getattr(payment, "branch_id", None) or snapshot.get("branch_id")
+    if not branch_id:
+        # Legacy drafts have no trustworthy origin branch and were never reserved.
+        snapshot["stock_reservation_released"] = True
+        payment.payload_json = json.dumps(payload, ensure_ascii=False)
+        return False
+
+    from app import Product
+    from stockarmobile.branch_inventory import release_branch_stock_reservation
+    for item in snapshot.get("items") or []:
+        product_id = int(item.get("productId") or item.get("product_id") or 0)
+        quantity = item.get("quantity") or 0
+        if product_id <= 0 or not quantity:
+            continue
+        product = Product.query.filter_by(
+            id=product_id,
+            company_id=int(payment.company_id),
+        ).first()
+        if product is None:
+            raise ValueError("No se pudo localizar un producto reservado del cobro QR.")
+        release_branch_stock_reservation(product, int(branch_id), quantity)
+
+    snapshot["stock_reservation_released"] = True
+    snapshot["stock_reservation_released_at"] = datetime.utcnow().isoformat()
+    payment.payload_json = json.dumps(payload, ensure_ascii=False)
+    return True
+
+
+def merge_pos_payment_provider_payload(payment, provider_payload: dict) -> None:
+    """Persist Mercado Pago data without discarding the locally trusted sale snapshot."""
+    try:
+        payload = json.loads(getattr(payment, "payload_json", None) or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload.setdefault("flow", FLOW_POS)
+    payload["mercadopago"] = provider_payload if isinstance(provider_payload, dict) else {}
+    payment.payload_json = json.dumps(payload, ensure_ascii=False)
 
 
 def _text(value: Any) -> str:
