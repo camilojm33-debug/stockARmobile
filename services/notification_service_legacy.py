@@ -106,8 +106,8 @@ def _build_recent_quote_acceptance_notifications():
 
     cutoff = utcnow() - timedelta(days=7)
     query = scope_query_to_company(Quote.query, Quote)
-    # Quote notifications are operational: show only the branch selected by
-    # the authenticated recipient, including for company administrators.
+    # Quote notifications are operational: employees receive only notices for
+    # their active branch; administrators retain the company-wide view.
     try:
         from flask_login import current_user
         if getattr(current_user, "is_authenticated", False):
