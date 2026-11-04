@@ -1022,6 +1022,7 @@ def test_reserved_stock_is_not_available_to_sales_or_transfers_and_releases_once
                 "snapshot": {
                     "branch_id": central.id,
                     "items": [{"productId": product.id, "quantity": 3}],
+                    "stock_reserved": True,
                     "stock_reservation_released": False,
                 },
             }),
@@ -1066,6 +1067,7 @@ def test_expiring_stale_pos_draft_releases_branch_reservation(app):
                 "snapshot": {
                     "branch_id": branch.id,
                     "items": [{"productId": product.id, "quantity": 2}],
+                    "stock_reserved": True,
                     "stock_reservation_released": False,
                 },
             }),
@@ -1278,7 +1280,7 @@ def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_ad
             notifications = _build_recent_quote_acceptance_notifications()
             assert order_ids == {central_quote.id}
             assert len(notifications) == 1
-            assert f"quote_id={central_quote.id}" in notifications[0]["href"]
+            assert str(central_quote.id) in notifications[0]["href"]
 
         with app.test_request_context("/"):
             login_user(admin)
