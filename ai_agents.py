@@ -233,9 +233,14 @@ def _context():
     previous_start = (month_start - timedelta(days=1)).replace(day=1)
 
     from stockarmobile.branch_context import get_active_branch_id
-    active_branch_id = get_active_branch_id()
-    # Conversations remain company-wide because the Conversation record has no
-    # reliable fulfillment branch. Operational quotes and sales are branch-scoped.
+    active_branch_id = (
+        None
+        if getattr(current_user, "role", None) in {"admin", "superadmin"}
+        else get_active_branch_id()
+    )
+    # Administrators receive consolidated company KPIs; employees receive
+    # branch-scoped operational metrics. Conversations have no reliable branch
+    # identifier and therefore remain company-wide.
     conversations = Conversation.query.filter(Conversation.company_id == company_id, Conversation.created_at >= month_start).count()
     clients_attended = db.session.query(Conversation.external_conversation_id).filter(Conversation.company_id == company_id, Conversation.created_at >= month_start, Conversation.external_conversation_id.isnot(None)).distinct().count()
     quotes_query = Quote.query.filter(Quote.company_id == company_id, Quote.created_at >= month_start)
