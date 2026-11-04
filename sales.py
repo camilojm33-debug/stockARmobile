@@ -1482,7 +1482,12 @@ def api_mp_qr_status():
     status = (payment.status or "pending").lower()
     if is_stale_pos_draft(payment) and status in {"pending", "in_process", "authorized"}:
         status = "expired"
-    can_process = status == "approved" and bool(snapshot.get("items"))
+    can_process = (
+        status == "approved"
+        and bool(snapshot.get("items"))
+        and bool(snapshot.get("stock_reserved"))
+        and not snapshot.get("stock_reservation_released")
+    )
     return jsonify({
         "payment_id": payment.id,
         "status": status,
@@ -1543,6 +1548,8 @@ def api_mp_qr_finalize():
     items = snapshot.get("items") or []
     if int(snapshot.get("branch_id") or 0) != int(payment.branch_id or 0):
         return jsonify({"error": "La sucursal guardada en el borrador no coincide con el pago."}), 409
+    if not snapshot.get("stock_reserved") or snapshot.get("stock_reservation_released"):
+        return jsonify({"error": "Este cobro no conserva una reserva de stock activa y verificable."}), 409
     if int(snapshot.get("cash_session_id") or 0) <= 0:
         return jsonify({"error": "El borrador QR no conserva la caja de origen."}), 409
     if int(snapshot.get("cash_session_id") or 0) != int(open_session.id):
