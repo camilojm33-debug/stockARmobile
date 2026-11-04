@@ -1090,14 +1090,8 @@ class WebhookService:
                     or snapshot.get("sale_id")
                 )
                 if payment_status == "approved" and not already_finalized:
-                    origin_is_fulfillable = bool(
-                        payment.branch_id
-                        and int(snapshot.get("branch_id") or 0) == int(payment.branch_id)
-                        and int(snapshot.get("cash_session_id") or 0) > 0
-                        and snapshot.get("items")
-                        and snapshot.get("stock_reserved")
-                        and not snapshot.get("stock_reservation_released")
-                    )
+                    from services.payment_flow import pos_payment_has_live_stock_reservation
+                    origin_is_fulfillable = pos_payment_has_live_stock_reservation(payment)
                     if not origin_is_fulfillable:
                         # Expired, legacy or malformed drafts have no live stock
                         # reservation. Never silently create a sale against a new
