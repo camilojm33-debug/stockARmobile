@@ -104,7 +104,7 @@ def test_pos_provider_payload_merge_preserves_trusted_sale_snapshot():
     assert WebhookService._event_updated_at(merged) is not None
 
 
-def test_pos_payment_requires_a_live_reservation_for_late_approval_fulfillment():
+def test_pos_payment_rejects_expired_or_mismatched_reservations():
     from services.payment_flow import pos_payment_has_live_stock_reservation
 
     payload = {
@@ -122,8 +122,9 @@ def test_pos_payment_requires_a_live_reservation_for_late_approval_fulfillment()
         branch_id=17,
         payload_json=json.dumps(payload),
     )
-    assert pos_payment_has_live_stock_reservation(payment) is True
-
+    # A released reservation must not be treated as inventory still held
+    # for the payment; the fully reserved positive path is covered by the
+    # branch-aware webhook integration test in test_multibranch.py.
     payload["snapshot"]["stock_reservation_released"] = True
     payment.payload_json = json.dumps(payload)
     assert pos_payment_has_live_stock_reservation(payment) is False
