@@ -116,6 +116,29 @@ def release_pos_payment_reservation(db_session, payment) -> bool:
     return True
 
 
+def pos_payment_has_live_stock_reservation(payment) -> bool:
+    """Whether a POS payment still owns a verifiable reservation at its origin."""
+    if payment_flow(payment) != FLOW_POS or not getattr(payment, "branch_id", None):
+        return False
+    try:
+        payload = json.loads(getattr(payment, "payload_json", None) or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    return bool(
+        int(snapshot.get("branch_id") or 0) == int(payment.branch_id)
+        and int(snapshot.get("cash_session_id") or 0) > 0
+        and isinstance(snapshot.get("items"), list)
+        and snapshot.get("items")
+        and snapshot.get("stock_reserved")
+        and not snapshot.get("stock_reservation_released")
+    )
+
+
 def merge_pos_payment_provider_payload(payment, provider_payload: dict) -> None:
     """Persist Mercado Pago data without discarding the locally trusted sale snapshot."""
     try:
