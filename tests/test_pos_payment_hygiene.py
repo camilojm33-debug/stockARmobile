@@ -172,3 +172,47 @@ def test_pos_qr_webhook_payload_merge_preserves_snapshot_and_provider_timestamps
     assert updated["flow"] == "pos_sale"
     assert updated["provider_response"]["status"] == "approved"
     assert updated["date_last_updated"].startswith("2026-11-03")
+
+
+def test_released_pos_qr_reservation_can_be_reactivated_for_late_approval(app):
+    from app import Branch, Product, BranchStockReservation
+    from stockarmobile.branch_inventory import (
+        available_stock,
+        release_branch_stock_reservations,
+        reserve_branch_stock_for_payment,
+        set_branch_stock,
+    )
+
+    with app.app_context():
+        company = Company(name="POS QR late approval", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch = Branch(company_id=company.id, name="Casa central", code="CENTRAL", active=True, is_default=True)
+        product = Product(company_id=company.id, barcode="POS-LATE-001", name="Producto tardío", stock=5, min_stock=0, active=True)
+        db.session.add_all([branch, product])
+        db.session.flush()
+        set_branch_stock(product, branch.id, 5)
+        payment = Payment(
+            company_id=company.id, branch_id=branch.id, user_id=None,
+            amount=150, currency="ARS", status="rejected",
+            provider="mercadopago_pos", reference="pos_draft:late",
+            payload_json=json.dumps({"flow": "pos_sale", "snapshot": {
+                "branch_id": branch.id,
+                "items": [{"productId": product.id, "quantity": 3}],
+            }}),
+        )
+        db.session.add(payment)
+        db.session.flush()
+        reserve_branch_stock_for_payment(payment, [(product, 3)], branch.id)
+        db.session.commit()
+
+        assert release_branch_stock_reservations(payment.id) == 1
+        db.session.commit()
+        assert available_stock(product, branch.id) == 5
+
+        reserve_branch_stock_for_payment(payment, [(product, 3)], branch.id)
+        db.session.commit()
+        assert available_stock(product, branch.id) == 2
+        assert BranchStockReservation.query.filter_by(
+            payment_id=payment.id, status="reserved"
+        ).count() == 1
