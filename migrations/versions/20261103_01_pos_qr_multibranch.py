@@ -31,6 +31,23 @@ def upgrade():
             unique=True,
         )
 
+    conversation_columns = {column["name"] for column in inspector.get_columns("conversations")}
+    if "branch_id" not in conversation_columns:
+        op.add_column(
+            "conversations",
+            sa.Column("branch_id", sa.Integer(), sa.ForeignKey("branches.id", ondelete="SET NULL"), nullable=True),
+        )
+        op.create_index("ix_conversations_branch_id", "conversations", ["branch_id"])
+    # WhatsApp vendor conversations are fulfilled by the tenant's default branch.
+    # Preserve that existing routing rule for historical conversations.
+    bind.execute(sa.text(
+        "UPDATE conversations AS c SET branch_id=("
+        "SELECT b.id FROM branches AS b "
+        "WHERE b.company_id=c.company_id AND b.is_default=TRUE AND b.active=TRUE "
+        "ORDER BY b.id ASC LIMIT 1"
+        ") WHERE lower(c.channel)='whatsapp' AND c.branch_id IS NULL"
+    ))
+
     if not inspector.has_table("branch_stock_reservations"):
         op.create_table(
             "branch_stock_reservations",
