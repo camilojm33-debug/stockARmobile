@@ -932,6 +932,7 @@ class WebhookService:
             if merchant_connection is not None and payment is not None and int(payment.company_id or 0) != int(merchant_connection.company_id or 0):
                 raise RuntimeError("Webhook Mercado Pago con pago perteneciente a otra empresa")
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
+            pos_draft_expired_before_approval = False
             if payment is None:
                 company_id = int(metadata.get("company_id") or ref_parts.get("company_id") or 0)
                 subscription_id = int(metadata.get("subscription_id") or 0) or None
@@ -976,6 +977,16 @@ class WebhookService:
 
                     if draft_payment is None:
                         raise RuntimeError("Webhook POS sin borrador local de cobro verificable.")
+                    from services.payment_flow import (
+                        is_stale_pos_draft,
+                        release_pos_payment_reservation,
+                    )
+                    pos_draft_expired_before_approval = (
+                        is_stale_pos_draft(draft_payment)
+                        or str(draft_payment.status or "").strip().lower() in {"expired", "cancelled", "canceled"}
+                    )
+                    if pos_draft_expired_before_approval:
+                        release_pos_payment_reservation(db_session, draft_payment)
                     expected_branch_id = int(ref_parts.get("branch_id") or 0) or None
                     expected_user_id = int(ref_parts.get("user_id") or 0) or None
                     if draft_payment.provider != "mercadopago_pos":
@@ -1105,7 +1116,10 @@ class WebhookService:
                 )
                 if payment_status == "approved" and not already_finalized:
                     from services.payment_flow import pos_payment_has_live_stock_reservation
-                    origin_is_fulfillable = pos_payment_has_live_stock_reservation(payment)
+                    origin_is_fulfillable = (
+                        not pos_draft_expired_before_approval
+                        and pos_payment_has_live_stock_reservation(payment)
+                    )
                     if not origin_is_fulfillable:
                         # Expired, legacy or malformed drafts have no live stock
                         # reservation. Never silently create a sale against a new
