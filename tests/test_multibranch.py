@@ -1219,6 +1219,7 @@ def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_ad
     from app import Quote
     from whatsapp_agent import _tenant_ai_order_quotes
     from services.notification_service_legacy import _build_recent_quote_acceptance_notifications
+    from services.ai_agent.order_notifications import build_ai_order_notifications
 
     with app.app_context():
         company = _company("Empresa pedidos IA por sucursal")
@@ -1245,6 +1246,7 @@ def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_ad
         marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
         central_quote = Quote(
             number="AI-CENTRAL-001",
+            date=datetime.utcnow(),
             company_id=company.id,
             branch_id=central.id,
             created_by_user_id=employee.id,
@@ -1256,6 +1258,7 @@ def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_ad
         )
         north_quote = Quote(
             number="AI-NORTE-001",
+            date=datetime.utcnow(),
             company_id=company.id,
             branch_id=north.id,
             created_by_user_id=employee.id,
@@ -1278,9 +1281,12 @@ def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_ad
                 row.id for row in _tenant_ai_order_quotes(company.id, Quote).all()
             }
             notifications = _build_recent_quote_acceptance_notifications()
+            ai_order_notifications = build_ai_order_notifications()
             assert order_ids == {central_quote.id}
             assert len(notifications) == 1
             assert str(central_quote.id) in notifications[0]["href"]
+            assert len(ai_order_notifications) == 1
+            assert "AI-CENTRAL-001" in ai_order_notifications[0]["body"]
 
         with app.test_request_context("/"):
             login_user(admin)
@@ -1288,8 +1294,10 @@ def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_ad
                 row.id for row in _tenant_ai_order_quotes(company.id, Quote).all()
             }
             notifications = _build_recent_quote_acceptance_notifications()
+            ai_order_notifications = build_ai_order_notifications()
             assert order_ids == {central_quote.id, north_quote.id}
             assert len(notifications) == 2
+            assert len(ai_order_notifications) == 2
         db.session.rollback()
 
 
