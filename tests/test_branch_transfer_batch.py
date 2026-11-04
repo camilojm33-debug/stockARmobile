@@ -370,3 +370,39 @@ def test_branch_selector_form_keeps_current_url_and_transfer_search_disables_cac
     script = (root / "static" / "assets" / "js" / "branch-transfer-manager.js").read_text(encoding="utf-8")
     assert 'name="return_to" value="{{ request.full_path }}"' in base
     assert "cache: 'no-store'" in script
+
+
+def test_branch_transfer_repeated_request_key_does_not_move_stock_twice(app, monkeypatch):
+    import branches as branches_module
+
+    monkeypatch.setattr(branches_module, "_require_feature", lambda _company: None)
+    monkeypatch.setattr(branches_module, "_require_company_pin", lambda _company: None)
+    with app.app_context():
+        company = _company("Empresa transferencia idempotente")
+        source = _branch(company, "Casa central", "CENTRAL")
+        target = _branch(company, "Sucursal", "SUC")
+        product = _product(company, "TR-IDEMP-001", "Producto idempotente", "General", 5)
+        set_branch_stock(product, source.id, 5)
+        set_branch_stock(product, target.id, 0)
+        user = _admin(company, "idem")
+        db.session.commit()
+
+        client = app.test_client()
+        _login(client, user)
+        form = {
+            "source_branch_id": str(source.id),
+            "target_branch_id": str(target.id),
+            "note": "Reintento por pérdida de conexión",
+            "request_key": "transfer-test-idempotency-001",
+            "items_json": json.dumps([{"product_id": product.id, "quantity": "2"}]),
+        }
+        first = client.post("/sucursales/transferir-stock", data=form)
+        second = client.post("/sucursales/transferir-stock", data=form)
+
+        assert first.status_code == 302
+        assert second.status_code == 302
+        assert available_stock(product, source.id) == 3
+        assert available_stock(product, target.id) == 2
+        assert BranchStockTransfer.query.filter_by(
+            company_id=company.id, request_key="transfer-test-idempotency-001"
+        ).count() == 1
