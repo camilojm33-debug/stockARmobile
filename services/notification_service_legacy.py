@@ -113,7 +113,7 @@ def _build_recent_quote_acceptance_notifications():
         if getattr(current_user, "is_authenticated", False):
             from stockarmobile.branch_context import get_active_branch_id
             branch_id = get_active_branch_id()
-            if branch_id is not None:
+            if branch_id is not None and getattr(current_user, "role", None) not in {"admin", "superadmin"}:
                 query = query.filter(Quote.branch_id == int(branch_id))
     except (ImportError, RuntimeError):
         # Background/system notification builders retain their tenant-wide scope.
