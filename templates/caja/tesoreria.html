@@ -1,0 +1,204 @@
+{% extends "base_master.html" %}
+
+{% block title %}Caja y Tesorería - StockArMobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-diagram-3"></i> Control financiero multisucursal</span>
+      <h1 class="h3 fw-bold mb-1">Caja y Tesorería</h1>
+      <p class="text-muted mb-0">Un centro de control para cajas físicas, transferencias y cuentas financieras.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-stack me-1"></i>Mi caja</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings', panel='stats') }}"><i class="bi bi-building me-1"></i>Mi empresa</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-xl-4"><div class="card app-card h-100"><div class="card-body">
+      <div class="small text-muted fw-semibold text-uppercase">Efectivo esperado en cajas</div>
+      <div class="metric-value fw-bold mt-2">ARS {{ "%.2f"|format(expected_cash_total) }}</div>
+      <div class="small text-muted mt-1">Solo sesiones abiertas, por sucursal.</div>
+    </div></div></div>
+    <div class="col-6 col-xl-4"><div class="card app-card h-100"><div class="card-body">
+      <div class="small text-muted fw-semibold text-uppercase">Cajas abiertas</div>
+      <div class="metric-value fw-bold mt-2">{{ open_sessions_count }}</div>
+      <div class="small text-muted mt-1">Puestos con sesión activa.</div>
+    </div></div></div>
+    <div class="col-12 col-xl-4"><div class="card app-card h-100"><div class="card-body">
+      <div class="small text-muted fw-semibold text-uppercase">Transferencias pendientes</div>
+      <div class="metric-value fw-bold mt-2">{{ pending_transfers }}</div>
+      <div class="small text-muted mt-1">Solicitadas o en tránsito.</div>
+    </div></div></div>
+  </div>
+
+  <section class="card app-card mb-4"><div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div><span class="page-kicker"><i class="bi bi-shop"></i> Operación distribuida</span><h2 class="h5 fw-bold mb-0">Estado por sucursal</h2></div>
+      <span class="badge text-bg-light">{{ branches|length }} sucursales activas</span>
+    </div>
+    <div class="row g-3">
+      {% for row in branch_rows %}
+      <div class="col-12 col-xl-6"><div class="border rounded-4 p-3 h-100">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+          <div><div class="fw-bold">{{ row.branch.name }}</div><div class="small text-muted">{{ row.branch.city or row.branch.code }}</div></div>
+          <span class="badge {{ 'text-bg-success' if row.open_count else 'text-bg-secondary' }}">{{ row.open_count }} abiertas</span>
+        </div>
+        <div class="d-flex justify-content-between align-items-center rounded-3 p-3 bg-light mb-3">
+          <span class="small text-muted">Efectivo esperado</span><strong class="fs-5">ARS {{ "%.2f"|format(row.expected_cash) }}</strong>
+        </div>
+        {% if row.sessions %}
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Caja</th><th>Responsable</th><th class="text-end">Esperado</th></tr></thead>
+          <tbody>{% for cash_session in row.sessions %}
+            <tr>
+              <td><div class="fw-semibold">{{ cash_session.register.name if cash_session.register else 'Caja histórica' }}</div><div class="small text-muted">Sesión #{{ cash_session.id }}</div></td>
+              <td>{{ cash_session.user.name if cash_session.user else 'Sin usuario' }}</td>
+              <td class="text-end">ARS {{ "%.2f"|format(cash_session.expected_amount or cash_session.opening_amount or 0) }}</td>
+            </tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% else %}<div class="small text-muted py-2">No hay sesiones de caja abiertas en esta sucursal.</div>{% endif %}
+        <hr>
+        <div class="small fw-semibold text-uppercase text-muted mb-2">Cajas físicas</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% for register in row.registers %}
+            <span class="badge rounded-pill {{ 'text-bg-primary' if register.is_default else 'text-bg-light border text-dark' }}">{{ register.name }}{% if register.is_default %} · principal{% endif %}</span>
+          {% else %}<span class="small text-muted">Todavía no hay cajas físicas configuradas.</span>{% endfor %}
+        </div>
+      </div></div>
+      {% else %}<div class="col-12"><div class="alert alert-light border mb-0">No hay sucursales activas para mostrar.</div></div>{% endfor %}
+    </div>
+  </div></section>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-xl-5"><section class="card app-card h-100"><div class="card-body">
+      <span class="page-kicker"><i class="bi bi-plus-circle"></i> Infraestructura</span><h2 class="h5 fw-bold mb-3">Crear caja física</h2>
+      <form method="post" action="{{ url_for('cash_treasury.create_register') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12"><label class="form-label">Sucursal</label><select class="form-select" name="branch_id" required>{% for branch in branches %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
+        <div class="col-md-7"><label class="form-label">Nombre</label><input class="form-control" name="name" maxlength="100" placeholder="Caja 2 / Depósito" required></div>
+        <div class="col-md-5"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="CAJA-2"></div>
+        <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" value="1" name="is_default" id="treasury-default-register"><label class="form-check-label" for="treasury-default-register">Establecer como caja predeterminada de la sucursal</label></div></div>
+        <div class="col-12"><button class="btn btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Crear caja</button></div>
+      </form>
+    </div></section></div>
+
+    <div class="col-12 col-xl-7"><section class="card app-card h-100"><div class="card-body">
+      <span class="page-kicker"><i class="bi bi-arrow-left-right"></i> Movimiento entre locales</span><h2 class="h5 fw-bold mb-3">Solicitar transferencia de efectivo</h2>
+      <form method="post" action="{{ url_for('cash_treasury.create_transfer') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12"><label class="form-label">Caja de origen (sesión abierta)</label>
+          <select class="form-select" name="source_session_id" required><option value="">Seleccionar caja de origen</option>
+            {% for row in branch_rows %}{% for cash_session in row.sessions %}
+              <option value="{{ cash_session.id }}">{{ row.branch.name }} · {{ cash_session.register.name if cash_session.register else 'Caja histórica' }} · {{ cash_session.user.name if cash_session.user else 'Sin usuario' }} · #{{ cash_session.id }}</option>
+            {% endfor %}{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-6"><label class="form-label">Sucursal de destino</label><select class="form-select" name="target_branch_id" id="treasury-target-branch" required>{% for branch in branches %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
+        <div class="col-md-6"><label class="form-label">Caja de destino</label>
+          <select class="form-select" name="target_register_id" id="treasury-target-register" required>
+            {% for row in branch_rows %}{% for register in row.registers %}
+              <option value="{{ register.id }}" data-branch-id="{{ row.branch.id }}">{{ row.branch.name }} · {{ register.name }}</option>
+            {% endfor %}{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-5"><label class="form-label">Importe</label><input class="form-control" name="amount" type="number" step="0.01" min="0.01" placeholder="0,00" required></div>
+        <div class="col-md-7"><label class="form-label">Referencia / motivo</label><input class="form-control" name="description" maxlength="255" placeholder="Reposición de efectivo"></div>
+        <div class="col-12"><button class="btn btn-outline-primary w-100"><i class="bi bi-send me-1"></i>Crear solicitud de transferencia</button></div>
+        <div class="small text-muted">La solicitud no modifica saldos. El efectivo sale al despachar y entra al confirmar recepción.</div>
+      </form>
+    </div></section></div>
+  </div>
+
+  <section class="card app-card mb-4"><div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div><span class="page-kicker"><i class="bi bi-truck"></i> Custodia de fondos</span><h2 class="h5 fw-bold mb-0">Transferencias entre sucursales</h2></div>
+      <span class="small text-muted">Salida y entrada vinculadas por el mismo ID.</span>
+    </div>
+    <div class="table-responsive"><table class="table table-hover align-middle mb-0">
+      <thead><tr><th>ID / Fecha</th><th>Origen</th><th>Destino</th><th class="text-end">Importe</th><th>Estado</th><th class="text-end">Acción</th></tr></thead>
+      <tbody>{% for transfer in transfers %}
+        <tr>
+          <td><div class="fw-semibold">#{{ transfer.id }}</div><div class="small text-muted">{{ transfer.created_at.strftime('%d/%m/%Y %H:%M') if transfer.created_at else '-' }}</div></td>
+          <td>{{ transfer.source_branch.name }}<div class="small text-muted">{{ transfer.source_register.name }}</div></td>
+          <td>{{ transfer.target_branch.name }}<div class="small text-muted">{{ transfer.target_register.name }}</div></td>
+          <td class="text-end fw-semibold">ARS {{ "%.2f"|format(transfer.amount) }}</td>
+          <td>{% set status_class = 'text-bg-success' if transfer.status == 'recibida' else ('text-bg-warning' if transfer.status in ['pendiente','en_transito'] else 'text-bg-secondary') %}<span class="badge {{ status_class }}">{{ transfer.status|replace('_',' ')|title }}</span></td>
+          <td class="text-end"><div class="d-flex flex-wrap justify-content-end gap-1">
+            {% if transfer.status == 'pendiente' %}
+              <form method="post" action="{{ url_for('cash_treasury.dispatch_transfer', transfer_id=transfer.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-primary">Despachar</button></form>
+              <form method="post" action="{{ url_for('cash_treasury.cancel_transfer', transfer_id=transfer.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary">Cancelar</button></form>
+            {% elif transfer.status == 'en_transito' %}
+              <form method="post" action="{{ url_for('cash_treasury.receive_transfer', transfer_id=transfer.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-success">Confirmar recepción</button></form>
+              <form method="post" action="{{ url_for('cash_treasury.reject_transfer', transfer_id=transfer.id) }}" onsubmit="return confirm('¿Rechazar y devolver el efectivo a la caja de origen?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger">Rechazar</button></form>
+            {% else %}<span class="small text-muted">Sin acciones</span>{% endif %}
+          </div></td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-4">Todavía no hay transferencias registradas.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div></section>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-xl-5"><section class="card app-card h-100"><div class="card-body">
+      <span class="page-kicker"><i class="bi bi-bank"></i> Fondos digitales</span><h2 class="h5 fw-bold mb-3">Crear cuenta financiera</h2>
+      <form method="post" action="{{ url_for('cash_treasury.create_financial_account') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12"><label class="form-label">Nombre</label><input class="form-control" name="name" maxlength="120" placeholder="Mercado Pago / Banco Nación" required></div>
+        <div class="col-md-6"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="MP-PRINCIPAL"></div>
+        <div class="col-md-6"><label class="form-label">Tipo</label><select class="form-select" name="account_type"><option value="banco">Banco</option><option value="billetera">Billetera digital</option><option value="tarjeta">Tarjetas</option><option value="otros">Otros</option></select></div>
+        <div class="col-12"><label class="form-label">Sucursal (opcional)</label><select class="form-select" name="branch_id"><option value="">Cuenta central de empresa</option>{% for branch in branches %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div>
+        <div class="col-md-6"><label class="form-label">Saldo inicial</label><input class="form-control" name="opening_balance" type="number" min="0" step="0.01" value="0"></div>
+        <div class="col-md-6"><label class="form-label">Proveedor</label><input class="form-control" name="provider" maxlength="80" placeholder="Mercado Pago / Banco"></div>
+        <div class="col-md-6"><label class="form-label">Alias</label><input class="form-control" name="alias" maxlength="120"></div>
+        <div class="col-md-6"><label class="form-label">CBU / CVU / Referencia</label><input class="form-control" name="account_reference" maxlength="120"></div>
+        <div class="col-12"><button class="btn btn-primary w-100">Crear cuenta</button></div>
+      </form>
+    </div></section></div>
+    <div class="col-12 col-xl-7"><section class="card app-card h-100"><div class="card-body">
+      <span class="page-kicker"><i class="bi bi-wallet2"></i> Posición financiera</span><h2 class="h5 fw-bold mb-3">Cuentas y saldos registrados</h2>
+      {% for row in accounts %}
+      <div class="border rounded-3 p-3 mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+          <div><div class="fw-semibold">{{ row.account.name }}</div><div class="small text-muted">{{ row.account.branch.name if row.account.branch else 'Cuenta central' }} · {{ row.account.account_type|title }}{% if row.account.provider %} · {{ row.account.provider }}{% endif %}</div></div>
+          <div class="fw-bold fs-5">ARS {{ "%.2f"|format(row.balance) }}</div>
+        </div>
+        <form method="post" action="{{ url_for('cash_treasury.create_financial_account_movement', account_id=row.account.id) }}" class="row g-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-sm-3"><select class="form-select form-select-sm" name="movement_type"><option value="ingreso">Ingreso</option><option value="egreso">Egreso</option><option value="ajuste">Ajuste (+/-)</option></select></div>
+          <div class="col-sm-3"><input class="form-control form-control-sm" name="amount" type="number" step="0.01" placeholder="Importe" required></div>
+          <div class="col-sm-6"><input class="form-control form-control-sm" name="description" maxlength="255" placeholder="Descripción / conciliación"></div>
+          <div class="col-12"><button class="btn btn-sm btn-outline-primary">Registrar movimiento</button></div>
+        </form>
+      </div>
+      {% else %}<div class="alert alert-light border">Todavía no hay cuentas financieras. Creá una para llevar su saldo y movimientos.</div>{% endfor %}
+      <div class="small text-muted">Los saldos reflejan los movimientos ingresados en este libro. La conciliación automática con bancos, tarjetas y Mercado Pago requiere vincular cada proveedor y sus movimientos.</div>
+    </div></section></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const branch = document.getElementById("treasury-target-branch");
+  const register = document.getElementById("treasury-target-register");
+  if (!branch || !register) return;
+  const filterRegisters = () => {
+    const chosen = String(branch.value || "");
+    let firstVisible = null;
+    Array.from(register.options).forEach((option) => {
+      const visible = option.dataset.branchId === chosen;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (visible && !firstVisible) firstVisible = option;
+    });
+    if (firstVisible && (!register.selectedOptions.length || register.selectedOptions[0].disabled)) {
+      register.value = firstVisible.value;
+    }
+  };
+  branch.addEventListener("change", filterRegisters);
+  filterRegisters();
+})();
+</script>
+{% endblock %}
