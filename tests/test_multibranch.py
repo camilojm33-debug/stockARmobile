@@ -1210,3 +1210,117 @@ def test_qr_payment_status_is_hidden_from_other_users_and_branches(app, monkeypa
             with pytest.raises(NotFound):
                 _authorized_pos_qr_payment(payment.id)
         db.session.rollback()
+
+
+def test_ai_order_queries_and_quote_notifications_respect_employee_branch_but_admins_see_company(app, monkeypatch):
+    from flask_login import login_user
+    from app import Quote
+    from whatsapp_agent import _tenant_ai_order_quotes
+    from services.notification_service_legacy import _build_recent_quote_acceptance_notifications
+
+    with app.app_context():
+        company = _company("Empresa pedidos IA por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        employee = User(
+            username="ai-orders-employee",
+            email="ai-orders-employee@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        admin = User(
+            username="ai-orders-admin",
+            email="ai-orders-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([employee, admin])
+        db.session.flush()
+        marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+        central_quote = Quote(
+            number="AI-CENTRAL-001",
+            company_id=company.id,
+            branch_id=central.id,
+            created_by_user_id=employee.id,
+            seller_id=employee.id,
+            observations=marker,
+            status="APROBADO",
+            total_amount=100,
+            updated_at=datetime.utcnow(),
+        )
+        north_quote = Quote(
+            number="AI-NORTE-001",
+            company_id=company.id,
+            branch_id=north.id,
+            created_by_user_id=employee.id,
+            seller_id=employee.id,
+            observations=marker,
+            status="APROBADO",
+            total_amount=900,
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add_all([central_quote, north_quote])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: central.id,
+        )
+        with app.test_request_context("/"):
+            login_user(employee)
+            order_ids = {
+                row.id for row in _tenant_ai_order_quotes(company.id, Quote).all()
+            }
+            notifications = _build_recent_quote_acceptance_notifications()
+            assert order_ids == {central_quote.id}
+            assert len(notifications) == 1
+            assert f"quote_id={central_quote.id}" in notifications[0]["href"]
+
+        with app.test_request_context("/"):
+            login_user(admin)
+            order_ids = {
+                row.id for row in _tenant_ai_order_quotes(company.id, Quote).all()
+            }
+            notifications = _build_recent_quote_acceptance_notifications()
+            assert order_ids == {central_quote.id, north_quote.id}
+            assert len(notifications) == 2
+        db.session.rollback()
+
+
+def test_pos_qr_draft_session_key_is_separated_by_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _pos_qr_draft_session_key
+
+    with app.app_context():
+        company = _company("Empresa sesiones QR")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="qr-session-admin",
+            email="qr-session-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        selected = {"branch_id": central.id}
+        monkeypatch.setattr(
+            "sales._active_cart_branch_scope",
+            lambda: selected["branch_id"],
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            central_key = _pos_qr_draft_session_key()
+            selected["branch_id"] = north.id
+            north_key = _pos_qr_draft_session_key()
+            assert central_key != north_key
+            assert str(central.id) in central_key
+            assert str(north.id) in north_key
+        db.session.rollback()
