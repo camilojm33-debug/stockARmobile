@@ -231,6 +231,13 @@ def _pos_qr_draft_session_key():
     return f"pos_qr_draft_{_cart_tenant_key()}_{_active_cart_branch_scope()}"
 
 
+def _pos_qr_user_can_access(payment, user):
+    """The owner and tenant admins may inspect a draft; branch checks still apply."""
+    if getattr(user, "role", None) in {"admin", "superadmin"}:
+        return True
+    return int(getattr(payment, "user_id", 0) or 0) == int(getattr(user, "id", 0) or 0)
+
+
 def _pos_qr_snapshot(items, payload, *, total_amount, currency, branch_id=None, cash_session_id=None):
     normalized_items = []
     requiere_comprobante, tipo_comprobante, observacion_comprobante = _resolve_comprobante_payload(payload)
@@ -1452,9 +1459,10 @@ def api_mp_qr_status():
     payment = Payment.query.filter_by(
         id=draft_id,
         company_id=getattr(current_user, "company_id", None),
-        user_id=getattr(current_user, "id", None),
         provider="mercadopago_pos",
     ).first_or_404()
+    if not _pos_qr_user_can_access(payment, current_user):
+        abort(404)
     from stockarmobile.branch_context import get_active_branch_id
     active_branch_id = get_active_branch_id()
     if payment.branch_id is None:
@@ -1509,9 +1517,10 @@ def api_mp_qr_finalize():
     payment = Payment.query.filter_by(
         id=draft_id,
         company_id=getattr(current_user, "company_id", None),
-        user_id=getattr(current_user, "id", None),
         provider="mercadopago_pos",
     ).with_for_update().first_or_404()
+    if not _pos_qr_user_can_access(payment, current_user):
+        abort(404)
     from stockarmobile.branch_context import get_active_branch_id
     active_branch_id = get_active_branch_id()
     if payment.branch_id is None:
