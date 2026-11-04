@@ -33,6 +33,32 @@ def is_stale_pos_draft(payment, *, now: datetime | None = None, max_age_hours: i
     return created_at < current - timedelta(hours=max(1, int(max_age_hours)))
 
 
+def expire_pos_payment_draft(
+    db_session,
+    payment,
+    *,
+    now: datetime | None = None,
+    max_age_hours: int = POS_DRAFT_TTL_HOURS,
+) -> bool:
+    """Expire one abandoned local POS draft and release its stock reservation."""
+    if not is_stale_pos_draft(payment, now=now, max_age_hours=max_age_hours):
+        return False
+    release_pos_payment_reservation(db_session, payment)
+    payment.status = "expired"
+    from app import PaymentHistory
+    db_session.add(
+        PaymentHistory(
+            payment_id=payment.id,
+            company_id=payment.company_id,
+            event="expired_stale_pos_draft",
+            detail=f"POS draft expired after {max(1, int(max_age_hours))} hours without payment_id.",
+            source="system",
+            status="expired",
+        )
+    )
+    return True
+
+
 def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: datetime | None = None, max_age_hours: int = POS_DRAFT_TTL_HOURS) -> int:
     """Expire abandoned local POS drafts without blocking a later Mercado Pago webhook.
 
@@ -53,20 +79,16 @@ def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: d
         query = query.filter(Payment.company_id == int(company_id))
 
     rows = query.order_by(Payment.id.asc()).all()
+    expired = 0
     for payment in rows:
-        release_pos_payment_reservation(db_session, payment)
-        payment.status = "expired"
-        db_session.add(
-            PaymentHistory(
-                payment_id=payment.id,
-                company_id=payment.company_id,
-                event="expired_stale_pos_draft",
-                detail=f"POS draft expired after {max(1, int(max_age_hours))} hours without payment_id.",
-                source="system",
-                status="expired",
-            )
-        )
-    return len(rows)
+        if expire_pos_payment_draft(
+            db_session,
+            payment,
+            now=current,
+            max_age_hours=max_age_hours,
+        ):
+            expired += 1
+    return expired
 
 
 
