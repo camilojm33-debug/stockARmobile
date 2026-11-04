@@ -228,10 +228,10 @@ def _sale_accessible_query(query, model):
 
 
 def _pos_qr_draft_session_key():
-    return f"pos_qr_draft_{_cart_tenant_key()}"
+    return f"pos_qr_draft_{_cart_tenant_key()}_{_active_cart_branch_scope()}"
 
 
-def _pos_qr_snapshot(items, payload, *, total_amount, currency):
+def _pos_qr_snapshot(items, payload, *, total_amount, currency, branch_id=None, cash_session_id=None):
     normalized_items = []
     requiere_comprobante, tipo_comprobante, observacion_comprobante = _resolve_comprobante_payload(payload)
     for item in items:
@@ -275,6 +275,8 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
         "total_amount": float(total_amount),
         "currency": currency,
         "cart_hash": cart_hash,
+        "branch_id": int(branch_id) if branch_id is not None else None,
+        "cash_session_id": int(cash_session_id) if cash_session_id is not None else None,
     }
 
 
@@ -1120,6 +1122,14 @@ def api_mp_qr_create():
     if isinstance(open_session, tuple):
         return open_session
 
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    payment_branch_id = getattr(open_session, "branch_id", None)
+    if active_branch_id is not None and int(payment_branch_id or 0) != int(active_branch_id):
+        return _api_error("La caja abierta no corresponde a la sucursal activa. Cerrá y abrí la caja correcta.", status=409)
+    if payment_branch_id is not None:
+        payment_branch_id = int(payment_branch_id)
+
     try:
         selected_client = None
         raw_client_id = payload.get("client_id") or payload.get("cliente_id")
@@ -1167,11 +1177,24 @@ def api_mp_qr_create():
             payload,
             total_amount=final_total,
             currency=currency,
+            branch_id=payment_branch_id,
+            cash_session_id=open_session.id,
         )
 
         existing_draft = _get_pos_qr_draft()
-        if existing_draft and existing_draft.get("cart_hash") == snapshot["cart_hash"]:
-            draft_payment = Payment.query.filter_by(id=int(existing_draft.get("payment_db_id") or 0), company_id=company_id).first()
+        if (
+            existing_draft
+            and existing_draft.get("cart_hash") == snapshot["cart_hash"]
+            and existing_draft.get("branch_id") == payment_branch_id
+            and int(existing_draft.get("owner_user_id") or 0) == int(current_user.id)
+        ):
+            draft_payment = Payment.query.filter_by(
+                id=int(existing_draft.get("payment_db_id") or 0),
+                company_id=company_id,
+                user_id=current_user.id,
+                branch_id=payment_branch_id,
+                provider="mercadopago_pos",
+            ).first()
             if draft_payment and (draft_payment.status or "").lower() == "pending":
                 return jsonify({
                     "status": "reused",
@@ -1191,6 +1214,7 @@ def api_mp_qr_create():
             external_reference="",
             company_id=company_id,
             user_id=current_user.id,
+            branch_id=payment_branch_id,
             amount=final_total,
             currency=currency,
             status="pending",
@@ -1204,6 +1228,14 @@ def api_mp_qr_create():
         )
         db.session.add(draft_payment)
         db.session.flush()
+        if payment_branch_id is not None:
+            from stockarmobile.branch_inventory import reserve_branch_stock_for_payment
+            reserve_branch_stock_for_payment(
+                draft_payment,
+                [(line["product"], line["quantity"]) for line in lines],
+                payment_branch_id,
+                user_id=current_user.id,
+            )
         external_reference = (
             f"flow:pos_sale|draft_payment_id:{draft_payment.id}|company_id:{company_id}|user_id:{current_user.id}|"
             f"cart_hash:{snapshot['cart_hash']}"
@@ -1362,6 +1394,8 @@ def api_mp_qr_create():
             "checkout_url": checkout_url,
             "qr_data_uri": qr_preview.get("qr_data_uri") or "",
             "cart_hash": snapshot["cart_hash"],
+            "branch_id": payment_branch_id,
+            "owner_user_id": int(current_user.id),
         })
         return jsonify({
             "success": True,
@@ -1415,8 +1449,23 @@ def api_mp_qr_status():
     draft_id = request.args.get("draft_id", type=int)
     if not draft_id:
         return jsonify({"error": "draft_id requerido"}), 400
-    payment = Payment.query.filter_by(id=draft_id, company_id=getattr(current_user, "company_id", None)).first_or_404()
+    payment = Payment.query.filter_by(
+        id=draft_id,
+        company_id=getattr(current_user, "company_id", None),
+        user_id=getattr(current_user, "id", None),
+        provider="mercadopago_pos",
+    ).first_or_404()
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if payment.branch_id is None:
+        if active_branch_id is not None:
+            return _api_error("Este QR es anterior a la asignación de sucursal y requiere revisión administrativa.", status=409)
+    elif active_branch_id is None or int(payment.branch_id) != int(active_branch_id):
+        return _api_error("Este QR pertenece a otra sucursal. Cambiá a la sucursal donde fue creado.", status=409)
     payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    snapshot_branch_id = (payload.get("snapshot") or {}).get("branch_id")
+    if snapshot_branch_id is not None and int(snapshot_branch_id) != int(payment.branch_id or 0):
+        return _api_error("La sucursal del borrador QR no coincide con su registro de pago.", status=409)
     approved_at = payment.paid_at or payment.updated_at
     status = (payment.status or "pending").lower()
     if is_stale_pos_draft(payment) and status in {"pending", "in_process", "authorized"}:
@@ -1457,20 +1506,48 @@ def api_mp_qr_finalize():
     if not draft_id:
         return jsonify({"error": "draft_id requerido"}), 400
 
-    open_session = _require_open_cash_session(json_response=True)
-    if isinstance(open_session, tuple):
-        return open_session
+    payment = Payment.query.filter_by(
+        id=draft_id,
+        company_id=getattr(current_user, "company_id", None),
+        user_id=getattr(current_user, "id", None),
+        provider="mercadopago_pos",
+    ).with_for_update().first_or_404()
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if payment.branch_id is None:
+        if active_branch_id is not None:
+            return _api_error("Este QR es anterior a la asignación de sucursal y requiere revisión administrativa.", status=409)
+    elif active_branch_id is None or int(payment.branch_id) != int(active_branch_id):
+        return _api_error("Este QR pertenece a otra sucursal. Cambiá a la sucursal donde fue creado.", status=409)
 
-    payment = Payment.query.filter_by(id=draft_id, company_id=getattr(current_user, "company_id", None)).first_or_404()
+    draft_payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    snapshot_branch_id = (draft_payload.get("snapshot") or {}).get("branch_id")
+    if snapshot_branch_id is not None and int(snapshot_branch_id) != int(payment.branch_id or 0):
+        return _api_error("La sucursal del borrador QR no coincide con su registro de pago.", status=409)
     if (payment.status or "").lower() != "approved":
         return jsonify({"error": "El pago aun no fue aprobado."}), 409
 
-    draft_payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    idempotency_key = f"pos-qr-{int(payment.id)}"
+    existing_payment_sale = Sale.query.filter_by(
+        company_id=int(payment.company_id), client_txn_id=idempotency_key
+    ).first()
+    if existing_payment_sale is not None:
+        draft_payload["sale_id"] = int(existing_payment_sale.id)
+        payment.reference = f"sale_id:{existing_payment_sale.id}"
+        payment.payload_json = json.dumps(draft_payload, ensure_ascii=False)
+        db.session.commit()
+        return jsonify({"sale_id": existing_payment_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_payment_sale.id)})
     existing_sale_id = draft_payload.get("sale_id")
     if existing_sale_id:
         existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == int(existing_sale_id)).first()
         if existing_sale:
             return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+
+    open_session = _require_open_cash_session(json_response=True)
+    if isinstance(open_session, tuple):
+        return open_session
+    if getattr(open_session, "branch_id", None) != payment.branch_id:
+        return _api_error("La caja abierta no corresponde a la sucursal de origen de este QR.", status=409)
 
     snapshot = draft_payload.get("snapshot") or {}
     items = snapshot.get("items") or []
@@ -1504,7 +1581,12 @@ def api_mp_qr_finalize():
         "tax_amount": snapshot.get("tax_amount") or 0,
         "charges_json": snapshot.get("charges_json"),
         "pos_expected_total": float(payment.amount or 0),
+        "sale_idempotency_key": idempotency_key,
     }
+
+    if payment.branch_id is not None:
+        from stockarmobile.branch_inventory import release_branch_stock_reservations
+        release_branch_stock_reservations(payment.id, user_id=current_user.id)
 
     result = _create_sale_from_items(
         {str(item["productId"]): item["quantity"] for item in items},
