@@ -1079,10 +1079,73 @@ class WebhookService:
                         merge_pos_payment_provider_payload(draft_payment, payment_data)
                         draft_payment.paid_at = paid_at or draft_payment.paid_at
                         payment = draft_payment
-                if payment_status in {"rejected", "cancelled", "canceled", "refunded", "charged_back"}:
-                    from services.payment_flow import release_pos_payment_reservation
-                    release_pos_payment_reservation(db_session, payment)
-                result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                try:
+                    payment_payload = json.loads(payment.payload_json or "{}")
+                except (TypeError, ValueError):
+                    payment_payload = {}
+                snapshot = payment_payload.get("snapshot") if isinstance(payment_payload, dict) else None
+                snapshot = snapshot if isinstance(snapshot, dict) else {}
+                already_finalized = bool(snapshot.get("sale_id"))
+                if payment_status == "approved" and not already_finalized:
+                    origin_is_fulfillable = bool(
+                        payment.branch_id
+                        and int(snapshot.get("branch_id") or 0) == int(payment.branch_id)
+                        and int(snapshot.get("cash_session_id") or 0) > 0
+                        and snapshot.get("items")
+                        and snapshot.get("stock_reserved")
+                        and not snapshot.get("stock_reservation_released")
+                    )
+                    if not origin_is_fulfillable:
+                        # Expired, legacy or malformed drafts have no live stock
+                        # reservation. Never silently create a sale against a new
+                        # branch; refund the late charge instead.
+                        refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
+                        refund_status = str(refund.get("status") or "").strip().lower()
+                        if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                            raise RuntimeError(
+                                "Mercado Pago no confirmó el reembolso de un cobro QR tardío sin reserva de stock."
+                            )
+                        local_status = (
+                            "refunded"
+                            if refund_status in {"approved", "refunded"}
+                            else "refund_pending"
+                        )
+                        payment.status = local_status
+                        if payment.branch_id:
+                            from services.payment_flow import release_pos_payment_reservation
+                            release_pos_payment_reservation(db_session, payment)
+                        from app import PaymentHistory
+                        db_session.add(PaymentHistory(
+                            payment_id=payment.id,
+                            company_id=payment.company_id,
+                            event="pos_qr_late_approval_refund",
+                            detail=(
+                                "Se solicitó el reembolso de una aprobación tardía porque el QR ya no "
+                                "conservaba una reserva de stock verificable en su sucursal de origen."
+                            ),
+                            source="mercadopago",
+                            event_id=f"pos-qr-late-refund:{payment.payment_id}",
+                            status=local_status,
+                            payload_json=json.dumps({
+                                "refund_id": refund.get("id"),
+                                "refund_status": refund_status,
+                                "branch_id": payment.branch_id,
+                            }, ensure_ascii=False),
+                        ))
+                        payment_status = local_status
+                        result = {
+                            "status": "late_pos_qr_refunded",
+                            "payment_status": local_status,
+                            "refund_status": refund_status,
+                            "event_key": event_key,
+                        }
+                    else:
+                        result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                else:
+                    if payment_status in {"rejected", "cancelled", "canceled", "refunded", "charged_back"}:
+                        from services.payment_flow import release_pos_payment_reservation
+                        release_pos_payment_reservation(db_session, payment)
+                    result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
             elif subscription and company:
                 metadata = payment_data.get("metadata") or {}
                 validation_errors = []
