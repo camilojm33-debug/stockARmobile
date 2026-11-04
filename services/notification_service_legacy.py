@@ -105,7 +105,7 @@ def _build_recent_quote_acceptance_notifications():
     from app import Quote, scope_query_to_company, utcnow
 
     cutoff = utcnow() - timedelta(days=7)
-    quotes = (
+    quotes_query = (
         scope_query_to_company(Quote.query, Quote)
         .filter(
             Quote.status == "APROBADO",
@@ -113,10 +113,12 @@ def _build_recent_quote_acceptance_notifications():
             Quote.updated_at.isnot(None),
             Quote.updated_at >= cutoff,
         )
-        .order_by(Quote.updated_at.desc(), Quote.id.desc())
-        .limit(6)
-        .all()
     )
+    from stockarmobile.branch_context import get_active_branch_id
+    active_branch_id = get_active_branch_id()
+    if active_branch_id is not None:
+        quotes_query = quotes_query.filter(Quote.branch_id == int(active_branch_id))
+    quotes = quotes_query.order_by(Quote.updated_at.desc(), Quote.id.desc()).limit(6).all()
 
     items = []
     for quote in quotes:
