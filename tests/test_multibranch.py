@@ -960,3 +960,37 @@ def test_company_settings_branch_panel_keeps_render_context_and_jinja_defaults_s
     assert "active_branch_count=active_branch_count" in company_billing
     assert "branch_user_access.get(branch.id, [])" in settings_template
     assert "branch_user_access.get(branch.id, set())" not in settings_template
+
+
+def test_pos_qr_draft_session_key_isolated_by_active_branch(app, monkeypatch):
+    from flask_login import login_user
+    from sales import _pos_qr_draft_session_key
+
+    with app.app_context():
+        company = _company("Empresa borrador QR por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        user = User(
+            username="qr-branch-owner",
+            email="qr-branch-owner@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.commit()
+        selected = {"branch_id": central.id}
+        monkeypatch.setattr(
+            "stockarmobile.branch_context.get_active_branch_id",
+            lambda: selected["branch_id"],
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            central_key = _pos_qr_draft_session_key()
+            selected["branch_id"] = north.id
+            north_key = _pos_qr_draft_session_key()
+            assert central_key != north_key
+            selected["branch_id"] = central.id
+            assert _pos_qr_draft_session_key() == central_key
+        db.session.rollback()
