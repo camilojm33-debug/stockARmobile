@@ -16,7 +16,7 @@ from flask import current_app
 from stockarmobile.extensions import db
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.models.conversations import Conversation, ConversationMessage
-from services.ai_agent.config_service import get_whatsapp_connection, is_ai_enabled
+from services.ai_agent.config_service import get_vendor_options, get_whatsapp_connection, is_ai_enabled
 from services.ai_agent.followup_service import (
     AIFollowupService,
     _cart_fingerprint,
@@ -507,6 +507,25 @@ class AIFollowupDeliveryService:
             company = Company.query.filter_by(id=int(conversation.company_id)).first()
             if company is None or not getattr(company, "active", True):
                 stats["skipped"] += len(pending)
+                continue
+
+            # The planner checks this preference before enqueueing, but the
+            # dispatcher must re-check it immediately before any provider call:
+            # an administrator may disable follow-ups while messages are queued.
+            if not get_vendor_options(company).get("can_follow_up", False):
+                blocked_count = 0
+                for item in pending:
+                    if _mutate_item(
+                        conversation,
+                        str(item.get("dedupe_key") or ""),
+                        status="blocked",
+                        now=effective_now,
+                        error="El seguimiento automático fue deshabilitado por la empresa.",
+                    ):
+                        blocked_count += 1
+                if blocked_count:
+                    db.session.commit()
+                    record_blocked("followup_disabled", blocked_count)
                 continue
 
             access = can_use_ai(company, "vendedor")
