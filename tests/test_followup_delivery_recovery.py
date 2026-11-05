@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
+import json
 from types import SimpleNamespace
 
 from app import Company, db
 from stockarmobile.models.conversations import Agent, Conversation
 from services.ai_agent.followup_delivery_service import (
     SENDING_LEASE_MINUTES,
+    AIFollowupDeliveryService,
     _claim_pending_item,
     _mark_delivery_uncertain,
     _recover_expired_sending,
@@ -171,3 +173,33 @@ def test_ambiguous_provider_result_is_quarantined_for_reconciliation(app):
     assert item["attempts"] == 1
     assert item["reconciliation_required"] is True
     assert "next_attempt_at" not in item
+
+
+def test_dispatcher_blocks_queued_followups_when_company_disables_them(app):
+    now = datetime(2026, 10, 25, 12, 0, 0)
+    company_id, conversation_id = _create_conversation({
+        "ai_outbox": [{
+            "dedupe_key": "followup-disabled",
+            "status": "pending",
+            "body": "Mensaje sintético",
+            "anchor_message_id": 1,
+        }]
+    })
+    company = db.session.get(Company, company_id)
+    company.preferences_json = json.dumps({
+        "ai_agent": {
+            "vendor_options": {
+                "can_follow_up": False,
+            }
+        }
+    })
+    db.session.commit()
+
+    result = AIFollowupDeliveryService.dispatch_pending(now=now)
+
+    assert result["sent"] == 0
+    assert result["blocked_reasons"].get("followup_disabled") == 1
+    db.session.expire_all()
+    item = db.session.get(Conversation, conversation_id).metadata_json["ai_outbox"][0]
+    assert item["status"] == "blocked"
+    assert "deshabilitado" in item["error"]
