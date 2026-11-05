@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261104_01_cash_treasury"
+HEAD_REVISION = "20261102_02_company_memberships"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -45,6 +45,7 @@ def main() -> None:
         # by wholesale pricing to simulate the schema immediately before the migration.
         _progress("Resetting disposable schema: dropping Alembic version table")
         with db.engine.begin() as connection:
+            connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
         _progress("Dropping ORM tables")
         db.drop_all()
@@ -235,7 +236,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers", "company_memberships"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")

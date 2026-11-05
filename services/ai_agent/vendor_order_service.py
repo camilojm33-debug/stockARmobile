@@ -1465,10 +1465,12 @@ class VendorOrderService:
                         return preference
 
         actor = None
+        from stockarmobile.company_memberships import get_company_users
+        company_users = get_company_users(company_id, active_only=True)
         if actor_user_id:
-            actor = User.query.filter_by(id=int(actor_user_id), company_id=company_id, active=True).first()
+            actor = next((item for item in company_users if item.id == int(actor_user_id)), None)
         if actor is None:
-            actor = User.query.filter(User.company_id == company_id, User.active.is_(True), User.role.in_(["admin", "user"])).order_by(User.id.asc()).first()
+            actor = next((item for item in company_users if item.role in {"admin", "user"}), None)
         if actor is None:
             raise ValueError("No hay un usuario activo para registrar el pedido.")
 

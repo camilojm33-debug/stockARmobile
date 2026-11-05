@@ -32,4 +32,9 @@ jobs:
       - run: pip install -r requirements.txt pip-audit
       - run: python -m compileall -q .
       - run: pip-audit
+      - name: Run multi-company tenant context regressions
+        run: >-
+          pytest -q
+          tests/test_company_memberships.py::test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
+          tests/test_company_memberships.py::test_user_without_active_membership_can_only_accept_new_company_invitation
       - run: pytest -q

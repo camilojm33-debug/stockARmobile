@@ -563,7 +563,8 @@ def index():
 
     employees = []
     if _is_admin():
-        employees = scope_query_to_company(User.query.filter_by(active=True), User).order_by(User.username).all()
+        from stockarmobile.company_memberships import get_company_users
+        employees = get_company_users(getattr(current_user, "company_id", None), active_only=True)
 
     return render_template(
         "caja/index.html",

@@ -20,7 +20,7 @@ from flask import abort, current_app, flash, g, jsonify, make_response, redirect
 from flask_login import UserMixin, current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFError
-from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint, event, inspect as sa_inspect, select, text
 from sqlalchemy.exc import ProgrammingError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -331,13 +331,62 @@ def add_security_headers(response):
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load only currently active accounts so revocation applies to existing sessions."""
+    """Load an active identity and bind its selected, authorized company membership."""
     try:
         user = db.session.get(User, int(user_id))
     except (TypeError, ValueError):
         return None
     if user is None or not bool(getattr(user, "active", True)):
         return None
+
+    if (getattr(user, "role", None) or "").strip().lower() == "superadmin":
+        return user
+
+    from stockarmobile.company_memberships import (
+        ACTIVE_COMPANY_SESSION_KEY,
+        apply_membership_context,
+        choose_membership_for_login,
+        get_membership,
+    )
+
+    primary_company_id = getattr(user, "company_id", None)
+    membership = choose_membership_for_login(
+        user,
+        session.get(ACTIVE_COMPANY_SESSION_KEY),
+    )
+    if membership is not None:
+        apply_membership_context(user, membership)
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(membership.company_id)
+        return user
+
+    # An explicit revoked/suspended primary membership must never fall through
+    # to the legacy primary-company compatibility path. Keep the identity
+    # authenticated without tenant privileges so it can accept a new invitation.
+    primary_membership = (
+        get_membership(user.id, primary_company_id)
+        if primary_company_id is not None else None
+    )
+    from app import CompanyMembership
+    has_any_membership = CompanyMembership.query.filter_by(user_id=user.id).first() is not None
+    if primary_membership is not None or has_any_membership:
+        from sqlalchemy.orm.attributes import set_committed_value
+        set_committed_value(user, "company_id", None)
+        set_committed_value(user, "role", "user")
+        set_committed_value(user, "permissions_json", "[]")
+        user.company_membership_active = False
+        user.company_membership_missing = True
+        session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
+        return user
+
+    # Compatibility for legacy tenant accounts that have not yet received a
+    # membership row (e.g. an app bootstrapped without running Alembic).
+    if primary_company_id is not None:
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(primary_company_id)
+        user.company_membership_active = bool(user.active)
+        user.company_membership_role = user.role or "user"
+        return user
+
+    # Referral sellers and other non-tenant identities remain global accounts.
     return user
 
 
@@ -447,6 +496,9 @@ def migrate_legacy_company_logos_once():
 
 @app.before_request
 def bind_tenant_context():
+    # Refresh the authenticated identity's selected membership before any
+    # tenant-aware helpers or permission guards cache company/role in `g`.
+    refresh_cached_company_membership_context()
     bind_current_tenant_context(current_user)
 
 
@@ -532,6 +584,159 @@ def trace_mp_qr_response(response):
     return response
 
 
+def refresh_cached_company_membership_context():
+    """Reload the identity and bind only its session-selected active membership.
+
+    Flask-Login caches the authenticated user on the application context. A tenant
+    switch must never reuse membership-specific ORM attributes from a previous
+    request. Refresh the persisted identity, replace Flask-Login's cached object,
+    then apply the authorized membership selected in the signed session.
+    """
+    from flask_login import logout_user
+    from app import Company, CompanyMembership, User
+    from stockarmobile.company_memberships import (
+        ACTIVE_COMPANY_SESSION_KEY,
+        apply_membership_context,
+        choose_membership_for_login,
+    )
+
+    # The signed Flask-Login session is the source of truth for identity.
+    # Do not derive the identity key from current_user here: that LocalProxy may
+    # still resolve a cached ORM object from a previous tenant/request context.
+    raw_user_id = session.get("_user_id")
+    if raw_user_id is None:
+        # Remember-cookie authentication may not have populated _user_id yet.
+        if not current_user.is_authenticated:
+            return None
+        raw_user_id = current_user.get_id()
+
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        logout_user()
+        session.clear()
+        return None
+
+    # Flask-Login may hold a User object in the request/app-scoped ORM identity
+    # map. Read the persisted identity through an independent short-lived Session
+    # so we can refresh that object without removing the main scoped session or
+    # detaching other ORM objects used by the current request.
+    from sqlalchemy.orm import Session
+    cached_identity = current_user._get_current_object()
+    identity_session = Session(bind=db.engine, autoflush=False, expire_on_commit=False)
+    try:
+        persisted_identity = identity_session.get(User, user_id)
+        if persisted_identity is None:
+            logout_user()
+            session.clear()
+            return None
+        persisted_values = {
+            attribute.key: getattr(persisted_identity, attribute.key)
+            for attribute in sa_inspect(User).column_attrs
+        }
+    finally:
+        identity_session.close()
+
+    from sqlalchemy.orm.attributes import set_committed_value
+    if not bool(persisted_values.get("active", True)):
+        logout_user()
+        session.clear()
+        return None
+
+    # Refresh every mapped column on the cached identity while preserving its
+    # attachment to the request's main SQLAlchemy session.
+    for attribute_name, value in persisted_values.items():
+        set_committed_value(cached_identity, attribute_name, value)
+    identity = cached_identity
+    g._login_user = identity
+
+    if (identity.role or "").strip().lower() == "superadmin":
+        g._stockarmobile_tenant_refresh_debug = (
+            f"user={identity.id};role={identity.role};company={identity.company_id};membership=superadmin"
+        )
+        g.current_company_id = None
+        g.current_user_role = "superadmin"
+        g._stockarmobile_membership_context_key = (user_id, "superadmin")
+        return None
+
+    selected_company_id = session.get(ACTIVE_COMPANY_SESSION_KEY)
+    membership = None
+    if selected_company_id is not None:
+        try:
+            selected_company_id = int(selected_company_id)
+        except (TypeError, ValueError):
+            selected_company_id = None
+        if selected_company_id is not None:
+            company = Company.query.populate_existing().filter_by(id=selected_company_id).first()
+            if company is not None and company.active:
+                membership = CompanyMembership.query.populate_existing().filter_by(
+                    user_id=user_id,
+                    company_id=selected_company_id,
+                    active=True,
+                    status="active",
+                ).first()
+
+    if membership is None:
+        membership = choose_membership_for_login(identity, selected_company_id)
+
+    if membership is not None:
+        apply_membership_context(identity, membership)
+        g._stockarmobile_tenant_refresh_debug = (
+            f"user={identity.id};role={identity.role};company={identity.company_id};"
+            f"membership_id={membership.id};membership_company={membership.company_id};membership_role={membership.role}"
+        )
+        identity._stockarmobile_tenant_refresh_debug = g._stockarmobile_tenant_refresh_debug
+        selected_company_id = int(membership.company_id)
+        session[ACTIVE_COMPANY_SESSION_KEY] = selected_company_id
+        g.current_company_id = selected_company_id
+        g.current_user_role = membership.role or "user"
+        g._stockarmobile_membership_context_key = (user_id, str(selected_company_id))
+        return None
+
+    # No active membership remains. Keep the identity authenticated only for
+    # invitation acceptance; do not fall back to a revoked primary tenant.
+    memberships = CompanyMembership.query.populate_existing().filter_by(user_id=user_id).all()
+    primary_company_id = identity.company_id
+    primary_membership = next(
+        (
+            row for row in memberships
+            if primary_company_id is not None and int(row.company_id) == int(primary_company_id)
+        ),
+        None,
+    )
+
+    if primary_membership is not None or memberships:
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(identity, "company_id", None)
+        set_committed_value(identity, "role", "user")
+        set_committed_value(identity, "permissions_json", "[]")
+        identity.company_membership_active = False
+        identity.company_membership_missing = True
+        session.pop(ACTIVE_COMPANY_SESSION_KEY, None)
+        g.current_company_id = None
+        g.current_user_role = "user"
+        g._stockarmobile_membership_context_key = (user_id, "")
+        return None
+
+    # Backward compatibility for a legacy account not yet backfilled.
+    if primary_company_id is not None:
+        identity.company_membership_active = bool(identity.active)
+        identity.company_membership_role = identity.role or "user"
+        identity.company_membership_missing = False
+        session[ACTIVE_COMPANY_SESSION_KEY] = int(primary_company_id)
+        g.current_company_id = int(primary_company_id)
+        g.current_user_role = identity.role or "user"
+        g._stockarmobile_membership_context_key = (user_id, str(int(primary_company_id)))
+        return None
+
+    identity.company_membership_missing = False
+    g.current_company_id = None
+    g.current_user_role = identity.role or "user"
+    g._stockarmobile_membership_context_key = (user_id, "")
+    return None
+
+
 @app.before_request
 def enforce_password_change_if_required():
     if not current_user.is_authenticated:
@@ -551,6 +756,22 @@ def enforce_password_change_if_required():
         return api_error("Debes actualizar tu contraseña para continuar.", 403)
     return redirect(url_for("auth.force_password_change"))
 
+
+@app.before_request
+def enforce_membership_required_for_tenant_users():
+    """Keep identities without an active tenant signed in, but deny tenant pages."""
+    if not current_user.is_authenticated or not getattr(current_user, "company_membership_missing", False):
+        return None
+    endpoint = request.endpoint or ""
+    allowed = {
+        "auth.accept_company_invitation",
+        "auth.logout",
+        "auth.force_password_change",
+        "static",
+    }
+    if endpoint in allowed:
+        return None
+    abort(403, description="Tu cuenta no tiene una empresa activa. Aceptá una invitación vigente o contactá al administrador.")
 
 @app.before_request
 def enforce_billing_restrictions_for_blocked_tenants():
@@ -620,6 +841,108 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+
+class CompanyMembership(db.Model):
+    """A person's independent role and access policy in one tenant company."""
+    __tablename__ = "company_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id", name="uq_company_memberships_user_company"),
+        Index("ix_company_memberships_user", "user_id"),
+        Index("ix_company_memberships_company", "company_id"),
+        Index("ix_company_memberships_status", "company_id", "status", "active"),
+        Index("ix_company_memberships_invitation_hash", "invitation_token_hash", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False, default="user")
+    permissions_json = db.Column(db.Text, nullable=False, default="[]")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    status = db.Column(db.String(20), nullable=False, default="active")
+    invitation_token_hash = db.Column(db.String(64), unique=True, index=True)
+    invitation_expires_at = db.Column(db.DateTime)
+    invited_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    accepted_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+    company = db.relationship("Company")
+    invited_by = db.relationship("User", foreign_keys=[invited_by_user_id])
+
+
+
+@event.listens_for(User, "after_insert")
+def _create_initial_company_membership(mapper, connection, target):
+    """Give every newly-created tenant user their initial company membership."""
+    company_id = getattr(target, "company_id", None)
+    if company_id is None or (getattr(target, "role", None) or "").strip().lower() == "superadmin":
+        return
+    membership_table = CompanyMembership.__table__
+    existing = connection.execute(
+        select(membership_table.c.id).where(
+            membership_table.c.user_id == target.id,
+            membership_table.c.company_id == company_id,
+        )
+    ).first()
+    if existing is None:
+        connection.execute(membership_table.insert().values(
+            user_id=target.id,
+            company_id=company_id,
+            role=target.role or "user",
+            permissions_json=target.permissions_json or "[]",
+            active=bool(target.active),
+            status="active" if target.active else "revoked",
+            created_at=target.created_at or utcnow(),
+        ))
+
+
+@event.listens_for(User, "after_update")
+def _sync_primary_company_membership(mapper, connection, target):
+    """Keep legacy primary-company role/permissions in sync with their membership."""
+    state = sa_inspect(target)
+    company_id = getattr(target, "company_id", None)
+    if company_id is None or (getattr(target, "role", None) or "").strip().lower() == "superadmin":
+        return
+
+    company_changed = state.attrs.company_id.history.has_changes()
+    role_changed = state.attrs.role.history.has_changes()
+    permissions_changed = state.attrs.permissions_json.history.has_changes()
+    if not (company_changed or role_changed or permissions_changed):
+        return
+
+    membership_table = CompanyMembership.__table__
+    existing = connection.execute(
+        select(membership_table.c.id).where(
+            membership_table.c.user_id == target.id,
+            membership_table.c.company_id == company_id,
+        )
+    ).first()
+    if existing is None:
+        connection.execute(membership_table.insert().values(
+            user_id=target.id,
+            company_id=company_id,
+            role=target.role or "user",
+            permissions_json=target.permissions_json or "[]",
+            active=bool(target.active),
+            status="active" if target.active else "revoked",
+            created_at=target.created_at or utcnow(),
+        ))
+        return
+
+    updates = {}
+    if company_changed or role_changed:
+        updates["role"] = target.role or "user"
+    if company_changed or permissions_changed:
+        updates["permissions_json"] = target.permissions_json or "[]"
+    if updates:
+        connection.execute(
+            membership_table.update().where(
+                membership_table.c.user_id == target.id,
+                membership_table.c.company_id == company_id,
+            ).values(**updates)
+        )
 
 
 class NotificationReadState(db.Model):
@@ -2820,6 +3143,7 @@ def internal_error(error):
 def inject_notifications():
     has_active_seller_profile = False
     switchable_company_users = []
+    available_companies = []
     current_company_preferences = {}
     ai_feature_pricing_allowed = False
     ai_feature_vendor_allowed = False
@@ -2866,23 +3190,39 @@ def inject_notifications():
                 commercial_wholesale_pricing_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
-        if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
-            switchable_company_users = (
-                User.query.filter(
-                    User.company_id == current_user.company_id,
-                    User.active.is_(True),
-                    User.id != current_user.id,
-                    User.role.in_(["user", "admin"]),
-                )
-                .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
-                .all()
-            )
+        if getattr(current_user, "company_id", None) and getattr(current_user, "role", None) == "admin":
+            from stockarmobile.company_memberships import get_company_users
+            switchable_company_users = [
+                user for user in get_company_users(current_user.company_id, active_only=True)
+                if user.id != current_user.id and user.role in {"user", "admin"}
+            ]
+
+        if getattr(current_user, "role", None) != "superadmin":
+            from stockarmobile.company_memberships import active_memberships_for_user
+            for membership in active_memberships_for_user(current_user.id):
+                linked_company = db.session.get(Company, membership.company_id)
+                if linked_company is not None:
+                    available_companies.append({
+                        "id": int(linked_company.id),
+                        "name": linked_company.name,
+                        "role": membership.role or "user",
+                        "current": int(linked_company.id) == int(getattr(current_user, "company_id", 0) or 0),
+                    })
+            if not available_companies and getattr(current_user, "company_id", None):
+                available_companies = [{
+                    "id": int(current_user.company_id),
+                    "name": company.name if company is not None else "Empresa",
+                    "role": getattr(current_user, "role", "user"),
+                    "current": True,
+                }]
+
         return {
             "notification_items": notification_payload["items"],
             "notification_count": notification_payload["count"],
             "has_active_seller_profile": has_active_seller_profile,
             "support_contact": support_contact,
             "switchable_company_users": switchable_company_users,
+            "available_companies": available_companies,
             "company_preferences": current_company_preferences,
             "company_feature_enabled": lambda key, default=False: bool(current_company_preferences.get(key, default)),
             "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
@@ -2900,6 +3240,7 @@ def inject_notifications():
         "has_active_seller_profile": False,
         "support_contact": support_contact,
         "switchable_company_users": [],
+        "available_companies": [],
         "company_preferences": {},
         "company_feature_enabled": lambda key, default=False: bool(default),
         "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
