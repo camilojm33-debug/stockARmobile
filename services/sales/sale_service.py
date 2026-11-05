@@ -365,6 +365,21 @@ class SaleService:
                     )
                 )
 
+            # Keep the cash-session activity timeline complete for every sale,
+            # including mixed/digital payments where no CashMovement row is created.
+            db.session.flush()
+            if cash_session is not None:
+                from cash import _session_summary
+                from cash_treasury import _record_session_event
+                db.session.expire(cash_session, ["sales", "movements"])
+                _record_session_event(
+                    cash_session,
+                    "venta",
+                    note=f"Venta #{sale.id} por $ {final_total}",
+                    summary=_session_summary(cash_session),
+                    payload='{"sale_id":%d}' % int(sale.id),
+                )
+
             self._mark_quote_as_converted(checkout_token, sale.id)
 
             db.session.commit()
