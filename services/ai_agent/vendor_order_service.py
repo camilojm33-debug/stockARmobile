@@ -102,6 +102,37 @@ def _vendor_fulfillment_branch_id(company_id):
     return get_default_branch_id(company_id)
 
 
+def _vendor_conversation_branch_id(company_id, conversation):
+    """Resolve one validated fulfillment branch and persist legacy defaults."""
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+
+    raw_branch_id = getattr(conversation, "branch_id", None)
+    if raw_branch_id:
+        branch = Branch.query.filter_by(
+            id=int(raw_branch_id),
+            company_id=int(company_id),
+            active=True,
+        ).first()
+        if branch is None:
+            raise ValueError("La sucursal de esta conversación ya no está disponible.")
+        return int(branch.id)
+
+    branch_id = get_default_branch_id(company_id)
+    if branch_id is None:
+        return None
+    branch = Branch.query.filter_by(
+        id=int(branch_id),
+        company_id=int(company_id),
+        active=True,
+    ).first()
+    if branch is None:
+        raise ValueError("No hay una sucursal activa para preparar el pedido.")
+    conversation.branch_id = int(branch.id)
+    db.session.flush()
+    return int(branch.id)
+
+
 def _vendor_available_stock(product, company_id, branch_id=None):
     from stockarmobile.branch_inventory import available_stock
     effective_branch_id = branch_id or _vendor_fulfillment_branch_id(company_id)
@@ -809,6 +840,7 @@ class VendorOrderService:
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
+        branch_id = _vendor_conversation_branch_id(company_id, conversation)
         state = _metadata(conversation)
         saved_delivery = state.get("delivery") if isinstance(state.get("delivery"), dict) else {}
         effective_name = str(
@@ -920,7 +952,7 @@ class VendorOrderService:
                     "quantity": float(quantity),
                     "unit_measure": product.unit_measure or "u",
                     "unit_price": float(unit_price),
-                    "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
+                    "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id, branch_id=branch_id)),
                     "subtotal": float(subtotal),
                     "promotion_id": None,
                     "promotion_name": None,
@@ -947,7 +979,7 @@ class VendorOrderService:
                 "quantity": float(quantity),
                 "unit_measure": product.unit_measure or "u",
                 "unit_price": float(promotion.unit_price),
-                "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
+                "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id, branch_id=branch_id)),
                 "subtotal": float(subtotal),
                 "promotion_id": promotion.promotion_id,
                 "promotion_name": promotion.promotion_name,
@@ -984,6 +1016,7 @@ class VendorOrderService:
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
+        branch_id = _vendor_conversation_branch_id(company_id, conversation)
         state = _metadata(conversation)
         # Editing a cart after a payment link was issued starts a new draft.
         # Never mutate the quote behind a live checkout link.
@@ -1041,7 +1074,7 @@ class VendorOrderService:
                             if replace_requested_quantity
                             else existing_candidate_qty + quantity
                         )
-                        candidate_stock = Decimal(str(candidate.stock or 0))
+                        candidate_stock = Decimal(str(_vendor_available_stock(candidate, company_id, branch_id=branch_id)))
                         if candidate_requested_qty <= candidate_stock:
                             fulfillable.append(candidate)
 
@@ -1063,7 +1096,7 @@ class VendorOrderService:
                                         "product_id": item.id,
                                         "name": item.name,
                                         "price": float(item.price or 0),
-                                        "stock": normalized_stock_quantity(item.stock),
+                                        "stock": normalized_stock_quantity(_vendor_available_stock(item, company_id, branch_id=branch_id)),
                                     }
                                     for item in candidates[:5]
                                 ]
@@ -1083,7 +1116,7 @@ class VendorOrderService:
                     "success": False,
                     "error": "precio_no_configurado",
                     "message": (
-                        f"Encontré '{product.name}' con {normalized_stock_quantity(_vendor_available_stock(product, company_id)):g} "
+                        f"Encontré '{product.name}' con {normalized_stock_quantity(_vendor_available_stock(product, company_id, branch_id=branch_id)):g} "
                         "unidades disponibles, pero su precio está configurado en $0. "
                         "No corresponde armar un presupuesto hasta que el comercio configure su precio."
                     ),
@@ -1091,12 +1124,12 @@ class VendorOrderService:
                         "product_id": product.id,
                         "name": product.name,
                         "price": float(product.price or 0),
-                        "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
+                        "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id, branch_id=branch_id)),
                         "unit_measure": product.unit_measure or "u",
                     },
                 }
 
-            available = Decimal(str(_vendor_available_stock(product, company_id)))
+            available = Decimal(str(_vendor_available_stock(product, company_id, branch_id=branch_id)))
             existing = Decimal(str(cart.get(str(product.id), 0) or 0))
             replace_quantity = bool(row.get("replace_quantity"))
             requested_total = quantity if replace_quantity else existing + quantity
@@ -1351,6 +1384,16 @@ class VendorOrderService:
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
+        from app import Company
+        company = Company.query.filter_by(id=int(company_id), active=True).first()
+        if company is None:
+            raise ValueError("La empresa no está disponible para recibir pedidos.")
+        vendor_options = get_vendor_options(company)
+        if not vendor_options.get("can_prepare_quotes", False):
+            raise ValueError("El Vendedor IA tiene deshabilitada la preparación de presupuestos.")
+        if not vendor_options.get("can_take_orders", False):
+            raise ValueError("El Vendedor IA tiene deshabilitada la toma de pedidos.")
+
         cart = VendorOrderService.get_cart(
             company_id=company_id,
             conversation_id=conversation_id,
@@ -1506,7 +1549,7 @@ class VendorOrderService:
                 client.phone = client.phone or phone[:20]
                 client.whatsapp = client.whatsapp or phone[:30]
 
-        fulfillment_branch_id = _vendor_fulfillment_branch_id(company_id)
+        fulfillment_branch_id = _vendor_conversation_branch_id(company_id, conversation)
         product_ids = [int(item["product_id"]) for item in cart["items"]]
         products = {
             product.id: product
@@ -1533,7 +1576,7 @@ class VendorOrderService:
                     "Corregí el precio antes de emitir un presupuesto o enlace de pago."
                 )
             reserved = reservations.get(product.id, Decimal("0"))
-            available_after_reservations = Decimal(str(_vendor_available_stock(product, company_id))) - reserved
+            available_after_reservations = Decimal(str(_vendor_available_stock(product, company_id, branch_id=fulfillment_branch_id))) - reserved
             if quantity <= 0 or available_after_reservations < quantity:
                 if reserved > 0:
                     raise ValueError(
@@ -2058,8 +2101,12 @@ class VendorOrderService:
         return {"success": True, "quote_number": quote.number, "message": f"Pedido {quote.number} cancelado correctamente."}
 
     @staticmethod
-    def list_catalog(*, company_id: int, query: str = "", limit: int = 20) -> Dict[str, Any]:
+    def list_catalog(*, company_id: int, query: str = "", limit: int = 20, conversation_id: int | None = None) -> Dict[str, Any]:
         from app import Product
+        branch_id = _vendor_fulfillment_branch_id(company_id)
+        if conversation_id is not None:
+            conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+            branch_id = _vendor_conversation_branch_id(company_id, conversation)
         safe_limit = max(1, min(int(limit or 20), 40))
         if query.strip():
             rows = _search_candidates(company_id, query)
@@ -2086,8 +2133,12 @@ class VendorOrderService:
         return {"success": True, "count": len(products), "products": products}
 
     @staticmethod
-    def list_promotions(*, company_id: int, limit: int = 12) -> Dict[str, Any]:
+    def list_promotions(*, company_id: int, limit: int = 12, conversation_id: int | None = None) -> Dict[str, Any]:
         from app import Product
+        branch_id = _vendor_fulfillment_branch_id(company_id)
+        if conversation_id is not None:
+            conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+            branch_id = _vendor_conversation_branch_id(company_id, conversation)
         safe_limit = max(1, min(int(limit or 12), 24))
         rows = (
             Product.query.filter(Product.company_id == company_id, Product.active.is_(True), Product.discount > 0)

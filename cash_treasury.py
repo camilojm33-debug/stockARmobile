@@ -41,8 +41,10 @@ def _money(value, *, allow_negative=False):
     raw = str(value if value is not None else "0").strip().replace(",", ".")
     try:
         amount = Decimal(raw).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError):
+    except (InvalidOperation, ValueError, TypeError):
         raise ValueError("Ingresá un importe válido.") from None
+    if not amount.is_finite():
+        raise ValueError("Ingresá un importe válido.")
     if not allow_negative and amount < 0:
         raise ValueError("El importe no puede ser negativo.")
     return amount
@@ -122,7 +124,7 @@ def financial_account_balance(account):
             balance += amount
     return balance.quantize(Decimal("0.01"))
 
-def record_sale_financial_movements(sale, payment_breakdown):
+def record_sale_financial_movements(sale, payment_breakdown, *, posting_revision=None):
     """Post configured non-cash sale portions into their mapped account ledgers.
 
     Missing mappings never block a sale: only accounts explicitly associated
@@ -159,7 +161,11 @@ def record_sale_financial_movements(sale, payment_breakdown):
         )
         if account is None:
             continue
-        idempotency_key = f"sale:{int(sale.id)}:{method_key}"
+        revision_key = str(posting_revision or "").strip()
+        idempotency_key = (
+            f"sale:{int(sale.id)}:edit:{revision_key}:{method_key}"
+            if revision_key else f"sale:{int(sale.id)}:{method_key}"
+        )
         exists = FinancialAccountMovement.query.filter_by(
             company_id=int(company_id),
             idempotency_key=idempotency_key,
@@ -173,7 +179,7 @@ def record_sale_financial_movements(sale, payment_breakdown):
             movement_type="ingreso",
             amount=amount,
             description=f"Venta #{sale.id} · {method_key.replace('_', ' ')}",
-            source_type="sale",
+            source_type="sale_edit" if posting_revision else "sale",
             source_id=int(sale.id),
             idempotency_key=idempotency_key,
             created_by_user_id=getattr(sale, "seller_id", None),
@@ -183,6 +189,69 @@ def record_sale_financial_movements(sale, payment_breakdown):
     if posted:
         db.session.flush()
     return posted
+
+
+def reverse_sale_financial_movements(sale, *, reason="anulada"):
+    """Append compensating ledger entries for every existing non-cash sale posting.
+
+    Original ledger rows remain immutable. A stable idempotency key guarantees
+    that retries of the same cancellation/edit cannot reverse an entry twice.
+    """
+    company_id = getattr(sale, "company_id", None)
+    sale_id = getattr(sale, "id", None)
+    if not company_id or not sale_id:
+        return []
+    originals = (
+        FinancialAccountMovement.query
+        .filter(
+            FinancialAccountMovement.company_id == int(company_id),
+            FinancialAccountMovement.source_id == int(sale_id),
+            FinancialAccountMovement.source_type.in_(("sale", "sale_edit")),
+        )
+        .order_by(FinancialAccountMovement.id.asc())
+        .all()
+    )
+    created = []
+    for original in originals:
+        key = f"sale:{int(sale_id)}:reverse:{int(original.id)}"
+        exists = FinancialAccountMovement.query.filter_by(
+            company_id=int(company_id),
+            idempotency_key=key,
+        ).first()
+        if exists is not None:
+            continue
+        reversal = FinancialAccountMovement(
+            company_id=int(company_id),
+            branch_id=original.branch_id,
+            account_id=int(original.account_id),
+            movement_type="egreso",
+            amount=_to_decimal(original.amount),
+            description=f"Reversión venta #{sale_id} · asiento #{original.id} · {str(reason or 'anulada')[:80]}",
+            reference=f"Reversa asiento financiero #{original.id}",
+            source_type="sale_reversal",
+            source_id=int(sale_id),
+            idempotency_key=key,
+            created_by_user_id=getattr(current_user, "id", None) or getattr(sale, "seller_id", None),
+        )
+        db.session.add(reversal)
+        created.append(reversal)
+    if created:
+        db.session.flush()
+    return created
+
+
+def reconcile_sale_financial_movements(sale, payment_breakdown, *, revision_id):
+    """Reverse the previous sale postings, then post the edited payment split."""
+    revision_key = str(revision_id or "").strip()
+    if not revision_key:
+        raise ValueError("La revisión de la venta es obligatoria para conciliar la tesorería.")
+    reversed_rows = reverse_sale_financial_movements(sale, reason=f"edición {revision_key}")
+    posted_rows = record_sale_financial_movements(
+        sale,
+        payment_breakdown,
+        posting_revision=revision_key,
+    )
+    return {"reversed": reversed_rows, "posted": posted_rows}
 
 
 
@@ -507,6 +576,10 @@ def dispatch_transfer(transfer_id):
             description=f"Transferencia #{transfer.id} hacia {transfer.target_branch.name}",
         )
         db.session.add(movement)
+        db.session.flush()
+        # _session_summary reads ORM relationship collections. Expire the
+        # cached movement list so the event snapshot includes the withdrawal.
+        db.session.expire(source_session, ["movements"])
         transfer.status = "en_transito"
         transfer.dispatched_by_user_id = current_user.id
         transfer.dispatched_at = utcnow()

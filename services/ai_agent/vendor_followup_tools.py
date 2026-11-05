@@ -53,7 +53,7 @@ class VendorCatalogTool(AgentTool):
     input_schema = {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 40}}, "additionalProperties": False}
 
     def execute(self, **kwargs):
-        return VendorOrderService.list_catalog(company_id=self.company_id, query=str(kwargs.get("query") or ""), limit=int(kwargs.get("limit") or 20))
+        return VendorOrderService.list_catalog(company_id=self.company_id, query=str(kwargs.get("query") or ""), limit=int(kwargs.get("limit") or 20), conversation_id=self._context["conversation_id"])
 
 
 class VendorPromotionsTool(AgentTool):
@@ -62,7 +62,7 @@ class VendorPromotionsTool(AgentTool):
     input_schema = {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 24}}, "additionalProperties": False}
 
     def execute(self, **kwargs):
-        return VendorOrderService.list_promotions(company_id=self.company_id, limit=int(kwargs.get("limit") or 12))
+        return VendorOrderService.list_promotions(company_id=self.company_id, limit=int(kwargs.get("limit") or 12), conversation_id=self._context["conversation_id"])
 
 
 def _safe_tool_name(name: str) -> str:

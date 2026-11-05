@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261102_02_company_memberships"
+HEAD_REVISION = "20261105_01_vendor_conversation_branch"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -114,6 +114,7 @@ def main() -> None:
                         text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "{column_name}" CASCADE')
                     )
             connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
+            connection.execute(text('ALTER TABLE "conversations" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
 
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
@@ -229,6 +230,7 @@ def main() -> None:
             "expenses": {"branch_id"},
             "business_documents": {"branch_id"},
             "plans": {"max_branches"},
+            "conversations": {"branch_id"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}

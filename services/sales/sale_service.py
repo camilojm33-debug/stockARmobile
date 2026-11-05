@@ -610,15 +610,21 @@ class SaleService:
                 for line in new_lines
             ],
         }
-        db.session.add(
-            SaleModificationHistory(
-                sale_id=sale.id,
-                company_id=sale.company_id,
-                user_id=getattr(current_user, "id", None),
-                reason=reason,
-                previous_data=json_dumps(previous_snapshot),
-                new_data=json_dumps(new_snapshot),
-            )
+        modification = SaleModificationHistory(
+            sale_id=sale.id,
+            company_id=sale.company_id,
+            user_id=getattr(current_user, "id", None),
+            reason=reason,
+            previous_data=json_dumps(previous_snapshot),
+            new_data=json_dumps(new_snapshot),
+        )
+        db.session.add(modification)
+        db.session.flush()
+        from cash_treasury import reconcile_sale_financial_movements
+        reconcile_sale_financial_movements(
+            sale,
+            payment_breakdown,
+            revision_id=modification.id,
         )
 
         AuditService.record_update(record_audit, sale_id=sale.id, reason=reason)
@@ -649,6 +655,8 @@ class SaleService:
         from app import db, record_audit
 
         ValidationService.validate_cancel_status(getattr(sale, "status", None))
+        from cash_treasury import reverse_sale_financial_movements
+        reverse_sale_financial_movements(sale, reason="cancelación")
         sale.status = "anulada"
         self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(record_audit, sale_id=sale.id, detail=detail)
@@ -663,6 +671,8 @@ class SaleService:
             getattr(sale, "status", None),
             comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
         )
+        from cash_treasury import reverse_sale_financial_movements
+        reverse_sale_financial_movements(sale, reason="anulación")
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
         InventoryService.reverse_stock(
             sale_items=sale.items,

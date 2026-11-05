@@ -222,7 +222,17 @@ def test_authenticated_user_can_switch_tenant_without_rewriting_primary_identity
         stored = db.session.get(User, user_id)
         assert stored.company_id == first_id
         assert stored.role == "admin"
-        assert stored.permissions_json == '["inventory","cash"]'
+        # The global identity permissions remain unchanged; company-specific
+        # permissions live only on the corresponding membership rows.
+        assert stored.permissions_json == '["inventory"]'
+        first_membership = CompanyMembership.query.filter_by(
+            user_id=user_id, company_id=first_id
+        ).first()
+        second_membership = CompanyMembership.query.filter_by(
+            user_id=user_id, company_id=second_id
+        ).first()
+        assert first_membership.permissions_json == '["inventory","cash"]'
+        assert second_membership.permissions_json == '["inventory"]'
 
 
 

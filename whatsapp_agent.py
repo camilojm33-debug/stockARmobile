@@ -20,7 +20,13 @@ from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_
 from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_AGENT_MESSAGE_CHARS
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
-from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
+from services.ai_agent.vendor_order_service import (
+    VendorOrderService,
+    _metadata,
+    _set_metadata,
+    _vendor_conversation_branch_id,
+    _vendor_fulfillment_branch_id,
+)
 from services.ai_agent.human_attention import attention_for, conversation_metadata, persist_human_inbound, resume_ai, set_attention
 from services.ai_agent.whatsapp_service import WhatsAppService
 from services.saas_commercial_whatsapp import is_commercial_phone_number_id, process_commercial_message
@@ -139,9 +145,17 @@ def _get_or_create_conversation(company_id: int, sender: str):
         Conversation.external_conversation_id == sender,
     ).first()
     if conversation is None:
-        conversation = Conversation(company_id=company_id, agent_id=agent.id, channel="whatsapp", external_conversation_id=sender, metadata_json={"whatsapp_user": sender})
+        conversation = Conversation(
+            company_id=company_id,
+            agent_id=agent.id,
+            branch_id=_vendor_fulfillment_branch_id(company_id),
+            channel="whatsapp",
+            external_conversation_id=sender,
+            metadata_json={"whatsapp_user": sender},
+        )
         db.session.add(conversation)
         db.session.flush()
+    _vendor_conversation_branch_id(company_id, conversation)
     return conversation
 
 
@@ -416,14 +430,14 @@ def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, t
         return result.get("message") if result.get("success") else "No pude cancelar el pedido."
 
     if normalized in {"catalogo", "catálogo", "ver catalogo", "ver catálogo", "productos"}:
-        result = VendorOrderService.list_catalog(company_id=company_id, limit=20)
+        result = VendorOrderService.list_catalog(company_id=company_id, limit=20, conversation_id=conversation_id)
         if not result.get("products"):
             return "Ahora mismo no encuentro productos activos en el catálogo."
         lines = [f"• {item['name']} — ${item['price']:.2f} ({item['stock']:g} disponibles)" for item in result["products"]]
         return "📦 *Catálogo*\n" + "\n".join(lines)
 
     if normalized in {"promociones", "ofertas", "promos", "que esta en oferta", "qué está en oferta"}:
-        result = VendorOrderService.list_promotions(company_id=company_id)
+        result = VendorOrderService.list_promotions(company_id=company_id, conversation_id=conversation_id)
         lines = [f"• {item['name']} — antes ${item['price']:.2f}, ahora ${item['final_price']:.2f}" for item in result.get("products", []) if item.get("stock", 0) > 0]
         return "🔥 *Promociones*\n" + ("\n".join(lines) if lines else "No hay promociones con stock disponible.")
 
