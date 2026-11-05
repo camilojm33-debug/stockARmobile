@@ -357,6 +357,50 @@ def test_ai_stock_tools_only_reveal_the_employee_active_branch(app, monkeypatch)
             assert [item["branch_id"] for item in queried["product"]["stock_by_branch"]] == [central.id]
 
 
+def test_public_vendor_stock_tools_only_reveal_conversation_branch(app):
+    from services.ai_agent.tools.product_search import BuscarProductoTool
+    from services.ai_agent.tools.stock_query import ConsultarStockTool
+    from stockarmobile.models.conversations import Conversation
+
+    with app.app_context():
+        company = _company("Empresa vendedor público por sucursal")
+        central = _branch(company, "Casa central", "CENTRAL", default=True)
+        north = _branch(company, "Sucursal Norte", "NORTE")
+        product = Product(
+            company_id=company.id,
+            barcode="PUBLIC-BR-001",
+            name="Producto público",
+            stock=19,
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        set_branch_stock(product, central.id, 7)
+        set_branch_stock(product, north.id, 12)
+        conversation = Conversation(
+            company_id=company.id,
+            branch_id=north.id,
+            channel="webchat",
+            external_conversation_id="visitor-token",
+            status="open",
+        )
+        db.session.add(conversation)
+        db.session.commit()
+
+        context = {"conversation_id": conversation.id, "channel": "webchat"}
+        searched = BuscarProductoTool(company_id=company.id, **context).execute(query="Producto público")
+        queried = ConsultarStockTool(company_id=company.id, **context).execute(product_id=product.id)
+
+        assert searched["success"] is True
+        assert searched["items"][0]["stock"] == 12.0
+        assert [row["branch_id"] for row in searched["items"][0]["stock_by_branch"]] == [north.id]
+        assert queried["success"] is True
+        assert queried["product"]["stock"] == 12.0
+        assert [row["branch_id"] for row in queried["product"]["stock_by_branch"]] == [north.id]
+        assert conversation.branch_id == north.id
+        db.session.rollback()
+
+
 def test_ai_sales_metrics_only_aggregate_employee_active_branch(app, monkeypatch):
     from flask_login import login_user
     from services.ai_agent.tools.business_metrics import ResumenVentasTool
