@@ -54,8 +54,16 @@ class ConsultarStockTool(AgentTool):
         if product is None:
             return {"success": False, "error": "product_not_found", "product": None}
 
-        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        from services.ai_agent.tools.branch_scope import (
+            employee_branch_scope,
+            public_vendor_conversation_branch_scope,
+        )
         restricted, visible_branch_id = employee_branch_scope(effective_company_id)
+        if not restricted:
+            restricted, visible_branch_id = public_vendor_conversation_branch_scope(
+                effective_company_id,
+                self._context,
+            )
         stock_query = BranchStock.query.filter_by(
             company_id=int(effective_company_id), product_id=product.id
         ).join(Branch, Branch.id == BranchStock.branch_id).filter(Branch.active.is_(True))
