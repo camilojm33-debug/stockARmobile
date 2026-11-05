@@ -45,7 +45,6 @@ def main() -> None:
         # by wholesale pricing to simulate the schema immediately before the migration.
         _progress("Resetting disposable schema: dropping Alembic version table")
         with db.engine.begin() as connection:
-            connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
         _progress("Dropping ORM tables")
         db.drop_all()
@@ -114,6 +113,7 @@ def main() -> None:
                     connection.execute(
                         text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "{column_name}" CASCADE')
                     )
+            connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
 
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
