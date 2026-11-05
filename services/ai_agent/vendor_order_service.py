@@ -2124,7 +2124,7 @@ class VendorOrderService:
                 "brand": product.brand or "",
                 "category": product.category or "",
                 "price": float(product.price or 0),
-                "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
+                "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id, branch_id=branch_id)),
                 "unit_measure": product.unit_measure or "u",
                 "photo": product.photo or "",
             }
@@ -2158,7 +2158,7 @@ class VendorOrderService:
                     "price": float(price),
                     "discount": float(discount),
                     "final_price": float(final_price),
-                    "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id)),
+                    "stock": normalized_stock_quantity(_vendor_available_stock(product, company_id, branch_id=branch_id)),
                     "unit_measure": product.unit_measure or "u",
                 }
             )
