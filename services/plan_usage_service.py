@@ -58,12 +58,36 @@ class PlanUsageService:
 
     @staticmethod
     def _resource_counts(company_id: int):
-        from app import Client, Product, User
+        from app import Client, CompanyMembership, Product, User
 
-        users_count = User.query.filter(
+        membership_user_ids = CompanyMembership.query.with_entities(
+            CompanyMembership.user_id
+        ).filter(CompanyMembership.company_id == company_id)
+        users_count = (
+            User.query.join(CompanyMembership, CompanyMembership.user_id == User.id)
+            .filter(
+                CompanyMembership.company_id == company_id,
+                CompanyMembership.active.is_(True),
+                CompanyMembership.status == "active",
+                User.active.is_(True),
+                User.role != "superadmin",
+            )
+            .count()
+        )
+        from app import utcnow
+        users_count += CompanyMembership.query.filter(
+            CompanyMembership.company_id == company_id,
+            CompanyMembership.status == "invited",
+            CompanyMembership.active.is_(False),
+            CompanyMembership.invitation_expires_at > utcnow(),
+        ).count()
+        # Keep pre-migration/test-created primary-tenant users counted until their
+        # compatibility membership is backfilled.
+        users_count += User.query.filter(
             User.company_id == company_id,
             User.active.is_(True),
             User.role != "superadmin",
+            ~User.id.in_(membership_user_ids),
         ).count()
         products_count = Product.query.filter(
             Product.company_id == company_id,

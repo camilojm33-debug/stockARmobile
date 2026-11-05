@@ -53,6 +53,18 @@ def _record_cash_expense_movement(*, user, expense):
     )
     db.session.add(movement)
     db.session.flush()
+    # Cash expenses are part of the same session timeline as manual movements.
+    # Expire the ORM collection so the event captures the post-expense balance.
+    from cash_treasury import _record_session_event
+    from cash import _session_summary
+    db.session.expire(open_session, ["movements"])
+    _record_session_event(
+        open_session,
+        "gasto_efectivo",
+        note=f"Gasto #{expense.id}: {expense.description}",
+        summary=_session_summary(open_session),
+        payload='{"expense_id":%d}' % int(expense.id),
+    )
     return movement
 
 

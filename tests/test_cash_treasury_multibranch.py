@@ -15,10 +15,17 @@ from app import (
     FinancialAccount,
     FinancialAccountMovement,
     User,
+    Sale,
     db,
 )
 from cash import _session_summary
-from cash_treasury import financial_account_balance
+from cash_treasury import (
+    _money,
+    financial_account_balance,
+    record_sale_financial_movements,
+    reverse_sale_financial_movements,
+    reconcile_sale_financial_movements,
+)
 from services.backup_service import BackupService
 from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission
 
@@ -206,6 +213,12 @@ def test_cash_transfer_lifecycle_deducts_and_adds_cash_exactly_once(app):
             cash_transfer_id=transfer_id, movement_type="retiro"
         ).one()
         assert Decimal(str(outgoing.amount)) == Decimal("40.00")
+        dispatch_event = CashSessionEvent.query.filter_by(
+            cash_session_id=source_session_id,
+            event_type="transferencia_enviada",
+        ).one()
+        # La foto del evento tiene que incluir el retiro recién asentado.
+        assert Decimal(str(dispatch_event.expected_amount)) == Decimal("80.00")
 
         received = test_client.post(
             f"/caja/tesoreria/transferencias/{transfer_id}/recibir",
@@ -555,3 +568,79 @@ def test_sale_posts_mapped_digital_payment_to_the_branch_account_once(app):
             company_id=company.id,
             idempotency_key="sale:98765:mercado_pago",
         ).count() == 1
+
+
+@pytest.mark.parametrize("value", ["NaN", "sNaN", "Infinity", "-Infinity"])
+def test_cash_money_rejects_non_finite_decimal_values(value):
+    with pytest.raises(ValueError, match="importe válido"):
+        _money(value)
+
+
+def test_sale_financial_ledger_reversals_are_append_only_and_idempotent(app):
+    with app.app_context():
+        company = _company("Empresa reversión de ventas")
+        branch = _branch(company, "Casa central", "CENTRAL", default=True)
+        user = _admin(company, "sale_ledger")
+        account = FinancialAccount(
+            company_id=company.id,
+            branch_id=branch.id,
+            name="Cuenta Mercado Pago",
+            code="MP-SALE",
+            account_type="billetera",
+            payment_method_key="mercado_pago",
+            opening_balance=Decimal("0.00"),
+            active=True,
+            created_by_user_id=user.id,
+        )
+        sale = Sale(
+            company_id=company.id,
+            branch_id=branch.id,
+            seller_id=user.id,
+            customer="Cliente QA",
+            total_amount=Decimal("50.00"),
+            payment_method="MERCADO_PAGO",
+            status="confirmada",
+        )
+        db.session.add_all([account, sale])
+        db.session.flush()
+
+        original = record_sale_financial_movements(
+            sale,
+            {"mercado_pago": Decimal("50.00")},
+        )
+        assert len(original) == 1
+        assert original[0].movement_type == "ingreso"
+        db.session.commit()
+
+        edited = reconcile_sale_financial_movements(
+            sale,
+            {"mercado_pago": Decimal("75.00")},
+            revision_id=7,
+        )
+        db.session.commit()
+        assert len(edited["reversed"]) == 1
+        assert len(edited["posted"]) == 1
+        assert edited["reversed"][0].movement_type == "egreso"
+        assert Decimal(str(edited["posted"][0].amount)) == Decimal("75.00")
+
+        cancelled = reverse_sale_financial_movements(sale, reason="anulación")
+        db.session.commit()
+        # Replaying the same cancellation cannot create a second reversal.
+        replay = reverse_sale_financial_movements(sale, reason="anulación")
+        db.session.commit()
+        assert len(cancelled) == 1
+        assert replay == []
+
+        db.session.expire_all()
+        movements = FinancialAccountMovement.query.filter_by(
+            company_id=company.id,
+            account_id=account.id,
+        ).order_by(FinancialAccountMovement.id.asc()).all()
+        assert [(row.movement_type, Decimal(str(row.amount))) for row in movements] == [
+            ("ingreso", Decimal("50.00")),
+            ("egreso", Decimal("50.00")),
+            ("ingreso", Decimal("75.00")),
+            ("egreso", Decimal("75.00")),
+        ]
+        refreshed_account = db.session.get(FinancialAccount, account.id)
+        assert financial_account_balance(refreshed_account) == Decimal("0.00")

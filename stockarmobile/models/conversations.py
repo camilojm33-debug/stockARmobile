@@ -93,6 +93,12 @@ class Conversation(db.Model):
         db.ForeignKey("agents.id"),
         nullable=True,
     )
+    branch_id = db.Column(
+        db.Integer,
+        db.ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     channel = db.Column(db.String(60), nullable=False)
     external_conversation_id = db.Column(db.String(200))
     status = db.Column(
@@ -119,6 +125,7 @@ class Conversation(db.Model):
 
     __table_args__ = (
         sa.Index("ix_conversations_company_channel", "company_id", "channel"),
+        sa.Index("ix_conversations_company_branch", "company_id", "branch_id"),
         sa.Index("ix_conversations_company_external_id", "company_id", "external_conversation_id"),
         sa.Index("ix_conversations_company_status", "company_id", "status"),
     )

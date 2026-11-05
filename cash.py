@@ -360,6 +360,15 @@ def index():
                             )
                         )
                         db.session.flush()
+                        from cash_treasury import _record_session_event
+                        db.session.expire(target_session, ["movements"])
+                        _record_session_event(
+                            target_session,
+                            f"movimiento_{movement_type}",
+                            note=request.form.get("description") or f"Movimiento manual {movement_type} por $ {amount}",
+                            summary=_session_summary(target_session),
+                            payload='{"category":"manual"}',
+                        )
                         record_audit(action="cash_movement", entity="cash_movement", detail=f"Movimiento {movement_type} por {amount}")
                         db.session.commit()
                         flash("Movimiento registrado.", "success")
@@ -563,7 +572,8 @@ def index():
 
     employees = []
     if _is_admin():
-        employees = scope_query_to_company(User.query.filter_by(active=True), User).order_by(User.username).all()
+        from stockarmobile.company_memberships import get_company_users
+        employees = get_company_users(getattr(current_user, "company_id", None), active_only=True)
 
     return render_template(
         "caja/index.html",
@@ -590,7 +600,7 @@ def index():
 @bp.route("/exportar-csv")
 @tenant_required
 def export_cash_csv():
-    from app import CashSession, scope_query_to_company
+    from app import Branch, CashRegister, CashSession, scope_query_to_company
 
     if not _is_admin():
         abort(403)
@@ -607,6 +617,10 @@ def export_cash_csv():
     }
     writer.writerow([
         "ID",
+        "Sucursal",
+        "Código sucursal",
+        "Caja física",
+        "Código caja",
         "Usuario",
         "Estado",
         "Apertura",
@@ -623,8 +637,15 @@ def export_cash_csv():
         "Cierre fecha",
         "Nota",
     ])
-    for session in _base_session_query().order_by(CashSession.opened_at.desc()).all():
+    sessions = _base_session_query().order_by(CashSession.opened_at.desc()).all()
+    branch_ids = {int(row.branch_id) for row in sessions if row.branch_id}
+    register_ids = {int(row.cash_register_id) for row in sessions if row.cash_register_id}
+    branch_map = {int(row.id): row for row in Branch.query.filter(Branch.id.in_(branch_ids)).all()} if branch_ids else {}
+    register_map = {int(row.id): row for row in CashRegister.query.filter(CashRegister.id.in_(register_ids)).all()} if register_ids else {}
+    for session in sessions:
         summary = _session_summary(session)
+        branch = branch_map.get(int(session.branch_id)) if session.branch_id else None
+        register = register_map.get(int(session.cash_register_id)) if session.cash_register_id else None
         totals["sales_cash"] += summary["sales_cash"]
         totals["sales_transfer"] += summary["sales_transfer"]
         totals["sales_debit"] += summary["sales_debit"]
@@ -633,6 +654,10 @@ def export_cash_csv():
         totals["sales_other"] += summary["sales_other"]
         writer.writerow([
             session.id,
+            branch.name if branch else "",
+            branch.code if branch else "",
+            register.name if register else "",
+            register.code if register else "",
             session.user.name if session.user else session.user_id,
             session.status,
             f"{summary['opening']:.2f}",
@@ -679,7 +704,7 @@ def export_cash_csv():
 @bp.route("/exportar-excel")
 @tenant_required
 def export_cash_excel():
-    from app import CashSession, scope_query_to_company
+    from app import Branch, CashRegister, CashSession, scope_query_to_company
 
     if not _is_admin():
         abort(403)
@@ -697,6 +722,10 @@ def export_cash_excel():
     }
     sheet.append([
         "ID",
+        "Sucursal",
+        "Código sucursal",
+        "Caja física",
+        "Código caja",
         "Usuario",
         "Estado",
         "Monto inicial",
@@ -718,8 +747,14 @@ def export_cash_excel():
     ])
 
     sessions = _base_session_query().order_by(CashSession.opened_at.desc()).all()
+    branch_ids = {int(row.branch_id) for row in sessions if row.branch_id}
+    register_ids = {int(row.cash_register_id) for row in sessions if row.cash_register_id}
+    branch_map = {int(row.id): row for row in Branch.query.filter(Branch.id.in_(branch_ids)).all()} if branch_ids else {}
+    register_map = {int(row.id): row for row in CashRegister.query.filter(CashRegister.id.in_(register_ids)).all()} if register_ids else {}
     for session in sessions:
         summary = _session_summary(session)
+        branch = branch_map.get(int(session.branch_id)) if session.branch_id else None
+        register = register_map.get(int(session.cash_register_id)) if session.cash_register_id else None
         totals["sales_cash"] += summary["sales_cash"]
         totals["sales_transfer"] += summary["sales_transfer"]
         totals["sales_debit"] += summary["sales_debit"]
@@ -728,6 +763,10 @@ def export_cash_excel():
         totals["sales_other"] += summary["sales_other"]
         sheet.append([
             session.id,
+            branch.name if branch else "",
+            branch.code if branch else "",
+            register.name if register else "",
+            register.code if register else "",
             session.user.name if session.user else session.user_id,
             session.status,
             float(summary["opening"]),
@@ -783,7 +822,7 @@ def export_cash_excel():
 @bp.route("/exportar-pdf")
 @tenant_required
 def export_cash_pdf():
-    from app import CashSession, scope_query_to_company
+    from app import Branch, CashRegister, CashSession, scope_query_to_company
 
     if not _is_admin():
         abort(403)
@@ -806,15 +845,23 @@ def export_cash_pdf():
     }
 
     sessions = _base_session_query().order_by(CashSession.opened_at.desc()).limit(100).all()
+    branch_ids = {int(row.branch_id) for row in sessions if row.branch_id}
+    register_ids = {int(row.cash_register_id) for row in sessions if row.cash_register_id}
+    branch_map = {int(row.id): row for row in Branch.query.filter(Branch.id.in_(branch_ids)).all()} if branch_ids else {}
+    register_map = {int(row.id): row for row in CashRegister.query.filter(CashRegister.id.in_(register_ids)).all()} if register_ids else {}
     for session in sessions:
         summary = _session_summary(session)
+        branch = branch_map.get(int(session.branch_id)) if session.branch_id else None
+        register = register_map.get(int(session.cash_register_id)) if session.cash_register_id else None
         totals["sales_cash"] += summary["sales_cash"]
         totals["sales_transfer"] += summary["sales_transfer"]
         totals["sales_debit"] += summary["sales_debit"]
         totals["sales_credit"] += summary["sales_credit"]
         totals["sales_mp"] += summary["sales_mp"]
         totals["sales_other"] += summary["sales_other"]
-        line = f"Caja #{session.id} | {session.user.name if session.user else session.user_id} | {session.status}"
+        branch_label = f"{branch.name} ({branch.code})" if branch else "Sin sucursal"
+        register_label = f"{register.name} ({register.code})" if register else "Caja histórica"
+        line = f"Caja #{session.id} | {branch_label} | {register_label} | {session.user.name if session.user else session.user_id} | {session.status}"
         breakdown = (
             f"EF ${summary['sales_cash']:.2f} | TR ${summary['sales_transfer']:.2f} | DB ${summary['sales_debit']:.2f} | "
             f"CR ${summary['sales_credit']:.2f} | MP ${summary['sales_mp']:.2f} | OT ${summary['sales_other']:.2f}"

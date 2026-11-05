@@ -72,8 +72,16 @@ class BuscarProductoTool(AgentTool):
             .all()
         )
 
-        from services.ai_agent.tools.branch_scope import employee_branch_scope
+        from services.ai_agent.tools.branch_scope import (
+            employee_branch_scope,
+            public_vendor_conversation_branch_scope,
+        )
         restricted, visible_branch_id = employee_branch_scope(effective_company_id)
+        if not restricted:
+            restricted, visible_branch_id = public_vendor_conversation_branch_scope(
+                effective_company_id,
+                self._context,
+            )
         items = []
         for product in products:
             stock_query = BranchStock.query.filter_by(

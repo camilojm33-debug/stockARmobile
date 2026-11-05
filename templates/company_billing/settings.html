@@ -482,7 +482,7 @@
       <form method="post" action="{{ url_for('company_billing.company_settings_user_create') }}" class="row g-3 mb-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="col-md-3">
-          <label class="form-label">Empresa / Negocio</label>
+          <label class="form-label">Usuario de acceso</label>
           <input class="form-control" name="username" maxlength="80" required>
         </div>
         <div class="col-md-3">
@@ -505,6 +505,26 @@
         </div>
       </form>
       {% endif %}
+      {% if current_user.role == 'admin' %}
+      <form method="post" action="{{ url_for('company_billing.company_settings_user_invite') }}" class="row g-2 mb-4 p-3 border rounded-3 bg-light">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Vincular una cuenta existente a esta empresa</label>
+          <input class="form-control" type="email" name="email" maxlength="120" placeholder="correo@empresa.com" required>
+          <div class="form-text">La persona debe tener una cuenta StockArMobile. Recibirá un enlace de invitación que deberá aceptar iniciando sesión con ese correo.</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Rol en esta empresa</label>
+          <select class="form-select" name="role">
+            <option value="user">Empleado</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-outline-primary w-100" type="submit"><i class="bi bi-link-45deg me-1"></i>Invitar a empresa</button>
+        </div>
+      </form>
+      {% endif %}
       <div class="table-responsive">
         <table class="table table-hover mb-0">
           <thead>
@@ -524,7 +544,7 @@
             <tr>
               <td>{{ user.name }}</td>
               <td>{{ user.email }}</td>
-              <td><span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span></td>
+              <td><span class="badge {{ 'text-bg-success' if row.membership_active else 'text-bg-secondary' }}">{{ 'Activo' if row.membership_active else 'Inactivo en esta empresa' }}</span>{% if not user.active %}<div class="small text-muted">Cuenta desactivada</div>{% endif %}</td>
               <td>{{ 'Administrador' if user.role == 'admin' else 'Empleado' }}</td>
               <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
               <td>{{ row.last_access.strftime('%Y-%m-%d %H:%M') if row.last_access else '-' }}</td>
@@ -571,9 +591,9 @@
                     <div class="small text-muted">Si no completás los campos, se genera una contraseña temporal como antes.</div>
                     <button class="btn btn-sm btn-outline-warning" type="submit">Guardar contraseña</button>
                   </form>
-                  <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Eliminar empleado {{ user.name }}? Si tiene historial será desactivado automáticamente.');">
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Quitar a {{ user.name }} de esta empresa? Se conservará su cuenta y su acceso a otras empresas.');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Quitar de empresa</button>
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_permissions', user_id=user.id) }}" class="d-flex gap-1 flex-wrap justify-content-end">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -599,6 +619,31 @@
       </div>
     </div>
   </div>
+  {% if pending_company_invitations %}
+  <div class="card app-card mt-3">
+    <div class="card-header bg-white fw-bold">Invitaciones pendientes</div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead><tr><th>Cuenta invitada</th><th>Rol</th><th>Vencimiento</th><th class="text-end">Acciones</th></tr></thead>
+        <tbody>
+          {% for invitation in pending_company_invitations %}
+          <tr>
+            <td>{{ invitation.user.email if invitation.user else 'Cuenta no disponible' }}</td>
+            <td>{{ 'Administrador' if invitation.role == 'admin' else 'Empleado' }}</td>
+            <td>{{ invitation.invitation_expires_at.strftime('%d/%m/%Y %H:%M') if invitation.invitation_expires_at else '-' }}</td>
+            <td class="text-end">
+              <form method="post" action="{{ url_for('company_billing.company_settings_user_invitation_cancel', membership_id=invitation.id) }}" onsubmit="return confirm('¿Cancelar esta invitación?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Cancelar</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
   {% elif panel == 'security' %}
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">

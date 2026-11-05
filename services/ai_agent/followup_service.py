@@ -18,6 +18,7 @@ from stockarmobile.extensions import db
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.vendor_order_service import VendorOrderService
+from services.ai_agent.config_service import get_vendor_options
 
 
 OUTBOX_KEY = "ai_outbox"
@@ -205,7 +206,13 @@ class AIFollowupService:
             "settings": settings,
         }
 
+        from app import Company
+
         for conversation in conversations:
+            company = Company.query.filter_by(id=int(conversation.company_id), active=True).first()
+            if company is None or not get_vendor_options(company).get("can_follow_up", False):
+                stats["skipped_followup_disabled"] = stats.get("skipped_followup_disabled", 0) + 1
+                continue
             metadata = _metadata(conversation)
             attention = metadata.get("ai_attention")
             if isinstance(attention, dict) and str(attention.get("status") or "").strip().lower() in {"human", "resolved"}:

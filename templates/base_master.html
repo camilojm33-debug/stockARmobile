@@ -708,7 +708,7 @@
   {% block extra_css %}{% endblock %}
   {% block extra_styles %}{% endblock %}
 </head>
-<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ current_user.company_id or '' }}" data-cart-tenant="{{ (current_user.company_id or 'global') ~ ':' ~ current_user.id }}" data-active-branch-id="{{ active_branch_id or '' }}" data-role="{{ current_user.role or 'user' }}" data-ai-pricing-enabled="{{ '1' if ai_feature_pricing_allowed else '0' }}" data-ai-vendor-enabled="{{ '1' if ai_feature_vendor_allowed else '0' }}" data-ai-employee-access="{{ '1' if ai_employee_access_allowed else '0' }}"{% endif %}>
+<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ g.current_company_id or '' }}" data-cart-tenant="{{ (g.current_company_id or 'global') ~ ':' ~ current_user.id }}" data-active-branch-id="{{ active_branch_id or '' }}" data-role="{{ g.current_user_role or 'user' }}" data-tenant-refresh="{{ g._stockarmobile_tenant_refresh_debug or '' }}" data-user-tenant-refresh="{{ current_user._stockarmobile_tenant_refresh_debug or '' }}" data-ai-pricing-enabled="{{ '1' if ai_feature_pricing_allowed else '0' }}" data-ai-vendor-enabled="{{ '1' if ai_feature_vendor_allowed else '0' }}" data-ai-employee-access="{{ '1' if ai_employee_access_allowed else '0' }}"{% endif %}>
   {% if current_user.is_authenticated %}
   <div class="app-sidebar-backdrop" id="appSidebarBackdrop" aria-hidden="true"></div>
   <aside class="app-sidebar" id="appSidebar">
@@ -885,6 +885,26 @@
         <button class="btn btn-outline-primary btn-sm w-100" type="button" id="offlineSyncNow"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar ahora</button>
         </div>
       </div>
+      {% if available_companies|length > 1 %}
+      <div class="dropdown mb-2">
+        <button class="btn btn-outline-primary w-100 dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-buildings me-1"></i>{{ available_companies|selectattr('current')|map(attribute='name')|first or 'Cambiar empresa' }}
+        </button>
+        <div class="dropdown-menu w-100 p-2" style="max-height: 280px; overflow-y: auto;">
+          <div class="small text-muted px-2 pb-2">Tu cuenta tiene acceso a varias empresas.</div>
+          {% for company_option in available_companies %}
+          <form method="post" action="{{ url_for('auth.switch_company') }}" class="mb-1">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="company_id" value="{{ company_option.id }}">
+            <button class="dropdown-item rounded-2 d-flex justify-content-between align-items-center {% if company_option.current %}active{% endif %}" type="submit">
+              <span class="text-truncate">{{ company_option.name }}</span>
+              <span class="badge text-bg-secondary">{{ 'Admin' if company_option.role == 'admin' else 'Empleado' }}</span>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       {% if current_user.role == 'admin' and switchable_company_users %}
       <div class="dropdown mb-2">
         <button class="btn btn-outline-info w-100 dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -1185,13 +1205,15 @@
           clearOfflineQueue();
         });
       });
-      document.querySelectorAll('form[action*="/auth/switch-user"]').forEach(function(form) {
+      document.querySelectorAll('form[action*="/auth/switch-user"], form[action*="/auth/switch-company"]').forEach(function(form) {
         form.addEventListener('submit', function(event) {
           if (form.dataset.privateCacheCleared === 'true') return;
           event.preventDefault();
           if (form.dataset.clearingPrivateCache === 'true') return;
           form.dataset.clearingPrivateCache = 'true';
           const submitter = event.submitter;
+          clearCartStorage();
+          clearOfflineQueue();
           clearPrivateOfflineCache().finally(function() {
             form.dataset.privateCacheCleared = 'true';
             form.dataset.clearingPrivateCache = 'false';

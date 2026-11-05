@@ -177,6 +177,19 @@
       </div>
     </header>
 
+    {% if branch_choices|default([])|length > 1 %}
+    <div class="panel branch-picker" style="margin:14px 0;padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <label for="vendorBranchSelect" class="fw-bold mb-0">Comprar desde la sucursal</label>
+      <select id="vendorBranchSelect" class="form-select" style="max-width:320px" aria-label="Seleccionar sucursal">
+        {% for branch in branch_choices %}
+        <option value="{{ branch.id }}" {% if selected_branch_id and branch.id == selected_branch_id %}selected{% endif %}>{{ branch.name }}{% if branch.code %} · {{ branch.code }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      <span class="small text-muted">El stock y el despacho se validan en la sucursal elegida.</span>
+      <div id="branchError" class="small text-danger w-100" role="alert"></div>
+    </div>
+    {% endif %}
+
     <div class="layout">
       <section class="panel">
         <div class="panel-head">
@@ -311,12 +324,15 @@
     const cartEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/cart') : '';
     const checkoutEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/checkout') : '';
     const stateEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/state') : '';
+    const branchEndpoint = chatEndpoint && !chatEndpoint.includes('/public/vendedor/') ? chatEndpoint.replace(/\/message$/, '/branch') : '';
     const supportsConversationState = Boolean(stateEndpoint) && !chatEndpoint.includes('/public/vendedor/');
     const shippingConfig = {{ (shipping_config or {"mode": "fixed", "fixed_cost": 0})|tojson }};
     const csrf = {{ csrf_token()|tojson }};
     const initialCatalog = {{ catalog|tojson }};
     const initialState = {{ initial_state|tojson }};
     const productsEl = document.getElementById('products');
+    const branchSelect = document.getElementById('vendorBranchSelect');
+    const branchError = document.getElementById('branchError');
     const searchEl = document.getElementById('productSearch');
     const messages = document.getElementById('messages');
     const empty = document.getElementById('empty');
@@ -584,6 +600,7 @@
     function setState(data) {
       if (!data) return;
       if (data.conversation_id) conversationId = data.conversation_id;
+      if (branchSelect && data.branch_id) branchSelect.value = String(data.branch_id);
       currentState = { ...currentState, ...data, cart: data.cart || currentState.cart };
       renderCart(currentState);
       ensureOrderPolling();
@@ -798,6 +815,31 @@
         throw error;
       }
       return data;
+    }
+
+    if (branchSelect && branchEndpoint) {
+      branchSelect.addEventListener('change', async function () {
+        if (branchError) branchError.textContent = '';
+        branchSelect.disabled = true;
+        try {
+          await requestJson(branchEndpoint, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify({
+              branch_id: Number(branchSelect.value),
+              conversation_id: conversationId,
+              chat_session_id: chatSessionId
+            })
+          });
+          const target = new URL(window.location.href);
+          target.searchParams.set('branch_id', branchSelect.value);
+          window.location.assign(target.toString());
+        } catch (err) {
+          if (branchError) branchError.textContent = err.message || 'No se pudo cambiar la sucursal.';
+          branchSelect.disabled = false;
+        }
+      });
     }
 
     async function addProduct(productId, button) {

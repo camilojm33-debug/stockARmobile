@@ -48,6 +48,26 @@ def app():
 
 
 @pytest.fixture
+def company_membership_app():
+    """Give tenant-switch tests normal, independent Flask contexts per request."""
+    stock_app.app.config["TESTING"] = True
+    stock_app.app.config["WTF_CSRF_ENABLED"] = False
+
+    with stock_app.app.app_context():
+        db.session.remove()
+        _drop_migration_only_wholesale_foreign_keys()
+        db.drop_all()
+        db.create_all()
+
+    yield stock_app.app
+
+    with stock_app.app.app_context():
+        db.session.remove()
+        _drop_migration_only_wholesale_foreign_keys()
+        db.drop_all()
+
+
+@pytest.fixture
 def qa_ai_database():
     """Minimal isolated AI database used by cross-module vendor security tests."""
     stock_app.app.config["TESTING"] = True

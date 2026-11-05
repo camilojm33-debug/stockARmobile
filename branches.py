@@ -57,19 +57,14 @@ def _apply_branch_user_access(company_id, branch_id, selected_ids):
         raise ValueError("La sucursal ya no existe o está inactiva. No se modificaron los accesos.")
 
     selected_ids = {int(value) for value in (selected_ids or [])}
-    users = (
-        User.query.filter(
-            User.company_id == int(company_id),
-            User.active.is_(True),
-            User.role != "superadmin",
-            User.id.in_(selected_ids),
-        ).all()
-        if selected_ids else []
-    )
-    if {int(user.id) for user in users} != selected_ids:
+    from stockarmobile.company_memberships import get_company_users
+    eligible_users = get_company_users(int(company_id), active_only=True)
+    eligible_by_id = {int(user.id): user for user in eligible_users if user.role != "superadmin"}
+    if not selected_ids.issubset(set(eligible_by_id)):
         raise ValueError(
             "Uno o más empleados ya no están activos o no pertenecen a esta empresa. No se modificaron los accesos."
         )
+    users = [eligible_by_id[user_id] for user_id in sorted(selected_ids)]
 
     existing_rows = UserBranchAccess.query.filter_by(
         branch_id=branch.id, company_id=int(company_id)
@@ -436,19 +431,14 @@ def assign_users(branch_id):
     ).first_or_404()
     try:
         selected_ids = _parse_selected_user_ids(request.form.getlist("user_ids"))
-        selectable_users = (
-            User.query.filter(
-                User.company_id == company_id,
-                User.active.is_(True),
-                User.role != "superadmin",
-                User.id.in_(selected_ids),
-            ).all()
-            if selected_ids else []
-        )
-        if {int(user.id) for user in selectable_users} != selected_ids:
+        from stockarmobile.company_memberships import get_company_users
+        eligible_users = get_company_users(company_id, active_only=True)
+        eligible_by_id = {int(user.id): user for user in eligible_users if user.role != "superadmin"}
+        if not selected_ids.issubset(set(eligible_by_id)):
             raise ValueError(
                 "Uno o más empleados ya no están activos o no pertenecen a esta empresa."
             )
+        selectable_users = [eligible_by_id[user_id] for user_id in sorted(selected_ids)]
     except ValueError as exc:
         flash(str(exc), "warning")
         return redirect(url_for("company_billing.company_settings", panel="branches"))

@@ -7,7 +7,7 @@ os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 import pytest
 
 import app as stock_app
-from app import Client, Company, Payment, Product, Quote, QuoteDelivery, User, db
+from app import Branch, BranchStock, Client, Company, Payment, Product, Quote, QuoteDelivery, User, db
 from quotes import _build_public_quote_accept_url, _build_public_quote_pdf_url, _build_public_quote_url, _build_quote_whatsapp_message, _quote_charge_display_rows, _quote_customer_name
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.followup_service import AIFollowupService
@@ -20,7 +20,7 @@ from services.ai_agent.vendor_order_service import (
     VendorOrderService,
 )
 from services.mercadopago_service import MercadoPagoService
-from stockarmobile.models.conversations import Conversation
+from stockarmobile.models.conversations import Conversation, ConversationMessage
 
 
 @pytest.fixture
@@ -1988,3 +1988,116 @@ def test_vendor_wholesale_order_blocks_when_quantity_has_no_active_tier(vendor_d
 
     assert Quote.query.filter_by(company_id=data["company_a"].id).count() == 0
     assert not [call for kind, call in calls if kind == "checkout"]
+
+
+def test_vendor_catalog_and_cart_stock_follow_conversation_branch(vendor_database):
+    data = vendor_database
+    company = data["company_a"]
+    product = data["product_a"]
+
+    central = Branch(
+        company_id=company.id,
+        name="Casa central",
+        code="CENTRAL",
+        active=True,
+        is_default=True,
+    )
+    north = Branch(
+        company_id=company.id,
+        name="Sucursal Norte",
+        code="NORTE",
+        active=True,
+    )
+    db.session.add_all([central, north])
+    db.session.flush()
+    db.session.add_all([
+        BranchStock(
+            company_id=company.id,
+            branch_id=central.id,
+            product_id=product.id,
+            stock=1,
+        ),
+        BranchStock(
+            company_id=company.id,
+            branch_id=north.id,
+            product_id=product.id,
+            stock=7,
+        ),
+    ])
+    conversation = Conversation(
+        company_id=company.id,
+        branch_id=north.id,
+        channel="webchat",
+        status="open",
+    )
+    db.session.add(conversation)
+    db.session.commit()
+
+    catalog = VendorOrderService.list_catalog(
+        company_id=company.id,
+        conversation_id=conversation.id,
+    )
+    assert catalog["products"][0]["stock"] == 7
+
+    cart = VendorOrderService.update_cart(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        items=[{"product_query": product.name, "quantity": 3}],
+    )
+    assert cart["items"][0]["stock"] == 7
+
+
+def test_vendor_backend_rejects_order_when_capability_is_disabled(vendor_database):
+    data = vendor_database
+    company = data["company_a"]
+    company.preferences_json = json.dumps({
+        "ai_agent": {
+            "vendor_options": {
+                "can_prepare_quotes": True,
+                "can_take_orders": False,
+            }
+        }
+    })
+    conversation = _conversation(company.id)
+
+    with pytest.raises(ValueError, match="toma de pedidos"):
+        VendorOrderService.create_pending_order(
+            company_id=company.id,
+            conversation_id=conversation.id,
+        )
+
+
+def test_followup_planner_does_not_queue_when_vendor_followup_is_disabled(vendor_database):
+    data = vendor_database
+    company = data["company_a"]
+    company.preferences_json = json.dumps({
+        "ai_agent": {
+            "vendor_options": {
+                "can_follow_up": False,
+            }
+        }
+    })
+    conversation = Conversation(
+        company_id=company.id,
+        channel="whatsapp",
+        external_conversation_id="5491112345678",
+        status="open",
+        metadata_json={
+            "vendor_cart": {"1": 1},
+        },
+    )
+    db.session.add(conversation)
+    db.session.flush()
+    db.session.add(ConversationMessage(
+        conversation_id=conversation.id,
+        company_id=company.id,
+        sender_type="user",
+        role="user",
+        content="Quiero comprar",
+        created_at=__import__("datetime").datetime.utcnow() - __import__("datetime").timedelta(hours=3),
+    ))
+    db.session.commit()
+
+    result = AIFollowupService.scan(now=__import__("datetime").datetime.utcnow())
+    assert result["queued"] == 0
+    assert result["skipped_followup_disabled"] == 1

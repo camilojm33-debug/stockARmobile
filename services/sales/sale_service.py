@@ -365,6 +365,21 @@ class SaleService:
                     )
                 )
 
+            # Keep the cash-session activity timeline complete for every sale,
+            # including mixed/digital payments where no CashMovement row is created.
+            db.session.flush()
+            if cash_session is not None:
+                from cash import _session_summary
+                from cash_treasury import _record_session_event
+                db.session.expire(cash_session, ["sales", "movements"])
+                _record_session_event(
+                    cash_session,
+                    "venta",
+                    note=f"Venta #{sale.id} por $ {final_total}",
+                    summary=_session_summary(cash_session),
+                    payload='{"sale_id":%d}' % int(sale.id),
+                )
+
             self._mark_quote_as_converted(checkout_token, sale.id)
 
             db.session.commit()
@@ -610,20 +625,58 @@ class SaleService:
                 for line in new_lines
             ],
         }
-        db.session.add(
-            SaleModificationHistory(
-                sale_id=sale.id,
-                company_id=sale.company_id,
-                user_id=getattr(current_user, "id", None),
-                reason=reason,
-                previous_data=json_dumps(previous_snapshot),
-                new_data=json_dumps(new_snapshot),
-            )
+        modification = SaleModificationHistory(
+            sale_id=sale.id,
+            company_id=sale.company_id,
+            user_id=getattr(current_user, "id", None),
+            reason=reason,
+            previous_data=json_dumps(previous_snapshot),
+            new_data=json_dumps(new_snapshot),
+        )
+        db.session.add(modification)
+        db.session.flush()
+        from cash_treasury import reconcile_sale_financial_movements
+        reconcile_sale_financial_movements(
+            sale,
+            payment_breakdown,
+            revision_id=modification.id,
+        )
+        db.session.flush()
+        self._record_cash_session_sale_event(
+            sale,
+            "venta_editada",
+            f"Venta #{sale.id} editada: {reason}",
         )
 
         AuditService.record_update(record_audit, sale_id=sale.id, reason=reason)
         db.session.commit()
         return sale
+
+    def _record_cash_session_sale_event(self, sale, event_type, note):
+        """Append a sale lifecycle event without rewriting a closed cash snapshot."""
+        from app import CashSession, db
+        if not getattr(sale, "cash_session_id", None):
+            return None
+        cash_session = CashSession.query.filter_by(
+            id=int(sale.cash_session_id),
+            company_id=int(sale.company_id),
+        ).first()
+        if cash_session is None:
+            return None
+        from cash_treasury import _record_session_event
+        summary = None
+        if str(getattr(cash_session, "status", "") or "").lower() == "abierta":
+            from cash import _session_summary
+            db.session.expire(cash_session, ["sales", "movements"])
+            summary = _session_summary(cash_session)
+        payload = '{"sale_id":%d}' % int(sale.id)
+        return _record_session_event(
+            cash_session,
+            event_type,
+            note=note,
+            summary=summary,
+            payload=payload,
+        )
 
     def _sync_crm_opportunity_after_sale_annulment(self, sale):
         from app import utcnow
@@ -649,7 +702,14 @@ class SaleService:
         from app import db, record_audit
 
         ValidationService.validate_cancel_status(getattr(sale, "status", None))
+        from cash_treasury import reverse_sale_financial_movements
+        reverse_sale_financial_movements(sale, reason="cancelación")
         sale.status = "anulada"
+        self._record_cash_session_sale_event(
+            sale,
+            "venta_anulada",
+            detail or f"Venta #{sale.id} anulada.",
+        )
         self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(record_audit, sale_id=sale.id, detail=detail)
         db.session.commit()
@@ -663,6 +723,8 @@ class SaleService:
             getattr(sale, "status", None),
             comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
         )
+        from cash_treasury import reverse_sale_financial_movements
+        reverse_sale_financial_movements(sale, reason="anulación")
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
         InventoryService.reverse_stock(
             sale_items=sale.items,
@@ -672,6 +734,11 @@ class SaleService:
             user_id=getattr(current_user, "id", None),
         )
         sale.status = "anulada"
+        self._record_cash_session_sale_event(
+            sale,
+            "venta_anulada",
+            detail or f"Venta #{sale.id} anulada por administrador.",
+        )
         self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(
             record_audit,

@@ -55,22 +55,26 @@ def _notification_required_permission(item):
 
 
 def _persisted_current_user():
-    """Reload the signed-in user from the database before applying permissions.
+    """Read persisted permission fields without refreshing Flask-Login's identity.
 
-    Flask-Login keeps a user object in the request context, while permission
-    changes can be committed directly through another ORM operation. Using
-    populate_existing() is intentional here: SQLAlchemy's identity map may
-    otherwise return an already-loaded User without refreshing its columns.
+    A tenant membership temporarily overrides company_id, role and permissions
+    on the request-local User object. Querying the User entity with
+    populate_existing() would overwrite that selected-company context with the
+    legacy primary-company columns. Read scalar columns into a detached value
+    object instead, preserving the authenticated ORM identity.
     """
-    login_user = current_user._get_current_object()
-    from app import User
+    from types import SimpleNamespace
+    from app import User, db
 
-    return (
-        User.query
-        .populate_existing()
-        .filter_by(id=login_user.id)
+    login_user = current_user._get_current_object()
+    row = (
+        db.session.query(User.role, User.permissions_json)
+        .filter(User.id == login_user.id)
         .first()
     )
+    if row is None:
+        return None
+    return SimpleNamespace(role=row.role, permissions_json=row.permissions_json)
 
 
 def filter_notifications_for_user(items):

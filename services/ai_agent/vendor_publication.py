@@ -474,15 +474,21 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         metadata = {"source": "public_webchat_stable"}
         if session_digest:
             metadata["public_chat_session_digest"] = session_digest
+        from stockarmobile.branch_context import get_default_branch_id
         conversation = Conversation(
             company_id=company.id,
             agent_id=vendor_agent.id,
+            branch_id=get_default_branch_id(company.id),
             channel="webchat",
             external_conversation_id=visitor_id,
             status="open",
             metadata_json=metadata,
         )
         db.session.add(conversation)
+        db.session.flush()
+    if conversation is not None and conversation.branch_id is None:
+        from stockarmobile.branch_context import get_default_branch_id
+        conversation.branch_id = get_default_branch_id(company.id)
         db.session.flush()
     return conversation
 
@@ -512,8 +518,16 @@ def _cart_public_state(conversation) -> dict:
         "mode": "fixed",
         "fixed_cost": float(options.get("standard_shipping_cost") or 0),
     }
+    from app import Branch
+    branch = Branch.query.filter_by(
+        id=int(conversation.branch_id),
+        company_id=int(conversation.company_id),
+    ).first() if conversation.branch_id else None
     return {
         "conversation_id": conversation.id,
+        "branch_id": int(conversation.branch_id) if conversation.branch_id else None,
+        "branch_name": str(branch.name or "") if branch else "",
+        "branch_code": str(branch.code or "") if branch else "",
         "cart": cart,
         "payment_url": payment_url or None,
         "quote_url": quote_url,
@@ -1129,7 +1143,20 @@ def _product_payload(product) -> dict:
     }
 
 
-def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CATALOG_LIMIT) -> list[dict]:
+def _public_branch_choices(company) -> list[dict]:
+    """Return only branches that the public seller is allowed to fulfill from."""
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id, multibranch_enabled
+
+    query = Branch.query.filter_by(company_id=int(company.id), active=True)
+    if not multibranch_enabled(company):
+        default_id = get_default_branch_id(company.id)
+        query = query.filter(Branch.id == int(default_id)) if default_id else query.filter(Branch.id == -1)
+    rows = query.order_by(Branch.is_default.desc(), Branch.name.asc(), Branch.id.asc()).all()
+    return [{"id": int(row.id), "name": str(row.name or ""), "code": str(row.code or "")} for row in rows]
+
+
+def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CATALOG_LIMIT, branch_id: int | None = None) -> list[dict]:
     from app import Product
 
     query = " ".join(str(query or "").strip().split())[:80]
@@ -1147,8 +1174,20 @@ def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CA
         )
     rows = base.order_by(Product.favorite.desc(), Product.name.asc()).limit(limit).all()
     from stockarmobile.branch_context import get_default_branch_id
-    from app import BranchStock
-    branch_id = get_default_branch_id(company.id)
+    from app import Branch, BranchStock
+    default_branch_id = get_default_branch_id(company.id)
+    if branch_id is not None:
+        selected_branch = Branch.query.filter_by(
+            id=int(branch_id),
+            company_id=int(company.id),
+            active=True,
+        ).first()
+        allowed_ids = {int(row["id"]) for row in _public_branch_choices(company)}
+        if selected_branch is None or int(selected_branch.id) not in allowed_ids:
+            raise ValueError("La sucursal seleccionada no está disponible para este comercio.")
+        branch_id = int(selected_branch.id)
+    else:
+        branch_id = default_branch_id
     if branch_id is not None:
         stocks = {
             int(row.product_id): float(row.stock or 0)
@@ -1246,6 +1285,8 @@ def public_vendor_page(slug: str):
         )
     _visitor_id(company.id)
     options = get_vendor_options(company)
+    branch_choices = _public_branch_choices(company)
+    requested_branch_id = request.args.get("branch_id", type=int)
     shipping_config = {
         "mode": "fixed",
         "fixed_cost": float(options.get("standard_shipping_cost") or 0),
@@ -1256,7 +1297,9 @@ def public_vendor_page(slug: str):
         disabled_reason=None,
         chat_url=url_for("vendor_publication.public_vendor_message", slug=slug, _external=True),
         shipping_config=shipping_config,
-        catalog=_catalog_for_company(company),
+        catalog=_catalog_for_company(company, branch_id=requested_branch_id),
+        branch_choices=branch_choices,
+        selected_branch_id=requested_branch_id or (branch_choices[0]["id"] if branch_choices else None),
         initial_state=_initial_page_state(company),
         greeting=str(options.get("greeting") or "Hola 👋 ¿Qué producto estás buscando?").strip(),
     )
@@ -1270,7 +1313,12 @@ def public_vendor_catalog(slug: str):
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
     query = request.args.get("q", "")
-    return jsonify({"success": True, "products": _catalog_for_company(company, query=query)})
+    branch_id = request.args.get("branch_id", type=int)
+    try:
+        products = _catalog_for_company(company, query=query, branch_id=branch_id)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    return jsonify({"success": True, "products": products})
 
 
 def public_vendor_state(slug: str):
@@ -1293,6 +1341,61 @@ def public_vendor_state(slug: str):
         **_cart_public_state(conversation),
         "messages": _public_chat_history(conversation),
     })
+
+
+def public_vendor_branch(slug: str):
+    """Allow a buyer to select one fulfillment branch before building the cart."""
+    company = _public_available_company(slug)
+    if company is None:
+        return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "La solicitud no es válida."}), 400
+    try:
+        branch_id = int(payload.get("branch_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Elegí una sucursal válida."}), 400
+
+    visitor_id = _visitor_id(company.id)
+    try:
+        with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
+            conversation = _public_conversation(
+                company,
+                payload.get("conversation_id"),
+                create=True,
+                chat_session_id=payload.get("chat_session_id"),
+            )
+            if conversation is None:
+                return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+            allowed_ids = {int(row["id"]) for row in _public_branch_choices(company)}
+            if branch_id not in allowed_ids:
+                return jsonify({"success": False, "error": "La sucursal seleccionada no está disponible."}), 400
+
+            state = _conversation_metadata(conversation)
+            cart = state.get(CART_KEY) if isinstance(state.get(CART_KEY), dict) else {}
+            if cart or state.get(PENDING_QUOTE_KEY) or state.get(PENDING_PAYMENT_KEY):
+                return jsonify({
+                    "success": False,
+                    "error": "No podés cambiar de sucursal con un carrito o pedido iniciado. Vaciá el carrito para cambiar.",
+                }), 409
+
+            conversation.branch_id = branch_id
+            db.session.commit()
+            branch = next(row for row in _public_branch_choices(company) if int(row["id"]) == branch_id)
+            return jsonify({
+                "success": True,
+                "conversation_id": int(conversation.id),
+                "branch_id": branch_id,
+                "branch_name": branch["name"],
+                "branch_code": branch["code"],
+            })
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo cambiar la sucursal del Vendedor IA company_id=%s", company.id)
+        return jsonify({"success": False, "error": "No se pudo cambiar la sucursal. Intentá nuevamente."}), 503
 
 
 def public_vendor_cart(slug: str):
@@ -1750,6 +1853,7 @@ def public_vendor_message(slug: str):
 csrf.exempt(public_vendor_message)
 csrf.exempt(public_vendor_catalog)
 csrf.exempt(public_vendor_state)
+csrf.exempt(public_vendor_branch)
 csrf.exempt(public_vendor_cart)
 csrf.exempt(public_vendor_checkout)
 
@@ -1814,6 +1918,7 @@ def install_routes(app) -> None:
     app.add_url_rule("/vendedor/<slug>", endpoint="vendor_publication.public_vendor_page", view_func=public_vendor_page, methods=["GET"])
     app.add_url_rule("/vendedor/<slug>/catalog", endpoint="vendor_publication.public_vendor_catalog", view_func=public_vendor_catalog, methods=["GET"])
     app.add_url_rule("/vendedor/<slug>/state", endpoint="vendor_publication.public_vendor_state", view_func=public_vendor_state, methods=["GET"])
+    app.add_url_rule("/vendedor/<slug>/branch", endpoint="vendor_publication.public_vendor_branch", view_func=public_vendor_branch, methods=["POST"])
     app.add_url_rule("/vendedor/<slug>/cart", endpoint="vendor_publication.public_vendor_cart", view_func=public_vendor_cart, methods=["POST"])
     app.add_url_rule("/vendedor/<slug>/checkout", endpoint="vendor_publication.public_vendor_checkout", view_func=public_vendor_checkout, methods=["POST"])
     app.add_url_rule("/vendedor/<slug>/message", endpoint="vendor_publication.public_vendor_message", view_func=public_vendor_message, methods=["POST"])

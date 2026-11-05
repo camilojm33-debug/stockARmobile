@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261104_01_cash_treasury"
+HEAD_REVISION = "20261105_01_vendor_branch"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -113,6 +113,8 @@ def main() -> None:
                     connection.execute(
                         text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "{column_name}" CASCADE')
                     )
+            connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
+            connection.execute(text('ALTER TABLE "conversations" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
 
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
@@ -228,6 +230,7 @@ def main() -> None:
             "expenses": {"branch_id"},
             "business_documents": {"branch_id"},
             "plans": {"max_branches"},
+            "conversations": {"branch_id"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -235,7 +238,7 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers"}
+        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers", "company_memberships"}
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")

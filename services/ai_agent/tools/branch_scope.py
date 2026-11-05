@@ -29,3 +29,39 @@ def employee_branch_scope(company_id: int) -> tuple[bool, int | None]:
     from stockarmobile.branch_context import get_active_branch_id
     branch_id = get_active_branch_id()
     return True, int(branch_id) if branch_id is not None else -1
+
+
+def public_vendor_conversation_branch_scope(company_id: int, context: dict | None = None) -> tuple[bool, int | None]:
+    """Resolve the server-persisted fulfillment branch for anonymous vendor chats.
+
+    Never trust a branch ID from model arguments or channel metadata. The only
+    accepted context key is the internal conversation ID created by the server.
+    """
+    payload = context if isinstance(context, dict) else {}
+    channel = str(payload.get("channel") or "").strip().lower()
+    if channel not in {"whatsapp", "whatsapp_business", "webchat"}:
+        return False, None
+
+    try:
+        conversation_id = int(payload.get("conversation_id") or 0)
+        tenant_id = int(company_id)
+    except (TypeError, ValueError):
+        return True, -1
+    if conversation_id <= 0 or tenant_id <= 0:
+        return True, -1
+
+    from stockarmobile.models.conversations import Conversation
+    conversation = Conversation.query.filter_by(
+        id=conversation_id,
+        company_id=tenant_id,
+        channel=channel,
+    ).first()
+    if conversation is None:
+        return True, -1
+
+    from services.ai_agent.vendor_order_service import _vendor_conversation_branch_id
+    try:
+        branch_id = _vendor_conversation_branch_id(tenant_id, conversation)
+    except ValueError:
+        return True, -1
+    return True, int(branch_id) if branch_id is not None else -1

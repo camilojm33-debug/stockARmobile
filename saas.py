@@ -252,6 +252,32 @@ def _allowed_ui_actions_for_status(status: str | None):
     return SUBSCRIPTION_UI_ACTIONS.get(normalized, {"modify"})
 
 
+def _company_user_counts(company_id):
+    """Return total and active identities linked to one company, counting legacy rows once."""
+    from app import CompanyMembership, User
+
+    membership_query = CompanyMembership.query.filter(
+        CompanyMembership.company_id == company_id,
+        CompanyMembership.status.in_(["active", "revoked"]),
+    )
+    total = membership_query.count()
+    active = (
+        CompanyMembership.query.join(User, User.id == CompanyMembership.user_id)
+        .filter(
+            CompanyMembership.company_id == company_id,
+            CompanyMembership.status == "active",
+            CompanyMembership.active.is_(True),
+            User.active.is_(True),
+        )
+        .count()
+    )
+    linked_ids = CompanyMembership.query.with_entities(CompanyMembership.user_id).filter_by(company_id=company_id)
+    legacy_query = User.query.filter(User.company_id == company_id, ~User.id.in_(linked_ids))
+    total += legacy_query.count()
+    active += legacy_query.filter(User.active.is_(True)).count()
+    return int(total), int(active)
+
+
 def _hard_delete_company(company):
     import sqlalchemy as sa
 
@@ -261,6 +287,7 @@ def _hard_delete_company(company):
         CashMovement,
         CashSession,
         Client,
+        CompanyMembership,
         Expense,
         Invoice,
         MercadoPagoConnection,
@@ -325,7 +352,22 @@ def _hard_delete_company(company):
             return
         db.session.query(model).filter(getattr(model, column_name).in_(values)).delete(synchronize_session=False)
 
-    user_ids = _safe_ids_by_company(User)
+    primary_user_ids = _safe_ids_by_company(User)
+    membership_user_ids = [
+        int(row[0]) for row in db.session.query(CompanyMembership.user_id)
+        .filter(CompanyMembership.company_id == company_id).all()
+    ]
+    user_ids = sorted(set(primary_user_ids) | set(membership_user_ids))
+    other_memberships = (
+        CompanyMembership.query.filter(
+            CompanyMembership.user_id.in_(user_ids),
+            CompanyMembership.company_id != company_id,
+        ).all()
+        if user_ids else []
+    )
+    shared_user_ids = {int(row.user_id) for row in other_memberships}
+    user_ids_to_delete = [user_id for user_id in primary_user_ids if user_id not in shared_user_ids]
+
     product_ids = _safe_ids_by_company(Product)
     client_ids = _safe_ids_by_company(Client)
     supplier_ids = _safe_ids_by_company(Supplier)
@@ -334,8 +376,8 @@ def _hard_delete_company(company):
     purchase_order_ids = _safe_ids_by_company(PurchaseOrder)
 
     seller_ids = []
-    if user_ids and _has_column(ReferralSeller, "id") and _has_column(ReferralSeller, "user_id"):
-        seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids)).all()]
+    if user_ids_to_delete and _has_column(ReferralSeller, "id") and _has_column(ReferralSeller, "user_id"):
+        seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids_to_delete)).all()]
 
     payout_ids = []
     if seller_ids and _has_column(ReferralPayout, "id") and _has_column(ReferralPayout, "seller_id"):
@@ -380,9 +422,44 @@ def _hard_delete_company(company):
     _safe_delete_company_rows(Client)
     _safe_delete_company_rows(Supplier)
 
-    _safe_delete_in(NotificationReadState, "user_id", user_ids)
-    _safe_delete_in(PasswordResetToken, "user_id", user_ids)
-    _safe_delete_in(User, "id", user_ids)
+    # Remove only this tenant's membership. A global account with another
+    # company's membership must survive the tenant purge.
+    db.session.query(CompanyMembership).filter_by(company_id=company_id).delete(synchronize_session=False)
+    for shared_user_id in sorted(shared_user_ids):
+        shared_user = db.session.get(User, shared_user_id)
+        if shared_user is None or shared_user.company_id != company_id:
+            continue
+        next_membership = (
+            CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+            .filter(
+                CompanyMembership.user_id == shared_user_id,
+                CompanyMembership.company_id != company_id,
+                CompanyMembership.active.is_(True),
+                CompanyMembership.status == "active",
+                Company.active.is_(True),
+            )
+            .order_by(Company.name.asc(), Company.id.asc())
+            .first()
+        )
+        if next_membership is None:
+            next_membership = (
+                CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+                .filter(
+                    CompanyMembership.user_id == shared_user_id,
+                    CompanyMembership.company_id != company_id,
+                    Company.active.is_(True),
+                )
+                .order_by(Company.name.asc(), Company.id.asc())
+                .first()
+            )
+        if next_membership is not None:
+            shared_user.company_id = next_membership.company_id
+            shared_user.role = next_membership.role or "user"
+            shared_user.permissions_json = next_membership.permissions_json or "[]"
+
+    _safe_delete_in(NotificationReadState, "user_id", user_ids_to_delete)
+    _safe_delete_in(PasswordResetToken, "user_id", user_ids_to_delete)
+    _safe_delete_in(User, "id", user_ids_to_delete)
 
     reflected_tables = {}
 
@@ -432,7 +509,6 @@ def _hard_delete_company(company):
         "products",
         "clients",
         "suppliers",
-        "users",
     ]:
         _raw_delete_company_rows(table_name)
 
@@ -447,7 +523,7 @@ def _hard_delete_company(company):
 
     # Final defensive pass for legacy/optional tables that may reference tenant entities without company_id.
     fk_value_sets = {
-        "users": set(user_ids),
+        "users": set(user_ids_to_delete),
         "products": set(product_ids),
         "clients": set(client_ids),
         "suppliers": set(supplier_ids),
@@ -468,6 +544,11 @@ def _hard_delete_company(company):
             if not values or len(constrained_cols) != 1:
                 continue
             _raw_delete_where_in(table_name, constrained_cols[0], values)
+
+    # Persist any primary-company re-homing before the defensive caller's
+    # final legacy User.company_id purge. Shared identities must no longer point
+    # at the tenant being deleted at that stage.
+    db.session.flush()
 
     # Delete the tenant only after all known dependent rows and FK-referenced
     # entity rows have been removed. Keep this inside the same transaction so
@@ -752,7 +833,7 @@ def _health_check_snapshot(db_session, now):
 
 
 def _build_attention_queue(now):
-    from app import BackupLog, Company, MercadoPagoConnection, Payment, Sale, Subscription, User, db, model_table_exists
+    from app import BackupLog, Company, CompanyMembership, MercadoPagoConnection, Payment, Sale, Subscription, User, db, model_table_exists
 
     queue = []
 
@@ -856,11 +937,22 @@ def _build_attention_queue(now):
                 "detail": f"Estado conexión: {conn.status}",
             })
 
+    active_membership_counts = (
+        db.session.query(CompanyMembership.company_id, db.func.count(CompanyMembership.id))
+        .join(User, User.id == CompanyMembership.user_id)
+        .filter(
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
+            User.active.is_(True),
+        )
+        .group_by(CompanyMembership.company_id)
+        .subquery()
+    )
     no_active_users = (
         db.session.query(Company)
-        .outerjoin(User, User.company_id == Company.id)
-        .group_by(Company.id)
-        .having(db.func.coalesce(db.func.sum(db.case((User.active.is_(True), 1), else_=0)), 0) == 0)
+        .outerjoin(active_membership_counts, active_membership_counts.c.company_id == Company.id)
+        .group_by(Company.id, active_membership_counts.c.count)
+        .having(db.func.coalesce(active_membership_counts.c.count, 0) == 0)
         .limit(20)
         .all()
     )
@@ -4010,7 +4102,7 @@ def companies_panel():
     effective_states = {}
 
     if company_ids:
-        user_counts = {row[0]: int(row[1] or 0) for row in db.session.query(User.company_id, db.func.count(User.id)).filter(User.company_id.in_(company_ids)).group_by(User.company_id).all()}
+        user_counts = {company_id: _company_user_counts(company_id)[0] for company_id in company_ids}
         product_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Product.company_id, db.func.count(Product.id)).filter(Product.company_id.in_(company_ids), Product.active.is_(True)).group_by(Product.company_id).all()}
         client_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Client.company_id, db.func.count(Client.id)).filter(Client.company_id.in_(company_ids), Client.active.is_(True)).group_by(Client.company_id).all()}
         sale_counts = {row[0]: int(row[1] or 0) for row in db.session.query(Sale.company_id, db.func.count(Sale.id)).filter(Sale.company_id.in_(company_ids)).group_by(Sale.company_id).all()}
@@ -4062,9 +4154,10 @@ def company_detail(company_id):
     effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
     payments_standard_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, standard_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
     payments_ai_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, ai_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
+    company_user_total, company_user_active = _company_user_counts(company.id)
     stats = {
-        "users": User.query.filter_by(company_id=company.id).count(),
-        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "users": company_user_total,
+        "active_users": company_user_active,
         "products": Product.query.filter_by(company_id=company.id, active=True).count(),
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
@@ -4140,9 +4233,10 @@ def company_360(company_id):
     )
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(12).all()
 
+    company_user_total, company_user_active = _company_user_counts(company.id)
     stats = {
-        "users": User.query.filter_by(company_id=company.id).count(),
-        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "users": company_user_total,
+        "active_users": company_user_active,
         "products": Product.query.filter_by(company_id=company.id, active=True).count(),
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
@@ -5422,7 +5516,7 @@ def subscriptions_action(subscription_id):
 @bp.route("/users")
 @superadmin_required
 def users_panel():
-    from app import Company, User, db
+    from app import Company, CompanyMembership, User, db
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -5440,23 +5534,46 @@ def users_panel():
                 User.last_name.ilike(like),
             )
         )
-    if role in {"admin", "user", "superadmin"}:
-        query = query.filter(User.role == role)
     if company_id:
-        query = query.filter(User.company_id == company_id)
+        query = query.join(CompanyMembership, CompanyMembership.user_id == User.id).filter(
+            CompanyMembership.company_id == company_id,
+            CompanyMembership.status.in_(["active", "invited"]),
+        )
+        if role in {"admin", "user"}:
+            query = query.filter(CompanyMembership.role == role)
+    elif role in {"admin", "user", "superadmin"}:
+        query = query.filter(User.role == role)
 
     users = query.order_by(User.created_at.desc(), User.id.desc()).limit(300).all()
+    user_ids = [int(item.id) for item in users]
     company_ids = sorted({item.company_id for item in users if item.company_id})
     companies = (
         Company.query.filter(Company.id.in_(company_ids)).order_by(Company.name.asc()).all() if company_ids else []
     )
     companies_by_id = {item.id: item for item in companies}
+    memberships_by_user = {}
+    if user_ids:
+        membership_rows = (
+            CompanyMembership.query.join(Company, Company.id == CompanyMembership.company_id)
+            .filter(
+                CompanyMembership.user_id.in_(user_ids),
+                CompanyMembership.active.is_(True),
+                CompanyMembership.status == "active",
+                Company.active.is_(True),
+            )
+            .order_by(Company.name.asc())
+            .all()
+        )
+        for membership in membership_rows:
+            memberships_by_user.setdefault(int(membership.user_id), []).append(membership)
+
     all_companies = Company.query.order_by(Company.name.asc()).all()
 
     return render_template(
         "saas/users.html",
         users=users,
         companies_by_id=companies_by_id,
+        memberships_by_user=memberships_by_user,
         all_companies=all_companies,
         filters={"q": q, "role": role, "company_id": company_id},
     )
@@ -5465,7 +5582,7 @@ def users_panel():
 @bp.route("/users/<int:user_id>/role", methods=["POST"])
 @superadmin_required
 def users_update_role(user_id):
-    from app import AuditLog, User, db
+    from app import AuditLog, CompanyMembership, User, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5493,6 +5610,27 @@ def users_update_role(user_id):
         return _redirect_back("saas.users_panel")
 
     user.role = new_role
+    primary_membership = CompanyMembership.query.filter_by(
+        user_id=user.id,
+        company_id=user.company_id,
+    ).first()
+    if primary_membership is not None:
+        primary_membership.role = new_role
+        try:
+            primary_permissions = json.loads(primary_membership.permissions_json or "[]")
+        except (TypeError, ValueError):
+            primary_permissions = []
+        if not isinstance(primary_permissions, list):
+            primary_permissions = []
+        primary_permissions = {
+            str(item).strip() for item in primary_permissions if str(item).strip()
+        }
+        if new_role == "admin":
+            primary_permissions.add("economic_stats")
+        else:
+            primary_permissions.discard("economic_stats")
+        primary_membership.permissions_json = json.dumps(sorted(primary_permissions))
+        user.permissions_json = primary_membership.permissions_json
     db.session.add(
         AuditLog(
             user_id=current_user.id,
@@ -5511,7 +5649,7 @@ def users_update_role(user_id):
 @bp.route("/users/<int:user_id>/status", methods=["POST"])
 @superadmin_required
 def users_update_status(user_id):
-    from app import AuditLog, User, db
+    from app import AuditLog, CompanyMembership, User, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5536,16 +5674,29 @@ def users_update_status(user_id):
         flash("El usuario ya tiene ese estado.", "info")
         return _redirect_back("saas.users_panel")
 
-    if not new_active and user.role == "admin":
-        remaining_admins = User.query.filter(
-            User.company_id == user.company_id,
-            User.role == "admin",
-            User.active.is_(True),
-            User.id != user.id,
-        ).count()
-        if remaining_admins == 0:
-            flash("No se puede desactivar al único administrador activo de la empresa.", "warning")
-            return _redirect_back("saas.users_panel")
+    if not new_active:
+        admin_memberships = CompanyMembership.query.filter_by(
+            user_id=user.id,
+            role="admin",
+            active=True,
+            status="active",
+        ).all()
+        for membership in admin_memberships:
+            remaining_admins = (
+                CompanyMembership.query.join(User, User.id == CompanyMembership.user_id)
+                .filter(
+                    CompanyMembership.company_id == membership.company_id,
+                    CompanyMembership.role == "admin",
+                    CompanyMembership.active.is_(True),
+                    CompanyMembership.status == "active",
+                    User.active.is_(True),
+                    User.id != user.id,
+                )
+                .count()
+            )
+            if remaining_admins == 0:
+                flash("No se puede desactivar la cuenta global: dejaría una empresa sin administrador activo.", "warning")
+                return _redirect_back("saas.users_panel")
 
     previous = bool(user.active)
     user.active = new_active
@@ -5567,7 +5718,7 @@ def users_update_status(user_id):
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
-    from app import Company, PasswordRecoveryRequest, User, db
+    from app import Company, CompanyMembership, PasswordRecoveryRequest, User, db
 
     _require_superadmin()
     status = (request.args.get("status") or "all").strip().lower()
@@ -5577,13 +5728,16 @@ def password_recovery_panel():
     items = query.order_by(PasswordRecoveryRequest.requested_at.desc()).all()
     company_users = (
         db.session.query(User, Company.name)
-        .join(Company, Company.id == User.company_id)
+        .join(CompanyMembership, CompanyMembership.user_id == User.id)
+        .join(Company, Company.id == CompanyMembership.company_id)
         .filter(
-            User.company_id.isnot(None),
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
+            Company.active.is_(True),
             User.role != "superadmin",
             User.active.is_(True),
         )
-        .order_by(User.company_id.asc(), User.username.asc())
+        .order_by(Company.name.asc(), User.username.asc())
         .all()
     )
     from services.one_time_secret_service import OneTimeSecretService
@@ -5613,7 +5767,7 @@ def password_recovery_panel():
 @bp.route("/password-recovery/company-user/reset", methods=["POST"])
 @superadmin_required
 def password_recovery_company_user_reset():
-    from app import User, db, record_audit
+    from app import Company, CompanyMembership, User, db, record_audit
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -5626,11 +5780,15 @@ def password_recovery_company_user_reset():
         return _redirect_back("saas.password_recovery_panel")
 
     user = (
-        User.query.filter(
+        User.query.join(CompanyMembership, CompanyMembership.user_id == User.id)
+        .join(Company, Company.id == CompanyMembership.company_id)
+        .filter(
             User.id == user_id,
-            User.company_id.isnot(None),
             User.role != "superadmin",
             User.active.is_(True),
+            Company.active.is_(True),
+            CompanyMembership.active.is_(True),
+            CompanyMembership.status == "active",
         )
         .first()
     )
