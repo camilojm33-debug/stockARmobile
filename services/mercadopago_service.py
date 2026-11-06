@@ -11,6 +11,7 @@ import socket
 import time
 import uuid
 from urllib import request as urlrequest
+from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from typing import Any
 
@@ -253,6 +254,11 @@ class MercadoPagoService:
             payload=None,
             idempotency_key=f"superseded-plan-checkout-refund:{payment_id}",
         )
+    def search_preapprovals(self, query: str) -> dict[str, Any]:
+        """Search Mercado Pago subscriptions for an exact external-reference recovery."""
+        params = urlencode({"q": str(query or "").strip()})
+        return self._request("GET", f"/preapproval/search?{params}")
+
     def get_preapproval(self, preapproval_id: str) -> dict[str, Any]: return self._request("GET", f"/preapproval/{preapproval_id}")
     def get_authorized_payment(self, authorized_payment_id: str) -> dict[str, Any]: return self._request("GET", f"/authorized_payments/{authorized_payment_id}")
 
