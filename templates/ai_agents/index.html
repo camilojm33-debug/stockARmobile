@@ -455,9 +455,10 @@
   <section id='branch-vendors' class='card app-card mb-4'>
     <div class='card-body'>
       <div class='d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3'>
-        <div><h2 class='h5 fw-bold mb-1'><i class='bi bi-diagram-3 me-2'></i>Vendedores IA por sucursal</h2><p class='small text-muted mb-0'>Cada sucursal tiene su propio vendedor, configuración, conversaciones, stock y canales. El cupo mensual de interacciones IA sigue siendo compartido por la empresa.</p></div>
-        <div class='text-end'><div class='small text-muted'>Licencia adicional mensual</div>{% if branch_vendor_monthly_price > 0 %}<div class='h5 fw-bold mb-0'>$ {{ branch_vendor_monthly_price }} ARS</div>{% else %}<span class='badge text-bg-warning'>Precio aún no configurado</span>{% endif %}</div>
+        <div><h2 class='h5 fw-bold mb-1'><i class='bi bi-diagram-3 me-2'></i>Vendedores IA por sucursal</h2><p class='small text-muted mb-0'>Cada sucursal tiene su propia configuración, conversaciones y canales. El cupo de interacciones IA se comparte entre todas las sucursales.</p></div>
+        <div class='text-end'><div class='small text-muted'>Licencia adicional</div>{% if branch_vendor_monthly_price > 0 %}<div class='h5 fw-bold mb-0'>$ {{ "{:,.0f}".format(branch_vendor_monthly_price).replace(",", ".") }} ARS</div><div class='small text-muted'>por sucursal / mes</div>{% else %}<span class='badge text-bg-warning'>Precio no configurado</span>{% endif %}</div>
       </div>
+      <div class='alert alert-light border small mb-3'><strong>Formas de contratación:</strong> el QR habilita 30 días sin renovación automática. La modalidad mensual autoriza cobros recurrentes en Mercado Pago.</div>
       {% if branch_vendor_qr_preview %}<div class='alert {% if branch_vendor_qr_preview.status == "paid" %}alert-success{% else %}alert-info{% endif %} d-flex flex-wrap align-items-center gap-3'>
         {% if branch_vendor_qr_preview.status == 'pending' and branch_vendor_qr_preview.qr_data_uri %}<img src='{{ branch_vendor_qr_preview.qr_data_uri }}' alt='QR de pago de licencia Vendedor IA' style='width:132px;height:132px;object-fit:contain;background:#fff;padding:6px;border-radius:8px'>{% endif %}
         <div class='flex-grow-1'>{% if branch_vendor_qr_preview.status == 'paid' %}<strong>Pago QR confirmado para {{ branch_vendor_qr_preview.branch_name }}.</strong><div class='small'>La licencia quedó habilitada por 30 días.</div>{% elif branch_vendor_qr_preview.status == 'pending' %}<strong>QR pendiente para {{ branch_vendor_qr_preview.branch_name }}.</strong><div class='small'>Importe: ${{ branch_vendor_qr_preview.amount }} ARS · 30 días sin renovación automática.</div>{% if branch_vendor_qr_preview.checkout_url %}<a class='btn btn-sm btn-outline-primary mt-2' href='{{ branch_vendor_qr_preview.checkout_url }}' target='_blank' rel='noopener'>Abrir pago en Mercado Pago</a>{% endif %}{% else %}<strong>Checkout QR sin enlace recuperable.</strong><div class='small'>Podés cancelar este intento y generar uno nuevo.</div>{% endif %}</div>
@@ -466,9 +467,16 @@
       <div class='row g-3'>
       {% for branch_status in branch_vendor_statuses %}
         {% set branch = branch_status.branch %}{% set publication = branch_status.publication %}
-        <div class='col-12 col-xl-6'><div class='border rounded-3 p-3 h-100'>
+        <div class='col-12 col-xl-6'><div class='vendor-branch-card p-3 {{ "is-selected" if branch_status.is_selected else "" }}'>
           <div class='d-flex justify-content-between align-items-start gap-2 mb-2'><div><div class='fw-bold'>{{ branch.name }}</div><div class='small text-muted'>{{ branch.code or "Sucursal" }}</div></div>
-            {% if branch_status.included %}<span class='badge text-bg-success'>Incluido en el plan</span>{% elif branch_status.allowed %}<span class='badge text-bg-success'>Vendedor activo</span>{% elif branch_status.status == 'pending' %}<span class='badge text-bg-warning'>Pago pendiente</span>{% elif branch_status.status == 'expired' %}<span class='badge text-bg-danger'>Licencia vencida</span>{% elif branch_status.status == 'base_plan_required' %}<span class='badge text-bg-secondary'>Plan IA requerido</span>{% else %}<span class='badge text-bg-secondary'>Sin contratar</span>{% endif %}
+            <div class='d-flex flex-wrap justify-content-end gap-1'>
+              {% if branch_status.is_selected %}<span class='badge text-bg-primary'>Seleccionada</span>{% endif %}
+              {% if branch_status.included %}<span class='badge text-bg-success'>Incluido en el plan</span>{% elif branch_status.allowed %}<span class='badge text-bg-success'>Vendedor activo</span>{% elif branch_status.status == 'pending' %}<span class='badge text-bg-warning text-dark'>Pago pendiente</span>{% elif branch_status.status == 'expired' %}<span class='badge text-bg-danger'>Licencia vencida</span>{% elif branch_status.status == 'base_plan_required' %}<span class='badge text-bg-secondary'>Plan IA requerido</span>{% else %}<span class='badge text-bg-secondary'>Sin contratar</span>{% endif %}
+            </div>
+          </div>
+          <div class='vendor-status-pills mb-3'>
+            <span class='vendor-status-pill {{ "active" if branch_status.web_active else "" }}'><i class='bi bi-globe'></i>Web {{ "activo" if branch_status.web_active else "inactivo" }}</span>
+            <span class='vendor-status-pill {{ "active" if branch_status.whatsapp_connected else "" }}'><i class='bi bi-whatsapp'></i>WhatsApp {{ "conectado" if branch_status.whatsapp_connected else "no conectado" }}</span>
           </div>
           {% if branch_status.allowed %}
             {% if branch_status.included %}<div class='small text-muted mb-2'>Esta sucursal utiliza el Vendedor IA incluido en el plan principal.</div>{% else %}<div class='small text-muted mb-2'>Vigencia hasta: {{ branch_status.ends_at.strftime('%d/%m/%Y %H:%M') if branch_status.ends_at else '-' }} · {% if branch_status.payment_mode == 'automatic' %}Mensual recurrente{% elif branch_status.payment_mode == 'qr' %}QR por 30 días{% else %}Licencia activa{% endif %}</div>{% endif %}
@@ -486,30 +494,40 @@
       </div>
     </div>
   </section>
-  <div class="row g-3 mb-4">
-    {% for label, value in [
-      ('Conversaciones este mes', metrics.conversations),
-      ('Clientes atendidos', metrics.clients_attended),
-      ('Presupuestos', metrics.quotes),
-      ('Pedidos', metrics.orders),
-      ('Ventas derivadas', metrics.ai_sales)
-    ] %}
-    <div class="col-6 col-lg">
-      <div class="ai-metric h-100">
-        <div class="small text-muted">{{ label }}</div>
-        <div class="ai-metric-value">{{ value }}</div>
-      </div>
+  <section class="mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+      <div><h2 class="h5 fw-bold mb-1">Resultados comerciales</h2><p class="small text-muted mb-0">Este mes · {{ metrics_scope_label }}</p></div>
+      <span class="small text-muted"><i class="bi bi-calendar3 me-1"></i>Período actual</span>
     </div>
-    {% endfor %}
-  </div>
-
-  <div class="alert {% if ai_usage.state == 'normal' %}alert-success{% elif ai_usage.state == 'near_limit' %}alert-warning{% elif ai_usage.state == 'limit_next' %}alert-warning{% else %}alert-danger{% endif %} mb-4">
-    <strong>Uso de IA:</strong> {{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} · {{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes
-    {% if ai_usage.state == 'near_limit' %} · Estás utilizando al menos el 80% de tu capacidad mensual.
-    {% elif ai_usage.state == 'limit_next' %} · Te queda poca capacidad de IA este mes.
-    {% elif ai_usage.state == 'limit_reached' %} · Alcanzaste el límite mensual de IA.
+    <div class="vendor-metric-grid">
+      {% for label, value, icon in [
+        ('Conversaciones', metrics.conversations, 'bi-chat-dots'),
+        ('Clientes atendidos', metrics.clients_attended, 'bi-people'),
+        ('Presupuestos', metrics.quotes, 'bi-file-earmark-text'),
+        ('Pedidos IA', metrics.orders, 'bi-bag-check'),
+        ('Ventas derivadas', metrics.ai_sales, 'bi-currency-dollar')
+      ] %}
+        <article class="vendor-metric-card"><i class="bi {{ icon }} text-primary fs-5"></i><div class="small text-muted mt-2">{{ label }}</div><strong>{{ value }}</strong></article>
+      {% endfor %}
+    </div>
+    {% if metrics.conversations == 0 %}
+      <div class="alert alert-light border mt-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div><strong>Todavía no hay conversaciones en {{ metrics_scope_label }}.</strong><div class="small text-muted">Compartí tu vendedor IA para empezar a recibir consultas.</div></div>
+        {% if vendor_webchat_live %}<a class="btn btn-sm btn-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener">Abrir vendedor</a>{% else %}<a class="btn btn-sm btn-outline-primary" href="#branch-vendors">Revisar canales</a>{% endif %}
+      </div>
     {% endif %}
-  </div>
+  </section>
+
+  <section class="vendor-usage-panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+      <div><h2 class="h5 fw-bold mb-1"><i class="bi bi-lightning-charge me-1"></i>Consumo de inteligencia artificial</h2><div class="small text-muted">Cupo mensual compartido por toda la empresa, no por sucursal.</div></div>
+      <span class="badge {{ 'text-bg-success' if ai_usage.state == 'normal' else 'text-bg-warning' if ai_usage.state in ['near_limit','limit_next'] else 'text-bg-danger' }}">{{ usage_percent }}% utilizado</span>
+    </div>
+    <div class="fw-bold fs-5">{{ ai_usage.used_usage }} <span class="small text-muted fw-normal">/ {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones</span></div>
+    <div class="vendor-usage-track mt-3" role="progressbar" aria-label="Consumo mensual de IA de toda la empresa" aria-valuenow="{{ usage_percent_safe }}" aria-valuemin="0" aria-valuemax="100"><span style="width:{{ usage_percent_safe }}%"></span></div>
+    <div class="d-flex flex-wrap justify-content-between gap-2 small text-muted mt-2"><span>{{ ai_usage.remaining_usage }} restantes</span><span>Se comparte entre todas las sucursales</span></div>
+    {% if ai_usage.state in ['near_limit','limit_next','limit_reached'] %}<div class="alert alert-warning small mt-3 mb-0">{% if ai_usage.state == 'near_limit' %}Estás utilizando al menos el 80% de tu capacidad mensual.{% elif ai_usage.state == 'limit_next' %}Te queda poca capacidad de IA este mes.{% else %}Alcanzaste el límite mensual de IA.{% endif %}</div>{% endif %}
+  </section>
 
   <div class="row g-4 mb-4">
     <div class="col-lg-7">
