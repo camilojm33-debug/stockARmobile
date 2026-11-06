@@ -1530,6 +1530,8 @@ def public_vendor_cart(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    fixed_branch = _public_branch_for_slug(slug)
+    fixed_branch_id = int(fixed_branch.id) if fixed_branch else None
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"success": False, "error": "La solicitud debe ser un objeto JSON."}), 400
@@ -1556,7 +1558,13 @@ def public_vendor_cart(slug: str):
     visitor_id = _visitor_id(company.id)
     operation_type = f"cart:{action}"
     with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
-        conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
+        conversation = _public_conversation(
+            company,
+            payload.get("conversation_id"),
+            create=True,
+            chat_session_id=payload.get("chat_session_id"),
+            branch_id=fixed_branch_id,
+        )
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no es válida."}), 403
         with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
@@ -1640,7 +1648,13 @@ def public_vendor_checkout(slug: str):
     delivery_notes = str(payload.get("delivery_notes") or "").strip()[:2000]
     visitor_id = _visitor_id(company.id)
     with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
-        conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
+        conversation = _public_conversation(
+            company,
+            payload.get("conversation_id"),
+            create=True,
+            chat_session_id=payload.get("chat_session_id"),
+            branch_id=fixed_branch_id,
+        )
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no es válida."}), 403
         with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
@@ -1735,7 +1749,14 @@ def public_vendor_message(slug: str):
             conversation_id=0,
             key=visitor_id,
         ):
-            conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
+            fixed_branch = _public_branch_for_slug(slug)
+            conversation = _public_conversation(
+                company,
+                payload.get("conversation_id"),
+                create=True,
+                chat_session_id=payload.get("chat_session_id"),
+                branch_id=int(fixed_branch.id) if fixed_branch else None,
+            )
             if conversation is None:
                 return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
 
