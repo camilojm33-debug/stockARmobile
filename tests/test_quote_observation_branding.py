@@ -111,7 +111,8 @@ def test_public_quote_pdf_shows_tenant_name(app, monkeypatch):
 
 def test_public_quote_consult_buttons_target_company_whatsapp_setting(app):
     with app.app_context():
-        quote_id = _create_ai_quote(whatsapp="+54 (9) 3624-123456")
+        # The configured value is the local Argentine mobile number from Mi empresa.
+        quote_id = _create_ai_quote(whatsapp="3624228396")
         token = _public_token(quote_id)
 
     response = app.test_client().get(f"/presupuestos/publico/{token}")
@@ -124,7 +125,7 @@ def test_public_quote_consult_buttons_target_company_whatsapp_setting(app):
 
     links = re.findall(r'href="(https://wa\.me/[^"]+)"', page)
     assert len(links) == 2
-    assert all(link.startswith("https://wa.me/5493624123456?text=") for link in links)
+    assert all(link.startswith("https://wa.me/5493624228396?text=") for link in links)
     assert "P-OBS-BRAND-001" in page
     assert "https://wa.me/?text=" not in page
 
