@@ -6589,7 +6589,15 @@ def create_branch_vendor_checkout():
         sync_preapproval({**response, "external_reference": external_reference})
         db.session.commit()
         flash("Autorización mensual creada. La sucursal se habilita cuando Mercado Pago confirme el primer cobro.", "info")
-        return _checkout_redirect_response(checkout_url)
+        return _checkout_redirect_response(
+            checkout_url,
+            return_url=url_for(
+                "ai_agents.agent",
+                agent="vendedor",
+                branch_id=branch.id,
+                _anchor="branch-vendors",
+            ),
+        )
     except (ValueError, RuntimeError) as exc:
         db.session.rollback()
         current_app.logger.exception("No se pudo crear licencia de Vendedor IA company_id=%s branch_id=%s", company.id, branch.id)
