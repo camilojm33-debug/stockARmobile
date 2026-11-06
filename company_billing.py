@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from app import company_admin_required, csrf, tenant_required
+from app import Payment, company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
 from services.backup_service import BackupService
