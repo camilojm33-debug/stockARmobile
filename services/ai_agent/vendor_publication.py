@@ -150,7 +150,108 @@ def _resolve_company(slug: str):
     return None
 
 
+def _branch_publication(branch) -> dict:
+    try:
+        payload = json.loads(getattr(branch, "vendor_ai_json", None) or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    raw = payload.get("publication") if isinstance(payload, dict) else {}
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "slug": str(raw.get("slug") or "").strip(),
+        "published": bool(raw.get("published", False)),
+        "published_at": str(raw.get("published_at") or "").strip(),
+    }
+
+
+def _save_branch_publication(branch, publication: dict):
+    try:
+        payload = json.loads(getattr(branch, "vendor_ai_json", None) or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["publication"] = publication
+    branch.vendor_ai_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    db.session.flush()
+
+
+def branch_publication_status(company, branch) -> dict:
+    publication = _branch_publication(branch)
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    access = branch_vendor_access(company, branch)
+    publication["enabled"] = bool(publication["published"])
+    publication["available"] = bool(publication["published"] and access.get("allowed"))
+    publication["licensed"] = bool(access.get("allowed"))
+    publication["url"] = (
+        url_for("vendor_publication.public_vendor_page", slug=publication["slug"], _external=True)
+        if publication["slug"] else None
+    )
+    return publication
+
+
+def publish_branch_vendor(company, branch) -> dict:
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    access = branch_vendor_access(company, branch)
+    if not access.get("allowed"):
+        raise ValueError(access.get("reason") or "La sucursal necesita una licencia Vendedor IA activa.")
+    publication = _branch_publication(branch)
+    if not publication["slug"]:
+        publication["slug"] = _new_slug()
+    publication["published"] = True
+    publication["published_at"] = publication["published_at"] or _now_iso()
+    _save_branch_publication(branch, publication)
+    return branch_publication_status(company, branch)
+
+
+def unpublish_branch_vendor(company, branch) -> dict:
+    publication = _branch_publication(branch)
+    publication["published"] = False
+    _save_branch_publication(branch, publication)
+    return branch_publication_status(company, branch)
+
+
+def _resolve_branch_slug(slug: str):
+    from app import Branch, Company
+
+    target = str(slug or "").strip()
+    if not target:
+        return None, None
+    marker = f'"slug":"{target}"'
+    candidates = (
+        Branch.query.join(Company, Company.id == Branch.company_id)
+        .filter(Branch.active.is_(True), Company.active.is_(True), Branch.vendor_ai_json.contains(marker))
+        .order_by(Branch.company_id.asc(), Branch.id.asc())
+        .all()
+    )
+    for branch in candidates:
+        if _branch_publication(branch)["slug"] == target:
+            company = Company.query.filter_by(id=branch.company_id, active=True).first()
+            if company is not None:
+                return company, branch
+    return None, None
+
+
+def _public_branch_for_slug(slug: str):
+    company, branch = _resolve_branch_slug(slug)
+    if company is None or branch is None:
+        return None
+    publication = _branch_publication(branch)
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    access = branch_vendor_access(company, branch)
+    if not publication["published"] or not access.get("allowed"):
+        return None
+    return branch
+
+
 def _public_available_company(slug: str):
+    company, branch = _resolve_branch_slug(slug)
+    if company is not None and branch is not None:
+        publication = _branch_publication(branch)
+        from services.ai_agent.branch_vendor_service import branch_vendor_access
+        if publication["published"] and branch_vendor_access(company, branch).get("allowed"):
+            return company
+        return None
     company = _resolve_company(slug)
     if company is None:
         return None
@@ -385,7 +486,7 @@ def _conversation_metadata(conversation) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _public_conversation(company, conversation_id=None, *, create=False, chat_session_id=None):
+def _public_conversation(company, conversation_id=None, *, create=False, chat_session_id=None, branch_id: int | None = None):
     visitor_id = _visitor_id(company.id)
     vendor_agent = _agent_for_company(company.id)
     conversation = None
@@ -400,6 +501,8 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         external_conversation_id=visitor_id,
         agent_id=vendor_agent.id,
     )
+    if branch_id is not None:
+        scoped_query = scoped_query.filter(Conversation.branch_id == int(branch_id))
 
     if session_digest:
         # A browser visitor can own several parallel chats. Resolve a chat only
@@ -478,7 +581,7 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         conversation = Conversation(
             company_id=company.id,
             agent_id=vendor_agent.id,
-            branch_id=get_default_branch_id(company.id),
+            branch_id=int(branch_id) if branch_id is not None else get_default_branch_id(company.id),
             channel="webchat",
             external_conversation_id=visitor_id,
             status="open",
@@ -486,9 +589,11 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         )
         db.session.add(conversation)
         db.session.flush()
+    if conversation is not None and branch_id is not None and int(conversation.branch_id or 0) != int(branch_id):
+        return None
     if conversation is not None and conversation.branch_id is None:
         from stockarmobile.branch_context import get_default_branch_id
-        conversation.branch_id = get_default_branch_id(company.id)
+        conversation.branch_id = int(branch_id) if branch_id is not None else get_default_branch_id(company.id)
         db.session.flush()
     return conversation
 
@@ -513,7 +618,7 @@ def _cart_public_state(conversation) -> dict:
             quote_url = None
     from app import Company
     company = Company.query.filter_by(id=conversation.company_id, active=True).first()
-    options = get_vendor_options(company) if company is not None else {}
+    options = get_vendor_options(company, conversation.branch_id) if company is not None else {}
     shipping_config = {
         "mode": "fixed",
         "fixed_cost": float(options.get("standard_shipping_cost") or 0),
@@ -1207,8 +1312,8 @@ def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CA
     return [_product_payload(row) for row in rows]
 
 
-def _empty_public_page_state(company) -> dict:
-    options = get_vendor_options(company)
+def _empty_public_page_state(company, branch_id: int | None = None) -> dict:
+    options = get_vendor_options(company, branch_id)
     return {
         "conversation_id": None,
         "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0},
@@ -1248,19 +1353,20 @@ def _public_chat_history(conversation, limit: int = 60) -> list[dict]:
     ]
 
 
-def _initial_page_state(company, chat_session_id=None):
+def _initial_page_state(company, chat_session_id=None, branch_id: int | None = None):
     # Never infer the current tab's state from the browser-wide visitor cookie.
     # The browser token is not available to server rendering; the tab restores
     # its own conversation through /state after loading.
     if not chat_session_id:
-        return _empty_public_page_state(company)
+        return _empty_public_page_state(company, branch_id=branch_id)
     conversation = _public_conversation(
         company,
         create=False,
         chat_session_id=chat_session_id,
+        branch_id=branch_id,
     )
     if conversation is None:
-        return _empty_public_page_state(company)
+        return _empty_public_page_state(company, branch_id=branch_id)
     try:
         return {**_cart_public_state(conversation), "messages": _public_chat_history(conversation)}
     except Exception:
