@@ -266,7 +266,13 @@ def sync_preapproval(preapproval: dict[str, Any]):
     elif status in {"pending", "in_process"}:
         license_row.payment_mode = "automatic"
         license_row.preapproval_id = remote_id
-        license_row.status = "pending"
+        ends_at = _parse_dt(license_row.ends_at)
+        if not (
+            str(license_row.status or "").lower() == "active"
+            and ends_at is not None
+            and ends_at > _now()
+        ):
+            license_row.status = "pending"
         license_row.auto_renew = True
     elif status in {"cancelled", "canceled", "expired", "paused"}:
         license_row.auto_renew = False
