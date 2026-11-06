@@ -558,6 +558,7 @@ def configure_whatsapp_connection(
     template_name="",
     template_language="es_AR",
     branch_id: int | None = None,
+    whatsapp_updates: Optional[Dict[str, Any]] = None,
 ):
     if branch_id is not None:
         from app import Branch
@@ -579,6 +580,8 @@ def configure_whatsapp_connection(
         )
         if access_token:
             whatsapp["access_token_encrypted"] = encrypt_secret(access_token)
+        if whatsapp_updates:
+            whatsapp.update(whatsapp_updates)
         prefs["whatsapp"] = whatsapp
         save_branch_preferences(branch, prefs)
         db.session.flush()
@@ -599,6 +602,8 @@ def configure_whatsapp_connection(
     )
     if access_token:
         whatsapp["access_token_encrypted"] = encrypt_secret(access_token)
+    if whatsapp_updates:
+        whatsapp.update(whatsapp_updates)
     ai["whatsapp"] = whatsapp
     prefs["ai_agent"] = ai
     save_company_preferences(company, prefs)
