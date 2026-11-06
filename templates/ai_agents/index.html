@@ -529,65 +529,65 @@
     {% if ai_usage.state in ['near_limit','limit_next','limit_reached'] %}<div class="alert alert-warning small mt-3 mb-0">{% if ai_usage.state == 'near_limit' %}Estás utilizando al menos el 80% de tu capacidad mensual.{% elif ai_usage.state == 'limit_next' %}Te queda poca capacidad de IA este mes.{% else %}Alcanzaste el límite mensual de IA.{% endif %}</div>{% endif %}
   </section>
 
-  <div class="row g-4 mb-4">
+  <div class="row g-3 mb-4">
     <div class="col-lg-7">
       <div class="card app-card h-100">
-        <div class="card-body">
+        <div class="card-body p-3 p-lg-4">
           <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
             <div>
-              <h2 class="h5 fw-bold mb-1"><i class="bi bi-broadcast me-2"></i>Canal público</h2>
-              <p class="small text-muted mb-0">Este es el canal con el que tus clientes pueden hablar con el Vendedor sin entrar al panel.</p>
+              <h2 class="h5 fw-bold mb-1"><i class="bi bi-globe me-2"></i>Vendedor Web</h2>
+              <p class="small text-muted mb-0">Canal público 24/7 para que tus clientes consulten sin entrar al panel.</p>
             </div>
-            <span class="badge {{ 'text-bg-success' if public_webchat_enabled and public_vendor_url else 'text-bg-secondary' }}">
-              {{ 'Activo' if public_webchat_enabled and public_vendor_url else 'Desactivado' }}
-            </span>
+            <span class="badge {{ 'text-bg-success' if vendor_webchat_live else 'text-bg-secondary' }}">{{ 'Activo' if vendor_webchat_live else 'No publicado' }}</span>
           </div>
-
-          {% if public_webchat_enabled and public_vendor_url %}
-            <div class="alert alert-success mb-3">
-              <strong>Vendedor Web 24/7 activo.</strong>
-              <div class="small mt-1">El enlace público está listo para compartir.</div>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-              <a class="btn btn-primary" target="_blank" rel="noopener" href="{{ public_vendor_url }}"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir chat público</a>
+          {% if not active_branch_vendor_allowed %}
+            <div class="alert alert-warning small mb-0">Esta sucursal necesita una licencia activa para publicar su propio Vendedor Web.</div>
+          {% elif vendor_webchat_live %}
+            <div class="alert alert-success small mb-3"><strong>Vendedor Web publicado.</strong><div>El enlace y el QR corresponden a {{ active_branch.name if active_branch else 'tu empresa' }}.</div></div>
+            <div class="d-flex flex-wrap align-items-center gap-3">
+              {% if public_vendor_qr %}<img class="vendor-qr-preview" src="{{ public_vendor_qr }}" alt="Código QR del Vendedor Web">{% endif %}
+              <div class="flex-grow-1">
+                <div class="small fw-semibold mb-1">Enlace para compartir</div>
+                <div class="vendor-public-link text-muted mb-2">{{ public_vendor_url }}</div>
+                <div class="d-flex flex-wrap gap-2">
+                  <button class="btn btn-sm btn-outline-primary" type="button" data-copy-vendor-url="{{ public_vendor_url }}"><i class="bi bi-clipboard me-1"></i>Copiar enlace</button>
+                  <a class="btn btn-sm btn-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Probar vendedor</a>
+                </div>
+              </div>
             </div>
           {% else %}
-            <div class="alert alert-light border mb-3">
-              <strong>El canal público todavía no está activo.</strong>
-              <div class="small mt-1">Publicá el Vendedor para generar el enlace seguro y compartirlo.</div>
-            </div>
-            <a class="btn btn-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar Vendedor</a>
+            <div class="alert alert-light border small mb-3"><strong>El canal web todavía no está publicado.</strong><div>Publicalo desde la tarjeta de esta sucursal.</div></div>
+            {% if active_branch and active_branch.is_default %}
+              <a class="btn btn-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar Vendedor Web</a>
+            {% else %}
+              <a class="btn btn-outline-primary" href="#branch-vendors">Ir a la sucursal para publicar</a>
+            {% endif %}
           {% endif %}
-
-          <div class="small text-muted mt-3">
-            <i class="bi bi-shield-check me-1"></i>El enlace público queda firmado y aislado por empresa.
-          </div>
+          <div class="small text-muted mt-3"><i class="bi bi-shield-check me-1"></i>El enlace público está aislado por empresa y sucursal.</div>
         </div>
       </div>
     </div>
 
     {% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
-  <div class="col-lg-5">
-      <div class="card app-card h-100">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-            <div>
-              <h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2>
-              <p class="small text-muted mb-0">Canal opcional para atender desde tu número comercial.</p>
+      <div class="col-lg-5">
+        <div class="card app-card h-100">
+          <div class="card-body p-3 p-lg-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div><h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2><p class="small text-muted mb-0">Canal opcional del número comercial de esta sucursal.</p></div>
+              <span class="badge {{ 'text-bg-success' if whatsapp_connected else 'text-bg-secondary' }}">{{ 'Conectado' if whatsapp_connected else 'No conectado' }}</span>
             </div>
-            <span class="badge {{ 'text-bg-success' if whatsapp_connected else 'text-bg-secondary' }}">
-              {{ 'Conectado' if whatsapp_connected else 'No conectado' }}
-            </span>
+            {% if not active_branch_vendor_allowed %}
+              <div class="alert alert-warning small mb-0">Contratá la licencia de esta sucursal para conectar su propio WhatsApp.</div>
+            {% elif whatsapp_connected %}
+              <div class="alert alert-success small mb-3"><strong>WhatsApp conectado.</strong><div class="mt-1">{{ whatsapp_phone_number or 'Número comercial conectado' }}</div></div>
+              <a class="btn btn-outline-success" href="{{ url_for('ai_agents.vendor_whatsapp_connect', branch_id=active_branch.id if active_branch else none) }}"><i class="bi bi-sliders me-1"></i>Administrar conexión</a>
+            {% else %}
+              <div class="alert alert-light border small mb-3"><strong>WhatsApp todavía no está conectado.</strong><div>Esto no afecta el funcionamiento del Vendedor Web.</div></div>
+              <a class="btn btn-outline-success" href="{{ url_for('ai_agents.vendor_whatsapp_connect', branch_id=active_branch.id if active_branch else none) }}"><i class="bi bi-whatsapp me-1"></i>Conectar WhatsApp</a>
+            {% endif %}
           </div>
-          {% if whatsapp_connected %}
-            <div class="alert alert-success mb-3"><strong>WhatsApp conectado.</strong><div class="small mt-1">{{ preferences.whatsapp.display_phone_number or 'Número conectado' }}</div></div>
-          {% else %}
-            <div class="alert alert-light border mb-3"><strong>WhatsApp todavía no está conectado.</strong><div class="small mt-1">Esto no afecta el Vendedor Web 24/7.</div></div>
-          {% endif %}
-          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if whatsapp_connected %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
         </div>
       </div>
-    </div>
     {% endif %}
   </div>
 
@@ -623,16 +623,15 @@
     </div>
 
     <div class="col-lg-5">
-      <div class="card app-card h-100">
-        <div class="card-body">
-          <h2 class="h5 fw-bold mb-1"><i class="bi bi-lightning-charge me-2"></i>Uso de IA</h2>
-          <p class="text-muted">{{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones.</p>
-          <div class="progress" role="progressbar" aria-label="Uso de IA" aria-valuenow="{{ ai_usage.percent }}" aria-valuemin="0" aria-valuemax="100">
-            <div class="progress-bar" style="width: {{ ai_usage.percent }}%"></div>
-          </div>
-          <div class="small text-muted mt-2">{{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes</div>
-        </div>
-      </div>
+      <div class="card app-card h-100"><div class="card-body">
+        <h2 class="h5 fw-bold mb-1"><i class="bi bi-rocket-takeoff me-2"></i>Próximo paso</h2>
+        <p class="small text-muted mb-3">Mantené el vendedor preparado para recibir consultas y convertirlas en oportunidades.</p>
+        {% if active_branch_vendor_allowed and active_branch %}
+          <a class="btn btn-primary btn-sm" href="{{ url_for('ai_admin.vendor_config', branch_id=active_branch.id) }}"><i class="bi bi-gear me-1"></i>Revisar configuración</a>
+        {% else %}
+          <a class="btn btn-outline-primary btn-sm" href="#branch-vendors">Revisar licencia</a>
+        {% endif %}
+      </div></div>
     </div>
   </div>
   
