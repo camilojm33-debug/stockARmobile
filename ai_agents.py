@@ -299,6 +299,37 @@ def _context():
                 "status": str(pending_ai_qr_payment.status or "pending").strip().lower(),
             }
 
+    from services.ai_agent.branch_vendor_service import list_branch_vendor_statuses, monthly_price_ars
+    from services.ai_agent.vendor_publication import branch_publication_status
+    branch_vendor_statuses = list_branch_vendor_statuses(company)
+    for branch_status in branch_vendor_statuses:
+        if not branch_status.get("included"):
+            try:
+                branch_status["publication"] = branch_publication_status(company, branch_status["branch"])
+            except Exception:
+                branch_status["publication"] = {"published": False, "available": False, "url": None}
+        else:
+            branch_status["publication"] = None
+
+    branch_vendor_qr_preview = session.get("branch_vendor_qr_preview")
+    if isinstance(branch_vendor_qr_preview, dict):
+        try:
+            payment_row = Payment.query.filter_by(
+                id=int(branch_vendor_qr_preview.get("payment_record_id") or 0),
+                company_id=company_id,
+                provider="mercadopago_branch_vendor_qr",
+            ).first()
+            if payment_row is not None:
+                from company_billing import _branch_vendor_qr_preview
+                branch_vendor_qr_preview = _branch_vendor_qr_preview(company, payment_row)
+            else:
+                branch_vendor_qr_preview = None
+        except Exception:
+            current_app.logger.exception("No se pudo actualizar el estado del QR Vendedor IA company_id=%s", company_id)
+            branch_vendor_qr_preview = None
+        if branch_vendor_qr_preview is None or branch_vendor_qr_preview.get("status") in {"failed"}:
+            session.pop("branch_vendor_qr_preview", None)
+
     public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))
     public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None
     if agent_access["vendedor"].allowed:
@@ -309,7 +340,7 @@ def _context():
                 public_vendor_url = publication["url"]
         except Exception:
             current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "branch_vendor_statuses": branch_vendor_statuses, "branch_vendor_monthly_price": float(monthly_price_ars()), "branch_vendor_qr_preview": branch_vendor_qr_preview, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
