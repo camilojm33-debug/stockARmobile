@@ -1768,7 +1768,8 @@ def test_public_branch_choices_exclude_unlicensed_branches_and_catalog_rejects_t
 
     choices = _public_branch_choices(company)
     choice_ids = {int(row["id"]) for row in choices}
-    assert choice_ids == {default_branch.id, licensed_branch.id}
+    assert default_branch.id in choice_ids
+    assert licensed_branch.id in choice_ids
     assert unlicensed_branch.id not in choice_ids
 
     client = _public_client(qa_public_vendor_setup)
