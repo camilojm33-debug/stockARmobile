@@ -6470,14 +6470,23 @@ def create_branch_vendor_checkout():
 
     try:
         license_row = ensure_license(company.id, branch.id, lock=True)
-        license_row.amount = price
-        license_row.currency = "ARS"
-        db.session.flush()
 
         if method == "qr":
-            if license_row.preapproval_id and bool(license_row.auto_renew):
+            license_row.amount = price
+            license_row.currency = "ARS"
+            db.session.flush()
+            monthly_reference_exists = bool(
+                str(license_row.payment_mode or "").lower() == "automatic"
+                and (license_row.preapproval_id or license_row.external_reference)
+            )
+            if monthly_reference_exists and (
+                bool(license_row.auto_renew)
+                or str(license_row.status or "").lower() == "pending"
+                or branch_vendor_access(company, branch).get("allowed")
+            ):
                 raise ValueError(
-                    "Esta sucursal tiene una renovación mensual activa. Cancelá esa renovación antes de generar un QR."
+                    "Esta sucursal tiene una autorización mensual activa o pendiente de conciliación. "
+                    "Reintentá o cancelá la modalidad mensual antes de generar un QR."
                 )
             for candidate in Payment.query.filter(
                 Payment.company_id == company.id,
@@ -6520,6 +6529,26 @@ def create_branch_vendor_checkout():
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         if not payer_email or "@" not in payer_email:
             raise ValueError("Necesitás un email válido para autorizar el cobro mensual.")
+
+        # A pending/in-process manual QR must be closed before starting a
+        # monthly contract for the same branch. Otherwise the customer could
+        # authorize two different billing modes concurrently.
+        pending_qr_rows = Payment.query.filter(
+            Payment.company_id == company.id,
+            Payment.provider == "mercadopago_branch_vendor_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        ).order_by(Payment.id.desc()).all()
+        for pending_qr in pending_qr_rows:
+            qr_reference = parse_external_reference(pending_qr.external_reference)
+            if (
+                qr_reference.get("flow") == "branch_vendor_qr"
+                and qr_reference.get("company_id") == str(company.id)
+                and qr_reference.get("branch_id") == str(branch.id)
+                and qr_reference.get("license_id") == str(license_row.id)
+            ):
+                raise ValueError(
+                    "Esta sucursal tiene un pago QR pendiente. Cancelá ese intento antes de autorizar el plan mensual."
+                )
         if license_row.preapproval_id:
             remote = MercadoPagoService().get_preapproval(license_row.preapproval_id)
             if str(remote.get("id") or "") != str(license_row.preapproval_id):
@@ -6545,11 +6574,36 @@ def create_branch_vendor_checkout():
             license_row.auto_renew = False
             db.session.flush()
 
-        external_reference = (
-            f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|branch_id:{branch.id}|"
-            f"license_id:{license_row.id}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
+        # Keep one durable idempotency reference for this license attempt. It is
+        # committed before the external request so a timeout/lost response can
+        # safely retry with the exact same Mercado Pago X-Idempotency-Key.
+        external_reference = str(license_row.external_reference or "").strip()
+        reference_parts = parse_external_reference(external_reference)
+        reusable_reference = bool(
+            reference_parts.get("branch_vendor_agent") == "true"
+            and reference_parts.get("flow") == "branch_vendor_agent"
+            and reference_parts.get("company_id") == str(company.id)
+            and reference_parts.get("branch_id") == str(branch.id)
+            and reference_parts.get("license_id") == str(license_row.id)
+            and reference_parts.get("nonce")
         )
-        license_row.external_reference = external_reference
+        if reusable_reference:
+            try:
+                amount_to_charge = Decimal(str(license_row.amount or "0")).quantize(Decimal("0.01"))
+            except (InvalidOperation, TypeError, ValueError):
+                raise ValueError("El intento mensual guardado tiene un importe inválido. Contactá a soporte antes de reintentar.") from None
+            if amount_to_charge <= Decimal("0.00") or str(license_row.currency or "").upper() != "ARS":
+                raise ValueError("El intento mensual guardado tiene una moneda o un importe inválido. Contactá a soporte antes de reintentar.")
+        else:
+            amount_to_charge = price
+            license_row.amount = amount_to_charge
+            license_row.currency = "ARS"
+            external_reference = (
+                f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|branch_id:{branch.id}|"
+                f"license_id:{license_row.id}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
+            )
+            license_row.external_reference = external_reference
+
         license_row.payment_mode = "automatic"
         license_row.auto_renew = True
         if not branch_vendor_access(company, branch).get("allowed"):
@@ -6560,20 +6614,106 @@ def create_branch_vendor_checkout():
         query = dict(parse_qsl(back.query, keep_blank_values=True))
         query["mp_subscription_return"] = "branch_vendor"
         back_url = urlunsplit((back.scheme, back.netloc, back.path, urlencode(query), "branch-vendors"))
-        response = MercadoPagoService().create_preapproval(
-            reason=f"StockArMobile Vendedor IA - {branch.name}",
-            payer_email=payer_email,
-            external_reference=external_reference,
-            amount=float(price),
-            currency="ARS",
-            frequency=1,
-            frequency_type="months",
-            notification_url=config.notification_url,
-            back_url=back_url,
-        )
+        mp_service = MercadoPagoService()
+        response = None
+        if reusable_reference:
+            # Reconcile an uncertain prior attempt before POSTing another
+            # preapproval. Search is a free-text API, so only exact external
+            # reference matches are eligible for recovery.
+            search_result = mp_service.search_preapprovals(external_reference)
+            search_rows = search_result.get("results") if isinstance(search_result, dict) else None
+            if not isinstance(search_rows, list):
+                raise RuntimeError("Mercado Pago devolvió una respuesta de búsqueda de suscripciones inválida.")
+            matches = [
+                row for row in search_rows
+                if isinstance(row, dict)
+                and str(row.get("external_reference") or "").strip() == external_reference
+            ]
+            if len(matches) > 1:
+                raise RuntimeError(
+                    "Mercado Pago devolvió más de una autorización con la misma referencia. "
+                    "Se bloqueó un nuevo cobro para evitar duplicados; requiere conciliación."
+                )
+            if matches:
+                recovered_id = str(matches[0].get("id") or "").strip()
+                if not recovered_id:
+                    raise RuntimeError("Mercado Pago encontró una suscripción sin identificador recuperable.")
+                recovered = mp_service.get_preapproval(recovered_id)
+                if (
+                    str(recovered.get("id") or "").strip() != recovered_id
+                    or str(recovered.get("external_reference") or "").strip() != external_reference
+                ):
+                    raise RuntimeError("La suscripción recuperada no coincide con la referencia de esta licencia.")
+                auto_recurring = recovered.get("auto_recurring") if isinstance(recovered.get("auto_recurring"), dict) else {}
+                try:
+                    recovered_amount = Decimal(str(auto_recurring.get("transaction_amount"))).quantize(Decimal("0.01"))
+                except (InvalidOperation, TypeError, ValueError):
+                    raise RuntimeError("La suscripción recuperada no tiene un importe mensual verificable.") from None
+                recovered_currency = str(auto_recurring.get("currency_id") or "").strip().upper()
+                if recovered_amount != amount_to_charge or recovered_currency != "ARS":
+                    raise RuntimeError("La suscripción recuperada tiene un importe o moneda distintos de la licencia.")
+                recovered_status = str(recovered.get("status") or "").strip().lower()
+                if recovered_status in {"pending", "in_process", "authorized"}:
+                    response = recovered
+                elif recovered_status in {"cancelled", "canceled", "expired", "rejected", "paused"}:
+                    # A terminal remote contract is not reusable. Start a new
+                    # attempt only after verifying that the old one is terminal.
+                    license_row.preapproval_id = None
+                    license_row.external_reference = None
+                    license_row.auto_renew = False
+                    if not branch_vendor_access(company, branch).get("allowed"):
+                        license_row.status = "not_contracted"
+                    amount_to_charge = price
+                    license_row.amount = amount_to_charge
+                    license_row.currency = "ARS"
+                    external_reference = (
+                        f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|branch_id:{branch.id}|"
+                        f"license_id:{license_row.id}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
+                    )
+                    license_row.external_reference = external_reference
+                    license_row.payment_mode = "automatic"
+                    license_row.auto_renew = True
+                    if not branch_vendor_access(company, branch).get("allowed"):
+                        license_row.status = "pending"
+                    db.session.commit()
+                else:
+                    raise RuntimeError(
+                        f"Mercado Pago devolvió un estado no reconocido ({recovered_status or 'vacío'}). "
+                        "No se creó otra autorización."
+                    )
+
+        if response is None:
+            response = mp_service.create_preapproval(
+                reason=f"StockArMobile Vendedor IA - {branch.name}",
+                payer_email=payer_email,
+                external_reference=external_reference,
+                amount=float(amount_to_charge),
+                currency="ARS",
+                frequency=1,
+                frequency_type="months",
+                notification_url=config.notification_url,
+                back_url=back_url,
+            )
         preapproval_id = str(response.get("id") or "").strip()
         remote_reference = str(response.get("external_reference") or "").strip()
         checkout_url = str(response.get("init_point") or "").strip()
+        if preapproval_id and not checkout_url:
+            # A successful create may omit init_point from its first response.
+            # Recover the same preapproval instead of posting a second contract.
+            recovered = MercadoPagoService().get_preapproval(preapproval_id)
+            if str(recovered.get("id") or "").strip() != preapproval_id:
+                raise RuntimeError("Mercado Pago devolvió una autorización mensual distinta al recuperar el checkout.")
+            recovered_reference = str(recovered.get("external_reference") or "").strip()
+            if recovered_reference and recovered_reference != external_reference:
+                raise RuntimeError("La autorización recuperada pertenece a otra licencia de sucursal.")
+            response = recovered
+            remote_reference = recovered_reference or remote_reference
+            checkout_url = str(recovered.get("init_point") or "").strip()
+        if preapproval_id and not checkout_url:
+            checkout_url = (
+                "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                + urlencode({"preapproval_id": preapproval_id})
+            )
         host = urlparse(checkout_url)
         allowed = {
             "mercadopago.com", "www.mercadopago.com", "sandbox.mercadopago.com",

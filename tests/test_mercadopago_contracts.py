@@ -26,10 +26,11 @@ def test_preapproval_explicitly_uses_pending_flow(monkeypatch):
 
     monkeypatch.setattr(service, "_request", fake_request)
 
+    external_reference = "stockarmobile|company_id:1|subscription_id:2"
     response = service.create_preapproval(
         reason="StockArMobile - Plan Negocio",
         payer_email="cliente@example.com",
-        external_reference="stockarmobile|company_id:1|subscription_id:2",
+        external_reference=external_reference,
         amount=29999,
         currency="ARS",
         frequency=1,
@@ -46,6 +47,23 @@ def test_preapproval_explicitly_uses_pending_flow(monkeypatch):
     assert captured["payload"]["auto_recurring"]["frequency_type"] == "months"
     assert captured["payload"]["auto_recurring"]["transaction_amount"] == 29999.0
     assert captured["payload"]["auto_recurring"]["currency_id"] == "ARS"
+    assert captured["idempotency_key"] == f"preapproval:{external_reference}"
+
+
+def test_search_preapprovals_uses_encoded_free_text_query(monkeypatch):
+    service = MercadoPagoService()
+    captured = {}
+
+    def fake_request(method, path, *, payload=None, access_token=None, idempotency_key=None):
+        captured.update(method=method, path=path, payload=payload)
+        return {"paging": {"total": 0}, "results": []}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+    result = service.search_preapprovals("branch_vendor_agent:true|license_id:17")
+
+    assert result["results"] == []
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/preapproval/search?q=branch_vendor_agent%3Atrue%7Clicense_id%3A17"
 
 
 def test_ai_qr_preference_is_one_time_checkout_not_preapproval(monkeypatch):

@@ -3358,3 +3358,280 @@ def test_branch_vendor_monthly_json_checkout_includes_return_url(subscription_ap
         "redirect_url": checkout_url,
         "return_url": return_url,
     }
+
+
+def test_branch_vendor_monthly_checkout_reuses_reference_after_lost_response(
+    subscription_app, monkeypatch
+):
+    from decimal import Decimal
+
+    from app import Branch, Company, BranchVendorLicense, User, db
+
+    company = Company(
+        name="Empresa Branch Vendor Retry",
+        active=True,
+        contact_email="branch-admin@test.local",
+        preferences_json=json.dumps(
+            {"ai_agent": {"enabled": True, "plan_code": "vendedor", "status": "ACTIVA"}}
+        ),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="branch_vendor_retry_admin",
+        email="branch-admin@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    branch = Branch(
+        company_id=company.id,
+        name="Sucursal Retry",
+        code="RETRY",
+        active=True,
+        is_default=False,
+    )
+    db.session.add_all([user, branch])
+    db.session.commit()
+
+    monkeypatch.setattr(
+        "services.ai_agent.branch_vendor_service.monthly_price_ars",
+        lambda: Decimal("57600.00"),
+    )
+    calls = []
+    search_calls = []
+    remote_preapproval = {}
+
+    def create_preapproval(self, **kwargs):
+        calls.append(dict(kwargs))
+        remote_preapproval.update({
+            "id": "branch-vendor-preapproval-recovered",
+            "status": "pending",
+            "external_reference": kwargs["external_reference"],
+            "init_point": "https://mp.test/subscriptions/checkout?preapproval_id=branch-vendor-preapproval-recovered",
+            "auto_recurring": {"transaction_amount": kwargs["amount"], "currency_id": "ARS"},
+        })
+        # Mercado Pago accepted the contract but StockArMobile lost the reply.
+        raise RuntimeError("simulated connection timeout after remote creation")
+
+    def search_preapprovals(self, query):
+        search_calls.append(query)
+        if remote_preapproval and remote_preapproval["external_reference"] == query:
+            return {"results": [{
+                "id": remote_preapproval["id"],
+                "external_reference": remote_preapproval["external_reference"],
+            }]}
+        return {"results": []}
+
+    def get_preapproval(self, preapproval_id):
+        assert preapproval_id == remote_preapproval["id"]
+        return dict(remote_preapproval)
+
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_preapproval",
+        create_preapproval,
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.search_preapprovals",
+        search_preapprovals,
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.get_preapproval",
+        get_preapproval,
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+    headers = {
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+    }
+    form = {"branch_id": str(branch.id), "payment_method": "automatic"}
+
+    first = client.post(
+        "/admin/subscription/branch-vendor/checkout",
+        data=form,
+        headers=headers,
+    )
+    assert first.status_code == 409
+    assert first.get_json()["success"] is False
+
+    license_row = BranchVendorLicense.query.filter_by(
+        company_id=company.id,
+        branch_id=branch.id,
+    ).one()
+    first_reference = license_row.external_reference
+    assert first_reference
+    assert license_row.preapproval_id is None
+
+    retry = client.post(
+        "/admin/subscription/branch-vendor/checkout",
+        data=form,
+        headers=headers,
+    )
+    assert retry.status_code == 200
+    payload = retry.get_json()
+    assert payload["success"] is True
+    assert payload["redirect_url"].startswith("https://mp.test/")
+    assert f"branch_id={branch.id}" in payload["return_url"]
+
+    assert len(calls) == 1
+    assert search_calls == [first_reference]
+    assert calls[0]["external_reference"] == first_reference
+    assert calls[0]["amount"] == 57600.0
+
+    db.session.refresh(license_row)
+    assert license_row.preapproval_id == "branch-vendor-preapproval-recovered"
+    assert license_row.external_reference == first_reference
+    assert license_row.status == "pending"
+
+
+def test_branch_vendor_monthly_checkout_blocks_pending_qr(subscription_app, monkeypatch):
+    from decimal import Decimal
+
+    from app import Branch, BranchVendorLicense, Company, Payment, User, db
+
+    company = Company(
+        name="Empresa Branch QR Pending",
+        active=True,
+        contact_email="qr-admin@test.local",
+        preferences_json=json.dumps(
+            {"ai_agent": {"enabled": True, "plan_code": "vendedor", "status": "ACTIVA"}}
+        ),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="branch_qr_pending_admin",
+        email="qr-admin@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    branch = Branch(
+        company_id=company.id,
+        name="Sucursal QR pendiente",
+        code="QR-PEND",
+        active=True,
+        is_default=False,
+    )
+    db.session.add_all([user, branch])
+    db.session.flush()
+    license_row = BranchVendorLicense(
+        company_id=company.id,
+        branch_id=branch.id,
+        status="not_contracted",
+        amount=Decimal("57600.00"),
+        currency="ARS",
+        auto_renew=False,
+        cancel_at_period_end=False,
+    )
+    db.session.add(license_row)
+    db.session.flush()
+    db.session.add(
+        Payment(
+            company_id=company.id,
+            subscription_id=None,
+            user_id=user.id,
+            amount=Decimal("57600.00"),
+            currency="ARS",
+            status="pending",
+            payment_method="mercadopago_branch_vendor_qr",
+            provider="mercadopago_branch_vendor_qr",
+            external_reference=(
+                f"branch_vendor_agent:true|flow:branch_vendor_qr|company_id:{company.id}|"
+                f"branch_id:{branch.id}|license_id:{license_row.id}|payment_record_id:71|user_id:{user.id}"
+            ),
+        )
+    )
+    db.session.commit()
+
+    monkeypatch.setattr(
+        "services.ai_agent.branch_vendor_service.monthly_price_ars",
+        lambda: Decimal("57600.00"),
+    )
+    create_calls = []
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_preapproval",
+        lambda self, **kwargs: create_calls.append(kwargs),
+    )
+
+    client = subscription_app.test_client()
+    _login(client, user)
+    response = client.post(
+        "/admin/subscription/branch-vendor/checkout",
+        data={"branch_id": str(branch.id), "payment_method": "automatic"},
+        headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 409
+    assert "QR pendiente" in response.get_json()["error"]
+    assert create_calls == []
+
+
+def test_branch_vendor_qr_blocks_uncertain_monthly_preapproval(subscription_app, monkeypatch):
+    from decimal import Decimal
+
+    from app import Branch, BranchVendorLicense, Company, User, db
+
+    company = Company(
+        name="Empresa Branch Monthly Pending",
+        active=True,
+        contact_email="monthly-admin@test.local",
+        preferences_json=json.dumps(
+            {"ai_agent": {"enabled": True, "plan_code": "vendedor", "status": "ACTIVA"}}
+        ),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="branch_monthly_pending_admin",
+        email="monthly-admin@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    branch = Branch(
+        company_id=company.id,
+        name="Sucursal mensual incierto",
+        code="MONTH-PEND",
+        active=True,
+        is_default=False,
+    )
+    db.session.add_all([user, branch])
+    db.session.flush()
+    license_row = BranchVendorLicense(
+        company_id=company.id,
+        branch_id=branch.id,
+        status="pending",
+        payment_mode="automatic",
+        amount=Decimal("57600.00"),
+        currency="ARS",
+        preapproval_id=None,
+        auto_renew=True,
+        cancel_at_period_end=False,
+    )
+    db.session.add(license_row)
+    db.session.flush()
+    license_row.external_reference = (
+        f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|"
+        f"branch_id:{branch.id}|license_id:{license_row.id}|user_id:{user.id}|nonce:uncertain-monthly"
+    )
+    db.session.commit()
+
+    monkeypatch.setattr(
+        "services.ai_agent.branch_vendor_service.monthly_price_ars",
+        lambda: Decimal("57600.00"),
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+    response = client.post(
+        "/admin/subscription/branch-vendor/checkout",
+        data={"branch_id": str(branch.id), "payment_method": "qr"},
+        headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 409
+    assert "pendiente de conciliación" in response.get_json()["error"]

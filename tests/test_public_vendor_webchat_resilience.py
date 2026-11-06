@@ -1704,3 +1704,91 @@ def test_public_webchat_builds_quote_using_quantity_in_product_noun_phrase(qa_pu
             assert observed["delivery_address"] == "calle robertito funes 456"
         finally:
             db.session.rollback()
+
+
+def test_public_branch_choices_exclude_unlicensed_branches_and_catalog_rejects_them(
+    qa_public_vendor_setup, monkeypatch
+):
+    from datetime import datetime, timedelta
+
+    from app import Branch, BranchVendorLicense, db
+    from services.ai_agent.vendor_publication import _public_branch_choices
+
+    company = qa_public_vendor_setup["company"]
+    default_branch = Branch(
+        company_id=company.id,
+        name="Casa central QA",
+        code="CASA-QA",
+        active=True,
+        is_default=True,
+    )
+    licensed_branch = Branch(
+        company_id=company.id,
+        name="Sucursal licenciada QA",
+        code="LIC-QA",
+        active=True,
+        is_default=False,
+    )
+    unlicensed_branch = Branch(
+        company_id=company.id,
+        name="Sucursal sin licencia QA",
+        code="NO-LIC-QA",
+        active=True,
+        is_default=False,
+    )
+    db.session.add_all([default_branch, licensed_branch, unlicensed_branch])
+    db.session.flush()
+    now = datetime.utcnow()
+    db.session.add(
+        BranchVendorLicense(
+            company_id=company.id,
+            branch_id=licensed_branch.id,
+            status="active",
+            payment_mode="qr",
+            amount=1000,
+            currency="ARS",
+            starts_at=now - timedelta(minutes=1),
+            ends_at=now + timedelta(days=29),
+            auto_renew=False,
+            cancel_at_period_end=False,
+        )
+    )
+    db.session.commit()
+
+    # Exercise the multi-branch public selector independently of the
+    # commercial-plan feature switch used by branch_context.
+    monkeypatch.setattr(
+        "stockarmobile.branch_context.multibranch_enabled",
+        lambda current_company: True,
+    )
+    monkeypatch.setattr(
+        "stockarmobile.branch_context.get_default_branch_id",
+        lambda company_id: default_branch.id,
+    )
+
+    choices = _public_branch_choices(company)
+    choice_ids = {int(row["id"]) for row in choices}
+    assert default_branch.id in choice_ids
+    assert licensed_branch.id in choice_ids
+    assert unlicensed_branch.id not in choice_ids
+
+    client = _public_client(qa_public_vendor_setup)
+    page = client.get(qa_public_vendor_setup["page_path"])
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert "Sucursal licenciada QA" in html
+    assert "Sucursal sin licencia QA" not in html
+
+    stale_branch_page = client.get(
+        f"{qa_public_vendor_setup['page_path']}?branch_id={unlicensed_branch.id}"
+    )
+    assert stale_branch_page.status_code == 200
+    assert "Sucursal licenciada QA" in stale_branch_page.get_data(as_text=True)
+    assert "Sucursal sin licencia QA" not in stale_branch_page.get_data(as_text=True)
+
+    denied_catalog = client.get(
+        f"/vendedor/{qa_public_vendor_setup['slug']}/catalog"
+        f"?branch_id={unlicensed_branch.id}"
+    )
+    assert denied_catalog.status_code == 400
+    assert denied_catalog.json["success"] is False
