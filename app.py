@@ -1408,11 +1408,56 @@ class Branch(db.Model):
     province = db.Column(db.String(120))
     phone = db.Column(db.String(40))
     whatsapp = db.Column(db.String(40))
+    # Branch-owned Vendor IA settings/channel credentials are stored separately
+    # from Company.preferences_json so each licensed branch can operate alone.
+    vendor_ai_json = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True, nullable=False)
     is_default = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     company = db.relationship("Company", backref="branches")
+
+
+class BranchVendorLicense(db.Model):
+    """Independent Vendedor IA contract for one additional physical branch."""
+    __tablename__ = "branch_vendor_licenses"
+    __table_args__ = (
+        UniqueConstraint("branch_id", name="uq_branch_vendor_licenses_branch"),
+        Index("ix_branch_vendor_licenses_company_status", "company_id", "status"),
+        Index("ix_branch_vendor_licenses_preapproval", "preapproval_id", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="not_contracted")
+    payment_mode = db.Column(db.String(20))
+    amount = db.Column(MONEY, nullable=False, default=Decimal("0.00"))
+    currency = db.Column(db.String(10), nullable=False, default="ARS")
+    starts_at = db.Column(db.DateTime)
+    ends_at = db.Column(db.DateTime)
+    preapproval_id = db.Column(db.String(120), unique=True, index=True)
+    external_reference = db.Column(db.String(255), unique=True, index=True)
+    auto_renew = db.Column(db.Boolean, nullable=False, default=False)
+    cancel_at_period_end = db.Column(db.Boolean, nullable=False, default=False)
+    last_payment_id = db.Column(db.String(120), index=True)
+    last_payment_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company")
+    branch = db.relationship("Branch")
+
+
+class SaaSSetting(db.Model):
+    """SuperAdmin-managed global commercial settings."""
+    __tablename__ = "saas_settings"
+
+    key = db.Column(db.String(120), primary_key=True)
+    value = db.Column(db.Text, nullable=False, default="")
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    updated_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    updated_by = db.relationship("User")
 
 
 class UserBranchAccess(db.Model):
