@@ -3400,23 +3400,45 @@ def test_branch_vendor_monthly_checkout_reuses_reference_after_lost_response(
         lambda: Decimal("57600.00"),
     )
     calls = []
+    search_calls = []
+    remote_preapproval = {}
 
     def create_preapproval(self, **kwargs):
         calls.append(dict(kwargs))
-        if len(calls) == 1:
-            # Mercado Pago may have accepted the contract while the response
-            # was lost before StockArMobile could persist its preapproval ID.
-            raise RuntimeError("simulated connection timeout after request")
-        return {
+        remote_preapproval.update({
             "id": "branch-vendor-preapproval-recovered",
             "status": "pending",
             "external_reference": kwargs["external_reference"],
             "init_point": "https://mp.test/subscriptions/checkout?preapproval_id=branch-vendor-preapproval-recovered",
-        }
+            "auto_recurring": {"transaction_amount": kwargs["amount"], "currency_id": "ARS"},
+        })
+        # Mercado Pago accepted the contract but StockArMobile lost the reply.
+        raise RuntimeError("simulated connection timeout after remote creation")
+
+    def search_preapprovals(self, query):
+        search_calls.append(query)
+        if remote_preapproval and remote_preapproval["external_reference"] == query:
+            return {"results": [{
+                "id": remote_preapproval["id"],
+                "external_reference": remote_preapproval["external_reference"],
+            }]}
+        return {"results": []}
+
+    def get_preapproval(self, preapproval_id):
+        assert preapproval_id == remote_preapproval["id"]
+        return dict(remote_preapproval)
 
     monkeypatch.setattr(
         "services.mercadopago_service.MercadoPagoService.create_preapproval",
         create_preapproval,
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.search_preapprovals",
+        search_preapprovals,
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.get_preapproval",
+        get_preapproval,
     )
     client = subscription_app.test_client()
     _login(client, user)
@@ -3453,10 +3475,10 @@ def test_branch_vendor_monthly_checkout_reuses_reference_after_lost_response(
     assert payload["redirect_url"].startswith("https://mp.test/")
     assert f"branch_id={branch.id}" in payload["return_url"]
 
-    assert len(calls) == 2
-    assert calls[0]["external_reference"] == calls[1]["external_reference"]
+    assert len(calls) == 1
+    assert search_calls == [first_reference]
     assert calls[0]["external_reference"] == first_reference
-    assert calls[0]["amount"] == calls[1]["amount"] == 57600.0
+    assert calls[0]["amount"] == 57600.0
 
     db.session.refresh(license_row)
     assert license_row.preapproval_id == "branch-vendor-preapproval-recovered"
