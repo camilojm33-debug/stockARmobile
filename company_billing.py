@@ -47,9 +47,12 @@ def _wants_json_response() -> bool:
     return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
-def _checkout_redirect_response(checkout_url: str):
+def _checkout_redirect_response(checkout_url: str, *, return_url: str | None = None):
     if _wants_json_response():
-        return jsonify({"success": True, "redirect_url": checkout_url})
+        payload = {"success": True, "redirect_url": checkout_url}
+        if return_url:
+            payload["return_url"] = return_url
+        return jsonify(payload)
     return redirect(checkout_url)
 
 
@@ -6528,7 +6531,15 @@ def create_branch_vendor_checkout():
                 checkout_url = str(remote.get("init_point") or "").strip()
                 if not checkout_url:
                     checkout_url = "https://www.mercadopago.com.ar/subscriptions/checkout?" + urlencode({"preapproval_id": license_row.preapproval_id})
-                return _checkout_redirect_response(checkout_url)
+                return _checkout_redirect_response(
+                    checkout_url,
+                    return_url=url_for(
+                        "ai_agents.agent",
+                        agent="vendedor",
+                        branch_id=branch.id,
+                        _anchor="branch-vendors",
+                    ),
+                )
             license_row.preapproval_id = None
             license_row.external_reference = None
             license_row.auto_renew = False
@@ -6578,7 +6589,15 @@ def create_branch_vendor_checkout():
         sync_preapproval({**response, "external_reference": external_reference})
         db.session.commit()
         flash("Autorización mensual creada. La sucursal se habilita cuando Mercado Pago confirme el primer cobro.", "info")
-        return _checkout_redirect_response(checkout_url)
+        return _checkout_redirect_response(
+            checkout_url,
+            return_url=url_for(
+                "ai_agents.agent",
+                agent="vendedor",
+                branch_id=branch.id,
+                _anchor="branch-vendors",
+            ),
+        )
     except (ValueError, RuntimeError) as exc:
         db.session.rollback()
         current_app.logger.exception("No se pudo crear licencia de Vendedor IA company_id=%s branch_id=%s", company.id, branch.id)
