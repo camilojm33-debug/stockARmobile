@@ -2434,15 +2434,7 @@ def create_checkout():
     # checkout de Mercado Pago directamente. Los flujos QR existentes siguen
     # mostrando su pantalla de resumen cuando no solicitan esta modalidad.
     if request.form.get("direct_checkout") == "1":
-        return _checkout_redirect_response(
-            checkout_url,
-            return_url=url_for(
-                "ai_agents.agent",
-                agent="vendedor",
-                branch_id=branch.id,
-                _anchor="branch-vendors",
-            ),
-        )
+        return _checkout_redirect_response(checkout_url)
 
     _remember_standard_qr_checkout(company, subscription, preference)
     flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
