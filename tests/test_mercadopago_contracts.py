@@ -50,6 +50,22 @@ def test_preapproval_explicitly_uses_pending_flow(monkeypatch):
     assert captured["idempotency_key"] == f"preapproval:{external_reference}"
 
 
+def test_search_preapprovals_uses_encoded_free_text_query(monkeypatch):
+    service = MercadoPagoService()
+    captured = {}
+
+    def fake_request(method, path, *, payload=None, access_token=None, idempotency_key=None):
+        captured.update(method=method, path=path, payload=payload)
+        return {"paging": {"total": 0}, "results": []}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+    result = service.search_preapprovals("branch_vendor_agent:true|license_id:17")
+
+    assert result["results"] == []
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/preapproval/search?q=branch_vendor_agent%3Atrue%7Clicense_id%3A17"
+
+
 def test_ai_qr_preference_is_one_time_checkout_not_preapproval(monkeypatch):
     service = MercadoPagoService()
     captured = {}
