@@ -3336,3 +3336,25 @@ def test_ai_terminal_preapproval_webhook_restores_pre_checkout_trial(subscriptio
     assert stored["mercadopago_cancelled_preapproval_id"] == "ai-pre-webhook-restore"
     assert _standard_snapshot(standard_subscription) == before_standard
 
+
+def test_branch_vendor_monthly_json_checkout_includes_return_url(subscription_app):
+    from company_billing import _checkout_redirect_response
+
+    checkout_url = "https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=branch-test"
+    return_url = "/agentes-ia?agent=vendedor&branch_id=9#branch-vendors"
+
+    with subscription_app.test_request_context(
+        "/admin/subscription/branch-vendor/checkout",
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+        },
+    ):
+        response = _checkout_redirect_response(checkout_url, return_url=return_url)
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "success": True,
+        "redirect_url": checkout_url,
+        "return_url": return_url,
+    }
