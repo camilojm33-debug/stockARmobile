@@ -1491,6 +1491,20 @@ class WebhookService:
                     "company_id": commercial.get("company_id"),
                 }
             else:
+                from services.ai_agent.branch_vendor_service import sync_preapproval as sync_branch_vendor_preapproval
+                branch_license = sync_branch_vendor_preapproval(preapproval_data)
+                if branch_license is not None:
+                    result = {
+                        "status": "processed_branch_vendor_preapproval",
+                        "company_id": branch_license.company_id,
+                        "branch_id": branch_license.branch_id,
+                        "license_status": branch_license.status,
+                        "event_key": event_key,
+                    }
+                    event_row.status = result["status"]
+                    db_session.add(event_row)
+                    return result
+
                 subscription_id = preapproval_data.get("external_reference")
                 subscription = None
                 if subscription_id and str(subscription_id).isdigit():
