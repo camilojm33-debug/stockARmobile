@@ -673,6 +673,46 @@
   };
 })();
 </script>
+<script>
+(function () {
+  function copyText(value) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(value);
+    }
+    return new Promise(function (resolve, reject) {
+      var input = document.createElement('textarea');
+      input.value = value;
+      input.setAttribute('readonly', '');
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      try {
+        var copied = document.execCommand('copy');
+        document.body.removeChild(input);
+        copied ? resolve() : reject(new Error('No se pudo copiar el enlace.'));
+      } catch (error) {
+        document.body.removeChild(input);
+        reject(error);
+      }
+    });
+  }
+  document.querySelectorAll('[data-copy-vendor-url]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var value = button.getAttribute('data-copy-vendor-url') || '';
+      if (!value) return;
+      var original = button.textContent.trim();
+      copyText(value).then(function () {
+        button.textContent = 'Enlace copiado';
+        window.setTimeout(function () { button.textContent = original; }, 1800);
+      }).catch(function () {
+        button.textContent = 'No se pudo copiar';
+        window.setTimeout(function () { button.textContent = original; }, 2200);
+      });
+    });
+  });
+})();
+</script>
 {% if view == 'dashboard' and any_chat_agent %}
 <script>
 (function () {
