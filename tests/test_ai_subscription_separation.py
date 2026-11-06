@@ -3358,3 +3358,107 @@ def test_branch_vendor_monthly_json_checkout_includes_return_url(subscription_ap
         "redirect_url": checkout_url,
         "return_url": return_url,
     }
+
+
+def test_branch_vendor_monthly_checkout_reuses_reference_after_lost_response(
+    subscription_app, monkeypatch
+):
+    from decimal import Decimal
+
+    from app import Branch, Company, BranchVendorLicense, User, db
+
+    company = Company(
+        name="Empresa Branch Vendor Retry",
+        active=True,
+        contact_email="branch-admin@test.local",
+        preferences_json=json.dumps(
+            {"ai_agent": {"enabled": True, "plan_code": "vendedor", "status": "ACTIVA"}}
+        ),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="branch_vendor_retry_admin",
+        email="branch-admin@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    branch = Branch(
+        company_id=company.id,
+        name="Sucursal Retry",
+        code="RETRY",
+        active=True,
+        is_default=False,
+    )
+    db.session.add_all([user, branch])
+    db.session.commit()
+
+    monkeypatch.setattr(
+        "services.ai_agent.branch_vendor_service.monthly_price_ars",
+        lambda: Decimal("57600.00"),
+    )
+    calls = []
+
+    def create_preapproval(self, **kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            # Mercado Pago may have accepted the contract while the response
+            # was lost before StockArMobile could persist its preapproval ID.
+            raise RuntimeError("simulated connection timeout after request")
+        return {
+            "id": "branch-vendor-preapproval-recovered",
+            "status": "pending",
+            "external_reference": kwargs["external_reference"],
+            "init_point": "https://mp.test/subscriptions/checkout?preapproval_id=branch-vendor-preapproval-recovered",
+        }
+
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_preapproval",
+        create_preapproval,
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+    headers = {
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+    }
+    form = {"branch_id": str(branch.id), "payment_method": "automatic"}
+
+    first = client.post(
+        "/admin/subscription/branch-vendor/checkout",
+        data=form,
+        headers=headers,
+    )
+    assert first.status_code == 409
+    assert first.get_json()["success"] is False
+
+    license_row = BranchVendorLicense.query.filter_by(
+        company_id=company.id,
+        branch_id=branch.id,
+    ).one()
+    first_reference = license_row.external_reference
+    assert first_reference
+    assert license_row.preapproval_id is None
+
+    retry = client.post(
+        "/admin/subscription/branch-vendor/checkout",
+        data=form,
+        headers=headers,
+    )
+    assert retry.status_code == 200
+    payload = retry.get_json()
+    assert payload["success"] is True
+    assert payload["redirect_url"].startswith("https://mp.test/")
+    assert f"branch_id={branch.id}" in payload["return_url"]
+
+    assert len(calls) == 2
+    assert calls[0]["external_reference"] == calls[1]["external_reference"]
+    assert calls[0]["external_reference"] == first_reference
+    assert calls[0]["amount"] == calls[1]["amount"] == 57600.0
+
+    db.session.refresh(license_row)
+    assert license_row.preapproval_id == "branch-vendor-preapproval-recovered"
+    assert license_row.external_reference == first_reference
+    assert license_row.status == "pending"
