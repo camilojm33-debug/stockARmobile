@@ -3261,6 +3261,26 @@ def create_mercadopago_subscription():
                     "Esta sucursal ya tiene un QR pendiente. Cancelalo o esperá su confirmación antes de iniciar el pago mensual."
                 )
 
+        # A pending/in-process manual QR must be closed before starting a
+        # monthly contract for the same branch. Otherwise the customer could
+        # authorize two different billing modes concurrently.
+        pending_qr_rows = Payment.query.filter(
+            Payment.company_id == company.id,
+            Payment.provider == "mercadopago_branch_vendor_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        ).order_by(Payment.id.desc()).all()
+        for pending_qr in pending_qr_rows:
+            qr_reference = parse_external_reference(pending_qr.external_reference)
+            if (
+                qr_reference.get("flow") == "branch_vendor_qr"
+                and qr_reference.get("company_id") == str(company.id)
+                and qr_reference.get("branch_id") == str(branch.id)
+                and qr_reference.get("license_id") == str(license_row.id)
+            ):
+                raise ValueError(
+                    "Esta sucursal tiene un pago QR pendiente. Cancelá ese intento antes de autorizar el plan mensual."
+                )
+
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         config = load_billing_config()
         current_app.logger.info(
@@ -6475,9 +6495,18 @@ def create_branch_vendor_checkout():
             license_row.amount = price
             license_row.currency = "ARS"
             db.session.flush()
-            if license_row.preapproval_id and bool(license_row.auto_renew):
+            monthly_reference_exists = bool(
+                str(license_row.payment_mode or "").lower() == "automatic"
+                and (license_row.preapproval_id or license_row.external_reference)
+            )
+            if monthly_reference_exists and (
+                bool(license_row.auto_renew)
+                or str(license_row.status or "").lower() == "pending"
+                or branch_vendor_access(company, branch).get("allowed")
+            ):
                 raise ValueError(
-                    "Esta sucursal tiene una renovación mensual activa. Cancelá esa renovación antes de generar un QR."
+                    "Esta sucursal tiene una autorización mensual activa o pendiente de conciliación. "
+                    "Reintentá o cancelá la modalidad mensual antes de generar un QR."
                 )
             for candidate in Payment.query.filter(
                 Payment.company_id == company.id,
