@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261105_01_vendor_branch"
+HEAD_REVISION = "20261106_01_branch_vendor"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -114,6 +114,10 @@ def main() -> None:
                         text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "{column_name}" CASCADE')
                     )
             connection.execute(text("DROP TABLE IF EXISTS company_memberships CASCADE"))
+            # Rewind branch Vendor IA too, so the latest migration must create its
+            # settings and license tables on the simulated pre-feature schema.
+            connection.execute(text("DROP TABLE IF EXISTS branch_vendor_licenses CASCADE"))
+            connection.execute(text("DROP TABLE IF EXISTS saas_settings CASCADE"))
             connection.execute(text('ALTER TABLE "conversations" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
 
@@ -231,6 +235,14 @@ def main() -> None:
             "business_documents": {"branch_id"},
             "plans": {"max_branches"},
             "conversations": {"branch_id"},
+            "branches": {"vendor_ai_json"},
+            "branch_vendor_licenses": {
+                "company_id", "branch_id", "status", "payment_mode", "amount",
+                "currency", "starts_at", "ends_at", "preapproval_id",
+                "external_reference", "auto_renew", "cancel_at_period_end",
+                "last_payment_id", "last_payment_at",
+            },
+            "saas_settings": {"key", "value", "updated_at", "updated_by_user_id"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -238,7 +250,12 @@ def main() -> None:
             if missing:
                 raise AssertionError(f"{table_name} missing columns after migration: {sorted(missing)}")
 
-        expected_tables = {"price_lists", "price_list_items", "price_list_discount_rules", "branches", "user_branch_access", "branch_stock", "branch_stock_movements", "branch_stock_transfers", "company_memberships"}
+        expected_tables = {
+            "price_lists", "price_list_items", "price_list_discount_rules",
+            "branches", "user_branch_access", "branch_stock", "branch_stock_movements",
+            "branch_stock_transfers", "company_memberships", "branch_vendor_licenses",
+            "saas_settings",
+        }
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:
             raise AssertionError(f"Missing wholesale tables after migration: {sorted(missing_tables)}")
@@ -259,6 +276,19 @@ def main() -> None:
         if version != HEAD_REVISION:
             raise AssertionError(f"Unexpected Alembic revision after upgrade: {version}")
 
+        license_indexes = {item.get("name") for item in inspector.get_indexes("branch_vendor_licenses")}
+        required_license_indexes = {
+            "ix_branch_vendor_licenses_company_id",
+            "ix_branch_vendor_licenses_branch_id",
+            "ix_branch_vendor_licenses_company_status",
+            "ix_branch_vendor_licenses_preapproval_id",
+            "ix_branch_vendor_licenses_external_reference",
+            "ix_branch_vendor_licenses_last_payment_id",
+        }
+        if not required_license_indexes.issubset(license_indexes):
+            raise AssertionError(
+                f"Branch Vendor IA license indexes missing: {sorted(required_license_indexes - license_indexes)}"
+            )
         transfer_columns = {column["name"] for column in inspector.get_columns("branch_stock_transfers")}
         if not {"source_branch_id", "target_branch_id", "product_id", "quantity", "created_by_user_id"}.issubset(transfer_columns):
             raise AssertionError("Branch stock transfer table is missing required fields.")
@@ -415,6 +445,7 @@ def main() -> None:
         print("PASS: wholesale tables, general discount rules, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.", flush=True)
         print("PASS: existing Negocio plan gains wholesale_pricing; Premium keeps a configurable limit of five branches.", flush=True)
         print("PASS: existing tenants, users and product stock are migrated to Casa central.", flush=True)
+        print("PASS: branch Vendor IA configuration, license and SaaS pricing tables are created with required indexes.", flush=True)
         print("PASS: every existing branch balance receives exactly one idempotent opening movement in the branch Kardex.", flush=True)
         print("PASS: concurrent branch-limit operations serialize on the company row lock.", flush=True)
         _progress("END: PostgreSQL migration validation passed")
