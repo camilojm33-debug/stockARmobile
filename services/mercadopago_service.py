@@ -137,6 +137,59 @@ class MercadoPagoService:
             idempotency_key=f"ai-qr-preference:{int(payment_record_id)}",
         )
 
+    def create_branch_vendor_qr_preference(
+        self,
+        *,
+        title: str,
+        amount: float,
+        external_reference: str,
+        company_id: int,
+        branch_id: int,
+        license_id: int,
+        payment_record_id: int,
+        user_id: int,
+    ) -> dict[str, Any]:
+        """Create a one-time branch Vendedor IA checkout (30 days, no renewal)."""
+        if float(amount) <= 0:
+            raise ValueError("La licencia adicional debe tener un precio mayor a cero.")
+        if not all((external_reference, company_id, branch_id, license_id, payment_record_id, user_id)):
+            raise ValueError("Faltan datos para generar el checkout QR de la sucursal.")
+        payload = {
+            "items": [{
+                "id": f"branch-vendor-{int(branch_id)}",
+                "title": str(title or "StockArMobile Vendedor IA")[:256],
+                "description": "Licencia Vendedor IA por sucursal durante 30 días. Pago manual con QR; no renueva automáticamente.",
+                "quantity": 1,
+                "currency_id": "ARS",
+                "unit_price": float(amount),
+            }],
+            "external_reference": str(external_reference),
+            "metadata": {
+                "flow": "branch_vendor_qr",
+                "branch_vendor_agent": "true",
+                "company_id": int(company_id),
+                "branch_id": int(branch_id),
+                "license_id": int(license_id),
+                "payment_record_id": int(payment_record_id),
+                "user_id": int(user_id),
+                "recurring": False,
+            },
+            "back_urls": {
+                "success": self.config.success_url,
+                "pending": self.config.pending_url,
+                "failure": self.config.failure_url,
+            },
+            "notification_url": self.config.notification_url,
+            "statement_descriptor": self.config.statement_descriptor,
+            "auto_return": "approved",
+        }
+        return self._request(
+            "POST",
+            "/checkout/preferences",
+            payload=payload,
+            idempotency_key=f"branch-vendor-qr-preference:{int(payment_record_id)}",
+        )
+
     def create_pos_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, user_id: int, metadata: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
         payload = {"items": [{"id": external_reference, "title": title, "description": "Cobro QR Mercado Pago desde POS", "quantity": 1, "currency_id": currency, "unit_price": float(amount)}], "external_reference": external_reference, "metadata": {"flow": "pos_sale", "company_id": company_id, "user_id": user_id, **(metadata or {})}, "back_urls": {"success": self.config.success_url, "pending": self.config.pending_url, "failure": self.config.failure_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
         return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token, idempotency_key=f"pos-checkout-preference:{external_reference}")
