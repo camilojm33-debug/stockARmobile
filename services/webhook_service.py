@@ -394,7 +394,7 @@ class WebhookService:
             payment_status = str(payment_info.get("status") or authorized.get("summarized") or "pending").lower()
             if ref_parts.get("branch_vendor_agent") == "true" and ref_parts.get("flow") == "branch_vendor_agent":
                 from services.ai_agent.branch_vendor_service import record_authorized_payment
-                from app import BranchVendorLicense
+                from app import Branch, BranchVendorLicense, Company
                 branch_result = record_authorized_payment(authorized)
                 if branch_result is None:
                     raise RuntimeError("Cobro recurrente de sucursal sin licencia asociada.")
@@ -827,7 +827,7 @@ class WebhookService:
                             number = result.get("quote_number") or f"P-{quote_id:06d}"
                             total = float(result.get("total") or 0)
                             body = f"✅ Pago recibido. Tu pedido {number} fue confirmado correctamente. Total: ${total:.2f} ARS. Gracias por tu compra."
-                            WhatsAppService.send_text(conversation.company, to=recipient, body=body)
+                            WhatsAppService.send_text(conversation.company, to=recipient, body=body, branch_id=conversation.branch_id)
                         elif recipient and payment_status in {"rejected", "cancelled", "canceled"}:
                             number = result.get("quote_number") or f"P-{quote_id:06d}"
                             body = f"⚠️ El pago de tu pedido {number} no fue aprobado. Escribime *reintentar pago* para volver a intentarlo."
