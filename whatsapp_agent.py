@@ -686,7 +686,7 @@ def _ai_order_row(company_id: int, quote):
         attention = dict(raw_attention) if isinstance(raw_attention, dict) else {}
     from app import Company
     company = Company.query.filter_by(id=int(company_id)).first()
-    vendor_options = get_vendor_options(company)
+    vendor_options = get_vendor_options(company, conversation.branch_id)
     attention_status = str(attention.get("status") or "").strip().lower()
     if attention_status == "human":
         attention_key, attention_label, attention_badge = "human", "Atención humana", "text-bg-danger"
@@ -1060,7 +1060,7 @@ def ai_whatsapp_attention_message(conversation_id: int):
         flash("La conversación no tiene un número de WhatsApp válido.", "danger")
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
 
-    connection = get_whatsapp_connection(company)
+    connection = get_whatsapp_connection(company, branch_id=conversation.branch_id)
     if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
         flash("WhatsApp no está conectado o habilitado para este comercio.", "danger")
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
