@@ -773,7 +773,7 @@ def _recover_explicit_public_order(
     if cart_items and not any(int(item.get("product_id") or 0) == int(selected.id) for item in cart_items):
         return {"kind": "cart_conflict", **parsed, "selected_product": str(selected.name)}
 
-    options = get_vendor_options(company)
+    options = get_vendor_options(company, conversation.branch_id)
     allowed_tools = set(vendor_allowed_tool_names(options))
     if "preparar_pedido" not in allowed_tools:
         return {"kind": "tool_unavailable", **parsed}
