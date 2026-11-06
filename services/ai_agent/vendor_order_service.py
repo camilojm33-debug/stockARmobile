@@ -1389,11 +1389,12 @@ class VendorOrderService:
         if company is None:
             raise ValueError("La empresa no está disponible para recibir pedidos.")
         vendor_options = get_vendor_options(company, conversation.branch_id)
-        from services.ai_agent.branch_vendor_service import branch_vendor_access
-        from app import Branch
-        branch = Branch.query.filter_by(id=conversation.branch_id, company_id=company_id, active=True).first() if conversation.branch_id else None
-        if branch is None or not branch_vendor_access(company, branch).get("allowed"):
-            raise ValueError("La sucursal necesita una licencia Vendedor IA activa para recibir pedidos.")
+        if conversation.branch_id:
+            from services.ai_agent.branch_vendor_service import branch_vendor_access
+            from app import Branch
+            branch = Branch.query.filter_by(id=conversation.branch_id, company_id=company_id, active=True).first()
+            if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+                raise ValueError("La sucursal necesita una licencia Vendedor IA activa para recibir pedidos.")
         if not vendor_options.get("can_prepare_quotes", False):
             raise ValueError("El Vendedor IA tiene deshabilitada la preparación de presupuestos.")
         if not vendor_options.get("can_take_orders", False):
