@@ -1258,7 +1258,16 @@ def _public_branch_choices(company) -> list[dict]:
         default_id = get_default_branch_id(company.id)
         query = query.filter(Branch.id == int(default_id)) if default_id else query.filter(Branch.id == -1)
     rows = query.order_by(Branch.is_default.desc(), Branch.name.asc(), Branch.id.asc()).all()
-    return [{"id": int(row.id), "name": str(row.name or ""), "code": str(row.code or "")} for row in rows]
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+
+    # A company-level public seller may offer fulfillment only from branches
+    # whose Vendedor IA entitlement is active. The default branch is included
+    # by branch_vendor_access only while the company AI plan grants it.
+    return [
+        {"id": int(row.id), "name": str(row.name or ""), "code": str(row.code or "")}
+        for row in rows
+        if branch_vendor_access(company, row).get("allowed")
+    ]
 
 
 def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CATALOG_LIMIT, branch_id: int | None = None) -> list[dict]:
