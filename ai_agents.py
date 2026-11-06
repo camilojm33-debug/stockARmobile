@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user
+from sqlalchemy import or_
 
 from app import tenant_required
 from services.ai_agent.config_service import (
@@ -185,18 +186,37 @@ def _require_ai_access():
 VENDOR_AI_ORDER_OBSERVATION = "Pedido generado por el Vendedor 24 hs de StockARmobile."
 
 
-def _vendor_dashboard_metrics(company_id: int, month_start: datetime) -> dict:
-    """Return current-month Vendor IA order and derived-sale counts for the tenant."""
+def _scope_query_to_branch(query, model, branch_id: int | None, *, include_legacy: bool = False):
+    """Apply a tenant-owned branch scope, optionally retaining legacy unassigned rows."""
+    if branch_id is None:
+        return query
+    branch_id = int(branch_id)
+    if include_legacy:
+        return query.filter(or_(model.branch_id == branch_id, model.branch_id.is_(None)))
+    return query.filter(model.branch_id == branch_id)
+
+
+def _vendor_dashboard_metrics(
+    company_id: int,
+    month_start: datetime,
+    branch_id: int | None = None,
+    *,
+    include_legacy: bool = False,
+) -> dict:
+    """Return current-month Vendor IA orders and derived sales for one branch or the tenant."""
     from app import Quote, Sale
 
-    orders = Quote.query.filter(
+    orders_query = Quote.query.filter(
         Quote.company_id == int(company_id),
         Quote.created_at >= month_start,
         Quote.observations == VENDOR_AI_ORDER_OBSERVATION,
+    )
+    orders = _scope_query_to_branch(
+        orders_query, Quote, branch_id, include_legacy=include_legacy
     ).count()
 
-    derived_sales = (
-        db.session.query(db.func.count(Sale.id))
+    sales_query = (
+        db.session.query(Sale.id)
         .join(Quote, Quote.converted_sale_id == Sale.id)
         .filter(
             Quote.company_id == int(company_id),
@@ -205,10 +225,14 @@ def _vendor_dashboard_metrics(company_id: int, month_start: datetime) -> dict:
             Sale.created_at >= month_start,
             Sale.status.notin_(["cancelada", "anulada"]),
         )
-        .scalar()
-        or 0
     )
-    return {"orders": int(orders), "ai_sales": int(derived_sales)}
+    sales_query = _scope_query_to_branch(
+        sales_query, Quote, branch_id, include_legacy=include_legacy
+    )
+    sales_query = _scope_query_to_branch(
+        sales_query, Sale, branch_id, include_legacy=include_legacy
+    )
+    return {"orders": int(orders), "ai_sales": int(sales_query.count())}
 
 def _context():
     from app import Client, Company, Product, Quote, Sale, SaleItem, Payment
@@ -216,9 +240,20 @@ def _context():
 
     company_id = current_user.company_id
     company = Company.query.get(company_id)
+    from app import Branch
+    from stockarmobile.branch_context import get_active_branch_id
+
+    active_branch_id = get_active_branch_id()
+    active_branch = (
+        Branch.query.filter_by(
+            id=int(active_branch_id), company_id=int(company_id), active=True
+        ).first()
+        if active_branch_id is not None
+        else None
+    )
     agents = ensure_default_agents(company_id)
     preferences = get_ai_preferences(company)
-    whatsapp_connection = get_whatsapp_connection(company)
+    whatsapp_connection = get_whatsapp_connection(company, branch_id=active_branch_id)
     whatsapp_connected = bool(
         whatsapp_connection.get("enabled")
         and whatsapp_connection.get("phone_number_id")
@@ -228,16 +263,70 @@ def _context():
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     previous_start = (month_start - timedelta(days=1)).replace(day=1)
 
-    conversations = Conversation.query.filter(Conversation.company_id == company_id, Conversation.created_at >= month_start).count()
-    clients_attended = db.session.query(Conversation.external_conversation_id).filter(Conversation.company_id == company_id, Conversation.created_at >= month_start, Conversation.external_conversation_id.isnot(None)).distinct().count()
-    quotes = Quote.query.filter(Quote.company_id == company_id, Quote.created_at >= month_start).count()
-    sales_month = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= month_start, Sale.status.notin_(["cancelada", "anulada"]))
-    sales_previous = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= previous_start, Sale.created_at < month_start, Sale.status.notin_(["cancelada", "anulada"]))
+    include_legacy_branch_rows = bool(active_branch and active_branch.is_default)
+
+    # Keep the general Agentes IA dashboard and analyst cards company-wide.
+    # The Vendedor view receives a separate, selected-branch metric snapshot below.
+    conversations = Conversation.query.filter(
+        Conversation.company_id == company_id,
+        Conversation.created_at >= month_start,
+    ).count()
+    clients_attended = (
+        db.session.query(Conversation.external_conversation_id)
+        .filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+            Conversation.external_conversation_id.isnot(None),
+        )
+        .distinct()
+        .count()
+    )
+    quotes = Quote.query.filter(
+        Quote.company_id == company_id,
+        Quote.created_at >= month_start,
+    ).count()
+    sales_month = Sale.query.filter(
+        Sale.company_id == company_id,
+        Sale.created_at >= month_start,
+        Sale.status.notin_(["cancelada", "anulada"]),
+    )
+    sales_previous = Sale.query.filter(
+        Sale.company_id == company_id,
+        Sale.created_at >= previous_start,
+        Sale.created_at < month_start,
+        Sale.status.notin_(["cancelada", "anulada"]),
+    )
+
+    vendor_conversations = _scope_query_to_branch(
+        Conversation.query.filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+            Conversation.channel.in_(("webchat", "whatsapp")),
+        ),
+        Conversation, active_branch_id,
+        include_legacy=include_legacy_branch_rows,
+    ).count()
+    vendor_clients_attended = _scope_query_to_branch(
+        db.session.query(Conversation.external_conversation_id).filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+            Conversation.channel.in_(("webchat", "whatsapp")),
+            Conversation.external_conversation_id.isnot(None),
+        ),
+        Conversation, active_branch_id,
+        include_legacy=include_legacy_branch_rows,
+    ).distinct().count()
+    vendor_quotes = _scope_query_to_branch(
+        Quote.query.filter(
+            Quote.company_id == company_id,
+            Quote.created_at >= month_start,
+        ),
+        Quote, active_branch_id,
+        include_legacy=include_legacy_branch_rows,
+    ).count()
     sales_total = float(sales_month.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     previous_total = float(sales_previous.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     sales_change = None if previous_total == 0 else round(((sales_total - previous_total) / previous_total) * 100, 1)
-    from stockarmobile.branch_context import get_active_branch_id
-    active_branch_id = get_active_branch_id()
     if active_branch_id is not None:
         from app import BranchStock
         critical_stock = Product.query.outerjoin(
@@ -259,7 +348,21 @@ def _context():
         ).count()
     sold_product_ids = db.session.query(SaleItem.product_id).join(Sale).filter(Sale.company_id == company_id, Sale.created_at >= now - timedelta(days=90), Sale.status.notin_(["cancelada", "anulada"])).distinct()
     low_rotation = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), ~Product.id.in_(sold_product_ids)).count()
-    vendor_metrics = _vendor_dashboard_metrics(company_id, month_start)
+    vendor_metrics = _vendor_dashboard_metrics(
+        company_id,
+        month_start,
+    )
+    vendor_branch_metrics = {
+        "conversations": int(vendor_conversations),
+        "clients_attended": int(vendor_clients_attended),
+        "quotes": int(vendor_quotes),
+        **_vendor_dashboard_metrics(
+            company_id,
+            month_start,
+            branch_id=active_branch_id,
+            include_legacy=include_legacy_branch_rows,
+        ),
+    }
     ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
@@ -300,16 +403,106 @@ def _context():
             }
 
     from services.ai_agent.branch_vendor_service import list_branch_vendor_statuses, monthly_price_ars
-    from services.ai_agent.vendor_publication import branch_publication_status
+    from services.ai_agent.vendor_publication import branch_publication_status, publication_status
     branch_vendor_statuses = list_branch_vendor_statuses(company)
     for branch_status in branch_vendor_statuses:
-        if not branch_status.get("included"):
+        branch = branch_status["branch"]
+        try:
+            branch_status["publication"] = (
+                publication_status(company)
+                if branch.is_default
+                else branch_publication_status(company, branch)
+            )
+        except Exception:
+            branch_status["publication"] = {
+                "published": False, "available": False, "licensed": False, "url": None
+            }
+        branch_status["web_active"] = bool(
+            branch_status.get("allowed")
+            and (branch_status.get("publication") or {}).get("available")
+        )
+        try:
+            branch_whatsapp = get_whatsapp_connection(company, branch_id=branch.id)
+            branch_status["whatsapp_connected"] = bool(
+                branch_status.get("allowed")
+                and branch_whatsapp.get("enabled")
+                and branch_whatsapp.get("phone_number_id")
+                and branch_whatsapp.get("access_token")
+            )
+            branch_status["whatsapp_phone_number"] = str(
+                branch_whatsapp.get("display_phone_number") or ""
+            ).strip()
+        except Exception:
+            branch_status["whatsapp_connected"] = False
+            branch_status["whatsapp_phone_number"] = ""
+        branch_status["is_selected"] = bool(
+            active_branch_id is not None and int(branch.id) == int(active_branch_id)
+        )
+
+    active_branch_status = next(
+        (
+            row for row in branch_vendor_statuses
+            if active_branch_id is not None and int(row["branch"].id) == int(active_branch_id)
+        ),
+        None,
+    )
+    active_branch_vendor_allowed = (
+        bool(active_branch_status.get("allowed"))
+        if active_branch_status is not None
+        else bool(agent_access["vendedor"].allowed)
+    )
+    active_branch_vendor_reason = (
+        active_branch_status.get("reason") if active_branch_status is not None else None
+    )
+    if active_branch_status is not None:
+        active_publication = active_branch_status.get("publication") or {}
+        public_webchat_enabled = bool(
+            active_branch_status.get("allowed") and active_publication.get("available")
+        )
+        public_vendor_url = (
+            active_publication.get("url") if public_webchat_enabled else None
+        )
+        whatsapp_connected = bool(active_branch_status.get("whatsapp_connected"))
+        whatsapp_phone_number = active_branch_status.get("whatsapp_phone_number") or ""
+    else:
+        public_webchat_enabled = bool(
+            preferences.get("ai_agent", {}).get("public_webchat_enabled", False)
+        )
+        public_vendor_url = (
+            url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id))
+            if agent_access["vendedor"].allowed else None
+        )
+        if agent_access["vendedor"].allowed:
             try:
-                branch_status["publication"] = branch_publication_status(company, branch_status["branch"])
+                publication = publication_status(company)
+                if publication.get("available") and publication.get("url"):
+                    public_vendor_url = publication["url"]
             except Exception:
-                branch_status["publication"] = {"published": False, "available": False, "url": None}
-        else:
-            branch_status["publication"] = None
+                current_app.logger.exception(
+                    "No se pudo resolver la URL estable del Vendedor público company_id=%s",
+                    company_id,
+                )
+        whatsapp_phone_number = str(
+            whatsapp_connection.get("display_phone_number") or ""
+        ).strip()
+    if not active_branch_vendor_allowed:
+        public_webchat_enabled = False
+        public_vendor_url = None
+        whatsapp_connected = False
+        whatsapp_phone_number = ""
+    public_vendor_qr = None
+    if public_webchat_enabled and public_vendor_url:
+        try:
+            from services.ai_agent.vendor_publication import qr_data_uri
+            public_vendor_qr = qr_data_uri(public_vendor_url)
+        except Exception:
+            current_app.logger.exception(
+                "No se pudo generar el QR del Vendedor IA company_id=%s",
+                company_id,
+            )
+    metrics_scope_label = (
+        active_branch.name if active_branch is not None else "Toda la empresa"
+    )
 
     branch_vendor_qr_preview = session.get("branch_vendor_qr_preview")
     if isinstance(branch_vendor_qr_preview, dict):
@@ -330,17 +523,7 @@ def _context():
         if branch_vendor_qr_preview is None or branch_vendor_qr_preview.get("status") in {"failed"}:
             session.pop("branch_vendor_qr_preview", None)
 
-    public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))
-    public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None
-    if agent_access["vendedor"].allowed:
-        try:
-            from services.ai_agent.vendor_publication import publication_status
-            publication = publication_status(company)
-            if publication.get("available") and publication.get("url"):
-                public_vendor_url = publication["url"]
-        except Exception:
-            current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "branch_vendor_statuses": branch_vendor_statuses, "branch_vendor_monthly_price": float(monthly_price_ars()), "branch_vendor_qr_preview": branch_vendor_qr_preview, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "vendor_branch_metrics": vendor_branch_metrics, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "branch_vendor_statuses": branch_vendor_statuses, "branch_vendor_monthly_price": float(monthly_price_ars()), "branch_vendor_qr_preview": branch_vendor_qr_preview, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "public_vendor_qr": public_vendor_qr, "whatsapp_connected": whatsapp_connected, "whatsapp_phone_number": whatsapp_phone_number, "active_branch": active_branch, "active_branch_id": active_branch_id, "active_branch_vendor_status": active_branch_status, "active_branch_vendor_allowed": active_branch_vendor_allowed, "active_branch_vendor_reason": active_branch_vendor_reason, "metrics_scope_label": metrics_scope_label, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):

@@ -144,6 +144,21 @@
   .invoice-file-control { display:flex; flex-wrap:wrap; align-items:center; gap:.65rem; min-width:0; }
   .invoice-file-input { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .invoice-file-name { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--app-muted); }
+  .vendor-branch-card { border:1px solid var(--app-line); border-radius:15px; background:#fff; height:100%; }
+  .vendor-branch-card.is-selected { border-color:rgba(37,99,235,.48); box-shadow:0 0 0 3px rgba(37,99,235,.07); }
+  .vendor-status-pills { display:flex; flex-wrap:wrap; gap:.45rem; }
+  .vendor-status-pill { display:inline-flex; align-items:center; gap:.35rem; padding:.32rem .58rem; border:1px solid var(--app-line); border-radius:999px; background:#f8fafc; color:#64748b; font-size:.75rem; font-weight:700; }
+  .vendor-status-pill.active { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; }
+  .vendor-metric-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.8rem; }
+  .vendor-metric-card { border:1px solid var(--app-line); border-radius:14px; background:#fff; padding:.95rem; height:100%; min-width:0; }
+  .vendor-metric-card strong { display:block; margin-top:.25rem; font-size:1.5rem; font-weight:900; }
+  .vendor-usage-panel { border:1px solid var(--app-line); border-radius:15px; background:linear-gradient(135deg,#f8fbff,#fff); padding:1rem; }
+  .vendor-usage-track { height:10px; border-radius:999px; background:#e8edf5; overflow:hidden; }
+  .vendor-usage-track span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#4f46e5); }
+  .vendor-qr-preview { width:104px; height:104px; object-fit:contain; border:1px solid var(--app-line); border-radius:10px; background:#fff; padding:5px; }
+  .vendor-public-link { min-width:0; overflow-wrap:anywhere; font-size:.78rem; }
+  @media (max-width: 1100px) { .vendor-metric-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+  @media (max-width: 700px) { .vendor-metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; } .vendor-metric-card { padding:.75rem; } .vendor-metric-card strong { font-size:1.3rem; } .vendor-qr-preview { width:84px; height:84px; } }
   @media (max-width: 1100px) { .ai-agent-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .ai-benefits { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width: 700px) {
     .ai-agent-grid,.ai-benefits { grid-template-columns:1fr; }
@@ -408,38 +423,43 @@
 
   {% elif view == 'vendedor' %}
   {% set vendor_webchat_live = public_webchat_enabled and public_vendor_url %}
-  {% set active_vendor_channels = (1 if vendor_webchat_live else 0) + (1 if whatsapp_connected else 0) %}
-  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-    <div>
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <h2 class="h3 fw-bold mb-0"><i class="bi bi-cart3 me-2"></i>Vendedor IA</h2>
-        <span class="badge {{ 'text-bg-success' if active_vendor_channels > 0 else 'text-bg-secondary' }} fs-6">
-          <i class="bi {{ 'bi-check-circle-fill' if active_vendor_channels > 0 else 'bi-pause-circle' }} me-1"></i>{% if active_vendor_channels == 2 %}2 canales activos{% elif vendor_webchat_live %}Vendedor web activo{% elif whatsapp_connected %}WhatsApp conectado{% else %}Sin canales activos{% endif %}
-        </span>
+  {% set vendor_webchat_live = vendor_webchat_live and active_branch_vendor_allowed %}
+  {% set active_vendor_channels = (1 if vendor_webchat_live else 0) + (1 if whatsapp_connected and active_branch_vendor_allowed else 0) %}
+  {% set usage_percent = ai_usage.percent if ai_usage and ai_usage.percent is not none else 0 %}
+  {% set usage_percent_safe = [usage_percent, 100] | min %}
+  <div class="card app-card mb-4" style="border:1px solid var(--app-line);background:linear-gradient(135deg,#f4f8ff,#fff)">
+    <div class="card-body p-4 d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <h1 class="h3 fw-bold mb-0"><i class="bi bi-cart3 me-2"></i>Vendedor IA</h1>
+          {% if not active_branch_vendor_allowed %}<span class="badge text-bg-warning"><i class="bi bi-lock-fill me-1"></i>Licencia requerida</span>
+          {% elif active_vendor_channels == 2 %}<span class="badge text-bg-success">2 canales activos</span>
+          {% elif active_vendor_channels == 1 %}<span class="badge text-bg-success">1 canal activo</span>
+          {% else %}<span class="badge text-bg-secondary">Sin canales activos</span>{% endif %}
+        </div>
+        <div class="text-muted">
+          {% if active_branch %}Administrando <strong>{{ active_branch.name }}</strong>. Los canales y resultados corresponden a esta sucursal.
+          {% else %}Centro de gestión del Vendedor IA de tu empresa.{% endif %}
+        </div>
+        {% if not active_branch_vendor_allowed %}<div class="small text-warning mt-2">{{ active_branch_vendor_reason or 'Esta sucursal necesita una licencia activa de Vendedor IA.' }}</div>{% endif %}
       </div>
-      {% if active_vendor_channels == 0 %}
-        <p class="text-muted mb-0 mt-1">El agente está listo para configurar. Activá el canal web o conectá WhatsApp para que tus clientes puedan contactarlo.</p>
-      {% elif active_vendor_channels == 2 %}
-        <p class="text-muted mb-0 mt-1">Tu Vendedor IA tiene activos los canales web y WhatsApp. Desde acá podés revisar su actividad y configuración.</p>
-      {% elif whatsapp_connected %}
-        <p class="text-muted mb-0 mt-1">WhatsApp está conectado. Revisá su actividad y configuración desde este panel.</p>
-      {% else %}
-        <p class="text-muted mb-0 mt-1">El canal web está publicado. Podés compartir el enlace con tus clientes desde la sección de publicación.</p>
-      {% endif %}
-    </div>
-    <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar Vendedor</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar y compartir</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
+      <div class="d-flex flex-wrap gap-2">
+        {% if active_branch_vendor_allowed %}
+          <a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config', branch_id=active_branch.id) if active_branch else url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar vendedor</a>
+        {% endif %}
+        {% if vendor_webchat_live %}<a class="btn btn-outline-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir vendedor</a>{% endif %}
+        {% if not active_branch_vendor_allowed %}<a class="btn btn-outline-primary" href="#branch-vendors">Ver contratación</a>{% endif %}
+      </div>
     </div>
   </div>
 
   <section id='branch-vendors' class='card app-card mb-4'>
     <div class='card-body'>
       <div class='d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3'>
-        <div><h2 class='h5 fw-bold mb-1'><i class='bi bi-diagram-3 me-2'></i>Vendedores IA por sucursal</h2><p class='small text-muted mb-0'>Cada sucursal tiene su propio vendedor, configuración, conversaciones, stock y canales. El cupo mensual de interacciones IA sigue siendo compartido por la empresa.</p></div>
-        <div class='text-end'><div class='small text-muted'>Licencia adicional mensual</div>{% if branch_vendor_monthly_price > 0 %}<div class='h5 fw-bold mb-0'>$ {{ branch_vendor_monthly_price }} ARS</div>{% else %}<span class='badge text-bg-warning'>Precio aún no configurado</span>{% endif %}</div>
+        <div><h2 class='h5 fw-bold mb-1'><i class='bi bi-diagram-3 me-2'></i>Vendedores IA por sucursal</h2><p class='small text-muted mb-0'>Cada sucursal tiene su propia configuración, conversaciones y canales. El cupo de interacciones IA se comparte entre todas las sucursales.</p></div>
+        <div class='text-end'><div class='small text-muted'>Licencia adicional</div>{% if branch_vendor_monthly_price > 0 %}<div class='h5 fw-bold mb-0'>$ {{ "{:,.0f}".format(branch_vendor_monthly_price).replace(",", ".") }} ARS</div><div class='small text-muted'>por sucursal / mes</div>{% else %}<span class='badge text-bg-warning'>Precio no configurado</span>{% endif %}</div>
       </div>
+      <div class='alert alert-light border small mb-3'><strong>Formas de contratación:</strong> el QR habilita 30 días sin renovación automática. La modalidad mensual autoriza cobros recurrentes en Mercado Pago.</div>
       {% if branch_vendor_qr_preview %}<div class='alert {% if branch_vendor_qr_preview.status == "paid" %}alert-success{% else %}alert-info{% endif %} d-flex flex-wrap align-items-center gap-3'>
         {% if branch_vendor_qr_preview.status == 'pending' and branch_vendor_qr_preview.qr_data_uri %}<img src='{{ branch_vendor_qr_preview.qr_data_uri }}' alt='QR de pago de licencia Vendedor IA' style='width:132px;height:132px;object-fit:contain;background:#fff;padding:6px;border-radius:8px'>{% endif %}
         <div class='flex-grow-1'>{% if branch_vendor_qr_preview.status == 'paid' %}<strong>Pago QR confirmado para {{ branch_vendor_qr_preview.branch_name }}.</strong><div class='small'>La licencia quedó habilitada por 30 días.</div>{% elif branch_vendor_qr_preview.status == 'pending' %}<strong>QR pendiente para {{ branch_vendor_qr_preview.branch_name }}.</strong><div class='small'>Importe: ${{ branch_vendor_qr_preview.amount }} ARS · 30 días sin renovación automática.</div>{% if branch_vendor_qr_preview.checkout_url %}<a class='btn btn-sm btn-outline-primary mt-2' href='{{ branch_vendor_qr_preview.checkout_url }}' target='_blank' rel='noopener'>Abrir pago en Mercado Pago</a>{% endif %}{% else %}<strong>Checkout QR sin enlace recuperable.</strong><div class='small'>Podés cancelar este intento y generar uno nuevo.</div>{% endif %}</div>
@@ -448,9 +468,16 @@
       <div class='row g-3'>
       {% for branch_status in branch_vendor_statuses %}
         {% set branch = branch_status.branch %}{% set publication = branch_status.publication %}
-        <div class='col-12 col-xl-6'><div class='border rounded-3 p-3 h-100'>
+        <div class='col-12 col-xl-6'><div class='vendor-branch-card p-3 {{ "is-selected" if branch_status.is_selected else "" }}'>
           <div class='d-flex justify-content-between align-items-start gap-2 mb-2'><div><div class='fw-bold'>{{ branch.name }}</div><div class='small text-muted'>{{ branch.code or "Sucursal" }}</div></div>
-            {% if branch_status.included %}<span class='badge text-bg-success'>Incluido en el plan</span>{% elif branch_status.allowed %}<span class='badge text-bg-success'>Vendedor activo</span>{% elif branch_status.status == 'pending' %}<span class='badge text-bg-warning'>Pago pendiente</span>{% elif branch_status.status == 'expired' %}<span class='badge text-bg-danger'>Licencia vencida</span>{% elif branch_status.status == 'base_plan_required' %}<span class='badge text-bg-secondary'>Plan IA requerido</span>{% else %}<span class='badge text-bg-secondary'>Sin contratar</span>{% endif %}
+            <div class='d-flex flex-wrap justify-content-end gap-1'>
+              {% if branch_status.is_selected %}<span class='badge text-bg-primary'>Seleccionada</span>{% endif %}
+              {% if branch_status.included %}<span class='badge text-bg-success'>Incluido en el plan</span>{% elif branch_status.allowed %}<span class='badge text-bg-success'>Vendedor activo</span>{% elif branch_status.status == 'pending' %}<span class='badge text-bg-warning text-dark'>Pago pendiente</span>{% elif branch_status.status == 'expired' %}<span class='badge text-bg-danger'>Licencia vencida</span>{% elif branch_status.status == 'base_plan_required' %}<span class='badge text-bg-secondary'>Plan IA requerido</span>{% else %}<span class='badge text-bg-secondary'>Sin contratar</span>{% endif %}
+            </div>
+          </div>
+          <div class='vendor-status-pills mb-3'>
+            <span class='vendor-status-pill {{ "active" if branch_status.web_active else "" }}'><i class='bi bi-globe'></i>Web {{ "activo" if branch_status.web_active else "inactivo" }}</span>
+            <span class='vendor-status-pill {{ "active" if branch_status.whatsapp_connected else "" }}'><i class='bi bi-whatsapp'></i>WhatsApp {{ "conectado" if branch_status.whatsapp_connected else "no conectado" }}</span>
           </div>
           {% if branch_status.allowed %}
             {% if branch_status.included %}<div class='small text-muted mb-2'>Esta sucursal utiliza el Vendedor IA incluido en el plan principal.</div>{% else %}<div class='small text-muted mb-2'>Vigencia hasta: {{ branch_status.ends_at.strftime('%d/%m/%Y %H:%M') if branch_status.ends_at else '-' }} · {% if branch_status.payment_mode == 'automatic' %}Mensual recurrente{% elif branch_status.payment_mode == 'qr' %}QR por 30 días{% else %}Licencia activa{% endif %}</div>{% endif %}
@@ -468,90 +495,101 @@
       </div>
     </div>
   </section>
-  <div class="row g-3 mb-4">
-    {% for label, value in [
-      ('Conversaciones este mes', metrics.conversations),
-      ('Clientes atendidos', metrics.clients_attended),
-      ('Presupuestos', metrics.quotes),
-      ('Pedidos', metrics.orders),
-      ('Ventas derivadas', metrics.ai_sales)
-    ] %}
-    <div class="col-6 col-lg">
-      <div class="ai-metric h-100">
-        <div class="small text-muted">{{ label }}</div>
-        <div class="ai-metric-value">{{ value }}</div>
-      </div>
+  <section class="mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+      <div><h2 class="h5 fw-bold mb-1">Resultados comerciales</h2><p class="small text-muted mb-0">Este mes · {{ metrics_scope_label }}</p></div>
+      <span class="small text-muted"><i class="bi bi-calendar3 me-1"></i>Período actual</span>
     </div>
-    {% endfor %}
-  </div>
-
-  <div class="alert {% if ai_usage.state == 'normal' %}alert-success{% elif ai_usage.state == 'near_limit' %}alert-warning{% elif ai_usage.state == 'limit_next' %}alert-warning{% else %}alert-danger{% endif %} mb-4">
-    <strong>Uso de IA:</strong> {{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} · {{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes
-    {% if ai_usage.state == 'near_limit' %} · Estás utilizando al menos el 80% de tu capacidad mensual.
-    {% elif ai_usage.state == 'limit_next' %} · Te queda poca capacidad de IA este mes.
-    {% elif ai_usage.state == 'limit_reached' %} · Alcanzaste el límite mensual de IA.
+    <div class="vendor-metric-grid">
+      {% for label, value, icon in [
+        ('Conversaciones', vendor_branch_metrics.conversations, 'bi-chat-dots'),
+        ('Clientes atendidos', vendor_branch_metrics.clients_attended, 'bi-people'),
+        ('Presupuestos', vendor_branch_metrics.quotes, 'bi-file-earmark-text'),
+        ('Pedidos IA', vendor_branch_metrics.orders, 'bi-bag-check'),
+        ('Ventas derivadas', vendor_branch_metrics.ai_sales, 'bi-currency-dollar')
+      ] %}
+        <article class="vendor-metric-card"><i class="bi {{ icon }} text-primary fs-5"></i><div class="small text-muted mt-2">{{ label }}</div><strong>{{ value }}</strong></article>
+      {% endfor %}
+    </div>
+    {% if vendor_branch_metrics.conversations == 0 %}
+      <div class="alert alert-light border mt-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div><strong>Todavía no hay conversaciones en {{ metrics_scope_label }}.</strong><div class="small text-muted">Compartí tu vendedor IA para empezar a recibir consultas.</div></div>
+        {% if vendor_webchat_live %}<a class="btn btn-sm btn-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener">Abrir vendedor</a>{% else %}<a class="btn btn-sm btn-outline-primary" href="#branch-vendors">Revisar canales</a>{% endif %}
+      </div>
     {% endif %}
-  </div>
+  </section>
 
-  <div class="row g-4 mb-4">
+  <section class="vendor-usage-panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+      <div><h2 class="h5 fw-bold mb-1"><i class="bi bi-lightning-charge me-1"></i>Consumo de inteligencia artificial</h2><div class="small text-muted">Cupo mensual compartido por toda la empresa, no por sucursal.</div></div>
+      <span class="badge {{ 'text-bg-success' if ai_usage.state == 'normal' else 'text-bg-warning' if ai_usage.state in ['near_limit','limit_next'] else 'text-bg-danger' }}">{{ usage_percent }}% utilizado</span>
+    </div>
+    <div class="fw-bold fs-5">{{ ai_usage.used_usage }} <span class="small text-muted fw-normal">/ {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones</span></div>
+    <div class="vendor-usage-track mt-3" role="progressbar" aria-label="Consumo mensual de IA de toda la empresa" aria-valuenow="{{ usage_percent_safe }}" aria-valuemin="0" aria-valuemax="100"><span style="width:{{ usage_percent_safe }}%"></span></div>
+    <div class="d-flex flex-wrap justify-content-between gap-2 small text-muted mt-2"><span>{{ ai_usage.remaining_usage }} restantes</span><span>Se comparte entre todas las sucursales</span></div>
+    {% if ai_usage.state in ['near_limit','limit_next','limit_reached'] %}<div class="alert alert-warning small mt-3 mb-0">{% if ai_usage.state == 'near_limit' %}Estás utilizando al menos el 80% de tu capacidad mensual.{% elif ai_usage.state == 'limit_next' %}Te queda poca capacidad de IA este mes.{% else %}Alcanzaste el límite mensual de IA.{% endif %}</div>{% endif %}
+  </section>
+
+  <div class="row g-3 mb-4">
     <div class="col-lg-7">
       <div class="card app-card h-100">
-        <div class="card-body">
+        <div class="card-body p-3 p-lg-4">
           <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
             <div>
-              <h2 class="h5 fw-bold mb-1"><i class="bi bi-broadcast me-2"></i>Canal público</h2>
-              <p class="small text-muted mb-0">Este es el canal con el que tus clientes pueden hablar con el Vendedor sin entrar al panel.</p>
+              <h2 class="h5 fw-bold mb-1"><i class="bi bi-globe me-2"></i>Publicar y compartir</h2>
+              <div class="small text-muted">Vendedor Web</div>
+              <p class="small text-muted mb-0">Canal público 24/7 para que tus clientes consulten sin entrar al panel.</p>
             </div>
-            <span class="badge {{ 'text-bg-success' if public_webchat_enabled and public_vendor_url else 'text-bg-secondary' }}">
-              {{ 'Activo' if public_webchat_enabled and public_vendor_url else 'Desactivado' }}
-            </span>
+            <span class="badge {{ 'text-bg-success' if vendor_webchat_live else 'text-bg-secondary' }}">{{ 'Activo' if vendor_webchat_live else 'No publicado' }}</span>
           </div>
-
-          {% if public_webchat_enabled and public_vendor_url %}
-            <div class="alert alert-success mb-3">
-              <strong>Vendedor Web 24/7 activo.</strong>
-              <div class="small mt-1">El enlace público está listo para compartir.</div>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-              <a class="btn btn-primary" target="_blank" rel="noopener" href="{{ public_vendor_url }}"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir chat público</a>
+          {% if not active_branch_vendor_allowed %}
+            <div class="alert alert-warning small mb-0">Esta sucursal necesita una licencia activa para publicar su propio Vendedor Web.</div>
+          {% elif vendor_webchat_live %}
+            <div class="alert alert-success small mb-3"><strong>Vendedor web activo.</strong> Vendedor Web publicado.<div>El enlace y el QR corresponden a {{ active_branch.name if active_branch else 'tu empresa' }}.</div></div>
+            <div class="d-flex flex-wrap align-items-center gap-3">
+              {% if public_vendor_qr %}<img class="vendor-qr-preview" src="{{ public_vendor_qr }}" alt="Código QR del Vendedor Web">{% endif %}
+              <div class="flex-grow-1">
+                <div class="small fw-semibold mb-1">Enlace para compartir</div>
+                <div class="vendor-public-link text-muted mb-2">{{ public_vendor_url }}</div>
+                <div class="d-flex flex-wrap gap-2">
+                  <button class="btn btn-sm btn-outline-primary" type="button" data-copy-vendor-url="{{ public_vendor_url }}"><i class="bi bi-clipboard me-1"></i>Copiar enlace</button>
+                  <a class="btn btn-sm btn-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Probar vendedor</a>
+                </div>
+              </div>
             </div>
           {% else %}
-            <div class="alert alert-light border mb-3">
-              <strong>El canal público todavía no está activo.</strong>
-              <div class="small mt-1">Publicá el Vendedor para generar el enlace seguro y compartirlo.</div>
-            </div>
-            <a class="btn btn-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar Vendedor</a>
+            <div class="alert alert-light border small mb-3"><strong>El canal web todavía no está publicado.</strong><div>Publicalo desde la tarjeta de esta sucursal.</div></div>
+            {% if active_branch and active_branch.is_default %}
+              <a class="btn btn-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar Vendedor Web</a>
+            {% else %}
+              <a class="btn btn-outline-primary" href="#branch-vendors">Ir a la sucursal para publicar</a>
+            {% endif %}
           {% endif %}
-
-          <div class="small text-muted mt-3">
-            <i class="bi bi-shield-check me-1"></i>El enlace público queda firmado y aislado por empresa.
-          </div>
+          <div class="small text-muted mt-3"><i class="bi bi-shield-check me-1"></i>El enlace público está aislado por empresa y sucursal.</div>
         </div>
       </div>
     </div>
 
     {% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
   <div class="col-lg-5">
-      <div class="card app-card h-100">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-            <div>
-              <h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2>
-              <p class="small text-muted mb-0">Canal opcional para atender desde tu número comercial.</p>
+        <div class="card app-card h-100">
+          <div class="card-body p-3 p-lg-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div><h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2><p class="small text-muted mb-0">Canal opcional del número comercial de esta sucursal.</p></div>
+              <span class="badge {{ 'text-bg-success' if whatsapp_connected else 'text-bg-secondary' }}">{{ 'Conectado' if whatsapp_connected else 'No conectado' }}</span>
             </div>
-            <span class="badge {{ 'text-bg-success' if whatsapp_connected else 'text-bg-secondary' }}">
-              {{ 'Conectado' if whatsapp_connected else 'No conectado' }}
-            </span>
+            {% if not active_branch_vendor_allowed %}
+              <div class="alert alert-warning small mb-0">Contratá la licencia de esta sucursal para conectar su propio WhatsApp.</div>
+            {% elif whatsapp_connected %}
+              <div class="alert alert-success small mb-3"><strong>WhatsApp conectado.</strong><div class="mt-1">{{ whatsapp_phone_number or 'Número comercial conectado' }}</div></div>
+              <a class="btn btn-outline-success" href="{{ url_for('ai_agents.vendor_whatsapp_connect', branch_id=active_branch.id if active_branch else none) }}"><i class="bi bi-sliders me-1"></i>Administrar conexión</a>
+            {% else %}
+              <div class="alert alert-light border small mb-3"><strong>WhatsApp todavía no está conectado.</strong><div>Esto no afecta el funcionamiento del Vendedor Web.</div></div>
+              <a class="btn btn-outline-success" href="{{ url_for('ai_agents.vendor_whatsapp_connect', branch_id=active_branch.id if active_branch else none) }}"><i class="bi bi-whatsapp me-1"></i>Conectar WhatsApp</a>
+            {% endif %}
           </div>
-          {% if whatsapp_connected %}
-            <div class="alert alert-success mb-3"><strong>WhatsApp conectado.</strong><div class="small mt-1">{{ preferences.whatsapp.display_phone_number or 'Número conectado' }}</div></div>
-          {% else %}
-            <div class="alert alert-light border mb-3"><strong>WhatsApp todavía no está conectado.</strong><div class="small mt-1">Esto no afecta el Vendedor Web 24/7.</div></div>
-          {% endif %}
-          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if whatsapp_connected %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
         </div>
       </div>
-    </div>
     {% endif %}
   </div>
 
@@ -587,16 +625,17 @@
     </div>
 
     <div class="col-lg-5">
-      <div class="card app-card h-100">
-        <div class="card-body">
-          <h2 class="h5 fw-bold mb-1"><i class="bi bi-lightning-charge me-2"></i>Uso de IA</h2>
-          <p class="text-muted">{{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones.</p>
-          <div class="progress" role="progressbar" aria-label="Uso de IA" aria-valuenow="{{ ai_usage.percent }}" aria-valuemin="0" aria-valuemax="100">
-            <div class="progress-bar" style="width: {{ ai_usage.percent }}%"></div>
-          </div>
-          <div class="small text-muted mt-2">{{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes</div>
-        </div>
-      </div>
+      <div class="card app-card h-100"><div class="card-body">
+        <h2 class="h5 fw-bold mb-1"><i class="bi bi-rocket-takeoff me-2"></i>Próximo paso</h2>
+        <p class="small text-muted mb-3">Mantené el vendedor preparado para recibir consultas y convertirlas en oportunidades.</p>
+        {% if active_branch_vendor_allowed and active_branch %}
+          <a class="btn btn-primary btn-sm" href="{{ url_for('ai_admin.vendor_config', branch_id=active_branch.id) }}"><i class="bi bi-gear me-1"></i>Revisar configuración</a>
+        {% elif active_branch_vendor_allowed %}
+          <a class="btn btn-primary btn-sm" href="{{ url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar Vendedor</a>
+        {% else %}
+          <a class="btn btn-outline-primary btn-sm" href="#branch-vendors">Revisar licencia</a>
+        {% endif %}
+      </div></div>
     </div>
   </div>
   
@@ -636,6 +675,46 @@
       ? "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde."
       : (text || "No se pudo procesar la consulta.");
   };
+})();
+</script>
+<script>
+(function () {
+  function copyText(value) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(value);
+    }
+    return new Promise(function (resolve, reject) {
+      var input = document.createElement('textarea');
+      input.value = value;
+      input.setAttribute('readonly', '');
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      try {
+        var copied = document.execCommand('copy');
+        document.body.removeChild(input);
+        copied ? resolve() : reject(new Error('No se pudo copiar el enlace.'));
+      } catch (error) {
+        document.body.removeChild(input);
+        reject(error);
+      }
+    });
+  }
+  document.querySelectorAll('[data-copy-vendor-url]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var value = button.getAttribute('data-copy-vendor-url') || '';
+      if (!value) return;
+      var original = button.textContent.trim();
+      copyText(value).then(function () {
+        button.textContent = 'Enlace copiado';
+        window.setTimeout(function () { button.textContent = original; }, 1800);
+      }).catch(function () {
+        button.textContent = 'No se pudo copiar';
+        window.setTimeout(function () { button.textContent = original; }, 2200);
+      });
+    });
+  });
 })();
 </script>
 {% if view == 'dashboard' and any_chat_agent %}
