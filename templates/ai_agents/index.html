@@ -443,8 +443,8 @@
         {% if not active_branch_vendor_allowed %}<div class="small text-warning mt-2">{{ active_branch_vendor_reason or 'Esta sucursal necesita una licencia activa de Vendedor IA.' }}</div>{% endif %}
       </div>
       <div class="d-flex flex-wrap gap-2">
-        {% if active_branch_vendor_allowed and active_branch %}
-          <a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config', branch_id=active_branch.id) }}"><i class="bi bi-gear me-1"></i>Configurar vendedor</a>
+        {% if active_branch_vendor_allowed %}
+          <a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config', branch_id=active_branch.id) if active_branch else url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar vendedor</a>
         {% endif %}
         {% if vendor_webchat_live %}<a class="btn btn-outline-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir vendedor</a>{% endif %}
         {% if not active_branch_vendor_allowed %}<a class="btn btn-outline-primary" href="#branch-vendors">Ver contratación</a>{% endif %}
