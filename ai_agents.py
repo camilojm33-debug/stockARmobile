@@ -264,50 +264,66 @@ def _context():
     previous_start = (month_start - timedelta(days=1)).replace(day=1)
 
     include_legacy_branch_rows = bool(active_branch and active_branch.is_default)
-    conversations_query = Conversation.query.filter(
+
+    # Keep the general Agentes IA dashboard and analyst cards company-wide.
+    # The Vendedor view receives a separate, selected-branch metric snapshot below.
+    conversations = Conversation.query.filter(
         Conversation.company_id == company_id,
         Conversation.created_at >= month_start,
-        Conversation.channel.in_(("webchat", "whatsapp")),
-    )
-    conversations = _scope_query_to_branch(
-        conversations_query, Conversation, active_branch_id,
-        include_legacy=include_legacy_branch_rows,
     ).count()
-    attended_query = db.session.query(Conversation.external_conversation_id).filter(
-        Conversation.company_id == company_id,
-        Conversation.created_at >= month_start,
-        Conversation.channel.in_(("webchat", "whatsapp")),
-        Conversation.external_conversation_id.isnot(None),
+    clients_attended = (
+        db.session.query(Conversation.external_conversation_id)
+        .filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+            Conversation.external_conversation_id.isnot(None),
+        )
+        .distinct()
+        .count()
     )
-    clients_attended = _scope_query_to_branch(
-        attended_query, Conversation, active_branch_id,
-        include_legacy=include_legacy_branch_rows,
-    ).distinct().count()
-    quotes_query = Quote.query.filter(
+    quotes = Quote.query.filter(
         Quote.company_id == company_id,
         Quote.created_at >= month_start,
+    ).count()
+    sales_month = Sale.query.filter(
+        Sale.company_id == company_id,
+        Sale.created_at >= month_start,
+        Sale.status.notin_(["cancelada", "anulada"]),
     )
-    quotes = _scope_query_to_branch(
-        quotes_query, Quote, active_branch_id,
+    sales_previous = Sale.query.filter(
+        Sale.company_id == company_id,
+        Sale.created_at >= previous_start,
+        Sale.created_at < month_start,
+        Sale.status.notin_(["cancelada", "anulada"]),
+    )
+
+    vendor_conversations = _scope_query_to_branch(
+        Conversation.query.filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+            Conversation.channel.in_(("webchat", "whatsapp")),
+        ),
+        Conversation, active_branch_id,
         include_legacy=include_legacy_branch_rows,
     ).count()
-    sales_month = _scope_query_to_branch(
-        Sale.query.filter(
-            Sale.company_id == company_id,
-            Sale.created_at >= month_start,
-            Sale.status.notin_(["cancelada", "anulada"]),
+    vendor_clients_attended = _scope_query_to_branch(
+        db.session.query(Conversation.external_conversation_id).filter(
+            Conversation.company_id == company_id,
+            Conversation.created_at >= month_start,
+            Conversation.channel.in_(("webchat", "whatsapp")),
+            Conversation.external_conversation_id.isnot(None),
         ),
-        Sale, active_branch_id, include_legacy=include_legacy_branch_rows,
-    )
-    sales_previous = _scope_query_to_branch(
-        Sale.query.filter(
-            Sale.company_id == company_id,
-            Sale.created_at >= previous_start,
-            Sale.created_at < month_start,
-            Sale.status.notin_(["cancelada", "anulada"]),
+        Conversation, active_branch_id,
+        include_legacy=include_legacy_branch_rows,
+    ).distinct().count()
+    vendor_quotes = _scope_query_to_branch(
+        Quote.query.filter(
+            Quote.company_id == company_id,
+            Quote.created_at >= month_start,
         ),
-        Sale, active_branch_id, include_legacy=include_legacy_branch_rows,
-    )
+        Quote, active_branch_id,
+        include_legacy=include_legacy_branch_rows,
+    ).count()
     sales_total = float(sales_month.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     previous_total = float(sales_previous.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     sales_change = None if previous_total == 0 else round(((sales_total - previous_total) / previous_total) * 100, 1)
@@ -335,9 +351,18 @@ def _context():
     vendor_metrics = _vendor_dashboard_metrics(
         company_id,
         month_start,
-        branch_id=active_branch_id,
-        include_legacy=include_legacy_branch_rows,
     )
+    vendor_branch_metrics = {
+        "conversations": int(vendor_conversations),
+        "clients_attended": int(vendor_clients_attended),
+        "quotes": int(vendor_quotes),
+        **_vendor_dashboard_metrics(
+            company_id,
+            month_start,
+            branch_id=active_branch_id,
+            include_legacy=include_legacy_branch_rows,
+        ),
+    }
     ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
@@ -498,7 +523,7 @@ def _context():
         if branch_vendor_qr_preview is None or branch_vendor_qr_preview.get("status") in {"failed"}:
             session.pop("branch_vendor_qr_preview", None)
 
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "branch_vendor_statuses": branch_vendor_statuses, "branch_vendor_monthly_price": float(monthly_price_ars()), "branch_vendor_qr_preview": branch_vendor_qr_preview, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "public_vendor_qr": public_vendor_qr, "whatsapp_connected": whatsapp_connected, "whatsapp_phone_number": whatsapp_phone_number, "active_branch": active_branch, "active_branch_id": active_branch_id, "active_branch_vendor_status": active_branch_status, "active_branch_vendor_allowed": active_branch_vendor_allowed, "active_branch_vendor_reason": active_branch_vendor_reason, "metrics_scope_label": metrics_scope_label, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "vendor_branch_metrics": vendor_branch_metrics, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "branch_vendor_statuses": branch_vendor_statuses, "branch_vendor_monthly_price": float(monthly_price_ars()), "branch_vendor_qr_preview": branch_vendor_qr_preview, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "public_vendor_qr": public_vendor_qr, "whatsapp_connected": whatsapp_connected, "whatsapp_phone_number": whatsapp_phone_number, "active_branch": active_branch, "active_branch_id": active_branch_id, "active_branch_vendor_status": active_branch_status, "active_branch_vendor_allowed": active_branch_vendor_allowed, "active_branch_vendor_reason": active_branch_vendor_reason, "metrics_scope_label": metrics_scope_label, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
