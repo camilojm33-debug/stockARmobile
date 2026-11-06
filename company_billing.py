@@ -3246,6 +3246,18 @@ def create_mercadopago_subscription():
         if subscription is None:
             raise RuntimeError("No se pudo obtener la suscripción de StockArMobile.")
 
+        pending_qr_payments = Payment.query.filter(
+            Payment.company_id == company.id,
+            Payment.provider == "mercadopago_branch_vendor_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        ).all()
+        for candidate in pending_qr_payments:
+            parts = parse_external_reference(candidate.external_reference)
+            if parts.get("license_id") == str(license_row.id):
+                raise ValueError(
+                    "Esta sucursal ya tiene un QR pendiente. Cancelalo o esperá su confirmación antes de iniciar el pago mensual."
+                )
+
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         config = load_billing_config()
         current_app.logger.info(
@@ -6426,7 +6438,13 @@ def create_branch_vendor_checkout():
     from decimal import Decimal
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, urlparse
     from app import Branch, Company, Payment, db
-    from services.ai_agent.branch_vendor_service import ensure_license, monthly_price_ars, sync_preapproval
+    from services.ai_agent.branch_vendor_service import (
+        branch_vendor_access,
+        ensure_license,
+        monthly_price_ars,
+        parse_external_reference,
+        sync_preapproval,
+    )
     from services.ai_agent.usage_service import can_use_ai_feature
     from services.mercadopago_service import MercadoPagoService
 
@@ -6454,6 +6472,10 @@ def create_branch_vendor_checkout():
         db.session.flush()
 
         if method == "qr":
+            if license_row.preapproval_id and bool(license_row.auto_renew):
+                raise ValueError(
+                    "Esta sucursal tiene una renovación mensual activa. Cancelá esa renovación antes de generar un QR."
+                )
             for candidate in Payment.query.filter(
                 Payment.company_id == company.id,
                 Payment.provider == "mercadopago_branch_vendor_qr",
@@ -6518,8 +6540,9 @@ def create_branch_vendor_checkout():
         )
         license_row.external_reference = external_reference
         license_row.payment_mode = "automatic"
-        license_row.status = "pending"
         license_row.auto_renew = True
+        if not branch_vendor_access(company, branch).get("allowed"):
+            license_row.status = "pending"
         db.session.commit()
         config = load_billing_config()
         back = urlsplit(config.success_url)
