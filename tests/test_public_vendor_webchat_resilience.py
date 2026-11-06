@@ -1778,6 +1778,13 @@ def test_public_branch_choices_exclude_unlicensed_branches_and_catalog_rejects_t
     assert "Sucursal licenciada QA" in html
     assert "Sucursal sin licencia QA" not in html
 
+    stale_branch_page = client.get(
+        f"{qa_public_vendor_setup['page_path']}?branch_id={unlicensed_branch.id}"
+    )
+    assert stale_branch_page.status_code == 200
+    assert "Sucursal licenciada QA" in stale_branch_page.get_data(as_text=True)
+    assert "Sucursal sin licencia QA" not in stale_branch_page.get_data(as_text=True)
+
     denied_catalog = client.get(
         f"/vendedor/{qa_public_vendor_setup['slug']}/catalog"
         f"?branch_id={unlicensed_branch.id}"
