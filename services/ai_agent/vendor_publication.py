@@ -1411,6 +1411,13 @@ def public_vendor_page(slug: str):
         if branch else _public_branch_choices(company)
     )
     requested_branch_id = int(branch.id) if branch else request.args.get("branch_id", type=int)
+    if branch is None and requested_branch_id is not None:
+        allowed_branch_ids = {int(row["id"]) for row in branch_choices}
+        if int(requested_branch_id) not in allowed_branch_ids:
+            # Public deep links may contain a stale/unlicensed branch ID. Do not
+            # expose its stock or fail the whole page; fall back to an enabled
+            # branch selected by the same entitlement-filtered branch list.
+            requested_branch_id = int(branch_choices[0]["id"]) if branch_choices else None
     shipping_config = {
         "mode": "fixed",
         "fixed_cost": float(options.get("standard_shipping_cost") or 0),
