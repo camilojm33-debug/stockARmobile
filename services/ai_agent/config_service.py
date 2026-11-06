@@ -259,6 +259,60 @@ def get_vendor_options(company, branch_id: int | None = None) -> Dict[str, Any]:
     raw = ai.get("vendor_options") if isinstance(ai.get("vendor_options"), dict) else {}
     return normalize_vendor_options(raw)
 
+def save_vendor_branch_settings(company, branch_id: int, *, options=None, system_prompt=None, language=None, enabled=None):
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None:
+        raise ValueError("La sucursal seleccionada no existe o está inactiva.")
+    prefs = _branch_preferences(branch)
+    if options is not None:
+        prefs["vendor_options"] = normalize_vendor_options(options)
+    config = prefs.get("vendor_config") if isinstance(prefs.get("vendor_config"), dict) else {}
+    if system_prompt is not None:
+        config["system_prompt"] = str(system_prompt or "").strip()[:12000]
+    if language is not None:
+        config["language"] = str(language or "es-AR").strip()[:8] or "es-AR"
+    if config:
+        prefs["vendor_config"] = config
+    if enabled is not None:
+        prefs["enabled"] = bool(enabled)
+    save_branch_preferences(branch, prefs)
+    db.session.flush()
+    return prefs
+
+
+def get_vendor_branch_runtime_config(company, branch_id: int | None, fallback_config=None):
+    """Overlay branch-specific prompt and language without mutating company-level configuration."""
+    if branch_id is None:
+        return fallback_config
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None or branch.is_default:
+        return fallback_config
+    config = _branch_preferences(branch).get("vendor_config")
+    if not isinstance(config, dict):
+        return {"system_prompt": "", "language": "es-AR"}
+    return {
+        "system_prompt": str(config.get("system_prompt") or "")[:12000],
+        "language": str(config.get("language") or "es-AR")[:8] or "es-AR",
+    }
+
+
+def vendor_enabled_for_branch(company, branch_id: int | None, default_enabled: bool = True) -> bool:
+    if branch_id is None:
+        return bool(default_enabled)
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None:
+        return False
+    if branch.is_default:
+        return bool(default_enabled)
+    prefs = _branch_preferences(branch)
+    return _coerce_bool(prefs.get("enabled"), True)
+
 
 def build_vendor_runtime_instructions(
     *,
