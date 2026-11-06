@@ -210,7 +210,17 @@ class AIFollowupService:
 
         for conversation in conversations:
             company = Company.query.filter_by(id=int(conversation.company_id), active=True).first()
-            if company is None or not get_vendor_options(company).get("can_follow_up", False):
+            if company is None:
+                stats["skipped_followup_disabled"] = stats.get("skipped_followup_disabled", 0) + 1
+                continue
+            if conversation.branch_id:
+                from app import Branch
+                from services.ai_agent.branch_vendor_service import branch_vendor_access
+                branch = Branch.query.filter_by(id=conversation.branch_id, company_id=company.id, active=True).first()
+                if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+                    stats["skipped_branch_license"] = stats.get("skipped_branch_license", 0) + 1
+                    continue
+            if not get_vendor_options(company, conversation.branch_id).get("can_follow_up", False):
                 stats["skipped_followup_disabled"] = stats.get("skipped_followup_disabled", 0) + 1
                 continue
             metadata = _metadata(conversation)
