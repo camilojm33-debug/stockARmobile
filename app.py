@@ -1424,7 +1424,6 @@ class BranchVendorLicense(db.Model):
     __table_args__ = (
         UniqueConstraint("branch_id", name="uq_branch_vendor_licenses_branch"),
         Index("ix_branch_vendor_licenses_company_status", "company_id", "status"),
-        Index("ix_branch_vendor_licenses_preapproval", "preapproval_id", unique=True),
     )
 
     id = db.Column(db.Integer, primary_key=True)
