@@ -509,10 +509,26 @@ class AIFollowupDeliveryService:
                 stats["skipped"] += len(pending)
                 continue
 
+            # Re-check the branch license and branch-owned settings immediately
+            # before provider I/O. A queued reminder must not survive a branch
+            # cancellation or be sent through another branch's WhatsApp number.
+            if conversation.branch_id:
+                from app import Branch
+                from services.ai_agent.branch_vendor_service import branch_vendor_access
+                branch = Branch.query.filter_by(id=conversation.branch_id, company_id=company.id, active=True).first()
+                if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+                    blocked_count = 0
+                    for item in pending:
+                        if _mutate_item(conversation, str(item.get("dedupe_key") or ""), status="blocked", now=effective_now, error="La licencia Vendedor IA de esta sucursal no está activa."):
+                            blocked_count += 1
+                    if blocked_count:
+                        db.session.commit()
+                        record_blocked("branch_license", blocked_count)
+                    continue
+
             # The planner checks this preference before enqueueing, but the
-            # dispatcher must re-check it immediately before any provider call:
-            # an administrator may disable follow-ups while messages are queued.
-            if not get_vendor_options(company).get("can_follow_up", False):
+            # dispatcher must re-check it immediately before any provider call.
+            if not get_vendor_options(company, conversation.branch_id).get("can_follow_up", False):
                 blocked_count = 0
                 for item in pending:
                     if _mutate_item(
@@ -529,7 +545,7 @@ class AIFollowupDeliveryService:
                 continue
 
             access = can_use_ai(company, "vendedor")
-            connection = get_whatsapp_connection(company)
+            connection = get_whatsapp_connection(company, branch_id=conversation.branch_id)
             ai_enabled = is_ai_enabled(company)
             if not ai_enabled:
                 record_blocked("ai_disabled", len(pending))
@@ -669,6 +685,7 @@ class AIFollowupDeliveryService:
                             template_name=template_name,
                             template_language=template_language,
                             body_parameters=parameters,
+                            branch_id=conversation.branch_id,
                         )
                     else:
                         provider_call_started = True
@@ -676,6 +693,7 @@ class AIFollowupDeliveryService:
                             company,
                             to=recipient,
                             body=str(target.get("body") or ""),
+                            branch_id=conversation.branch_id,
                         )
 
                     if isinstance(result, dict):
