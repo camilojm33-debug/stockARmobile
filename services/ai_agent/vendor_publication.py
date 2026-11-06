@@ -2047,6 +2047,40 @@ def publication_action(action: str):
 
 
 @company_admin_required
+def branch_publication_action(branch_id: int):
+    company = _authenticated_company()
+    from app import Branch
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=company.id, active=True).first()
+    if branch is None or branch.is_default:
+        abort(404)
+    action = str(request.form.get("action") or (request.get_json(silent=True) or {}).get("action") or "publish").strip().lower()
+    try:
+        if action == "publish":
+            status = publish_branch_vendor(company, branch)
+            message = f"Vendedor Web publicado para {branch.name}."
+        elif action == "unpublish":
+            status = unpublish_branch_vendor(company, branch)
+            message = f"Vendedor Web despublicado para {branch.name}."
+        else:
+            return jsonify({"success": False, "error": "Acción inválida."}), 400
+        db.session.commit()
+        if request.is_json:
+            return jsonify({"success": True, **status, "message": message})
+        from flask import flash
+        flash(message, "success")
+        return __import__("flask").redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))
+    except ValueError as exc:
+        db.session.rollback()
+        if request.is_json:
+            return jsonify({"success": False, "error": str(exc)}), 409
+        from flask import flash
+        flash(str(exc), "warning")
+        return __import__("flask").redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))
+
+
+@company_admin_required
 def preview_vendor():
     company = _authenticated_company()
     return render_template(
@@ -2073,6 +2107,7 @@ def install_routes(app) -> None:
     app.add_url_rule("/vendedor/<slug>/message", endpoint="vendor_publication.public_vendor_message", view_func=public_vendor_message, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion", endpoint="vendor_publication.publication_page", view_func=publication_page, methods=["GET"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/<action>", endpoint="vendor_publication.publication_action", view_func=publication_action, methods=["POST"])
+    app.add_url_rule("/agentes-ia/vendedor/sucursal/<int:branch_id>/publicacion", endpoint="vendor_publication.branch_publication_action", view_func=branch_publication_action, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/preview", endpoint="vendor_publication.preview_vendor", view_func=preview_vendor, methods=["GET"])
     app.after_request(_persist_public_visitor_cookies)
     app._vendor_publication_routes_installed = True
