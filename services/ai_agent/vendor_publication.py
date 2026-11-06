@@ -150,7 +150,108 @@ def _resolve_company(slug: str):
     return None
 
 
+def _branch_publication(branch) -> dict:
+    try:
+        payload = json.loads(getattr(branch, "vendor_ai_json", None) or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    raw = payload.get("publication") if isinstance(payload, dict) else {}
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "slug": str(raw.get("slug") or "").strip(),
+        "published": bool(raw.get("published", False)),
+        "published_at": str(raw.get("published_at") or "").strip(),
+    }
+
+
+def _save_branch_publication(branch, publication: dict):
+    try:
+        payload = json.loads(getattr(branch, "vendor_ai_json", None) or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["publication"] = publication
+    branch.vendor_ai_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    db.session.flush()
+
+
+def branch_publication_status(company, branch) -> dict:
+    publication = _branch_publication(branch)
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    access = branch_vendor_access(company, branch)
+    publication["enabled"] = bool(publication["published"])
+    publication["available"] = bool(publication["published"] and access.get("allowed"))
+    publication["licensed"] = bool(access.get("allowed"))
+    publication["url"] = (
+        url_for("vendor_publication.public_vendor_page", slug=publication["slug"], _external=True)
+        if publication["slug"] else None
+    )
+    return publication
+
+
+def publish_branch_vendor(company, branch) -> dict:
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    access = branch_vendor_access(company, branch)
+    if not access.get("allowed"):
+        raise ValueError(access.get("reason") or "La sucursal necesita una licencia Vendedor IA activa.")
+    publication = _branch_publication(branch)
+    if not publication["slug"]:
+        publication["slug"] = _new_slug()
+    publication["published"] = True
+    publication["published_at"] = publication["published_at"] or _now_iso()
+    _save_branch_publication(branch, publication)
+    return branch_publication_status(company, branch)
+
+
+def unpublish_branch_vendor(company, branch) -> dict:
+    publication = _branch_publication(branch)
+    publication["published"] = False
+    _save_branch_publication(branch, publication)
+    return branch_publication_status(company, branch)
+
+
+def _resolve_branch_slug(slug: str):
+    from app import Branch, Company
+
+    target = str(slug or "").strip()
+    if not target:
+        return None, None
+    marker = f'"slug":"{target}"'
+    candidates = (
+        Branch.query.join(Company, Company.id == Branch.company_id)
+        .filter(Branch.active.is_(True), Company.active.is_(True), Branch.vendor_ai_json.contains(marker))
+        .order_by(Branch.company_id.asc(), Branch.id.asc())
+        .all()
+    )
+    for branch in candidates:
+        if _branch_publication(branch)["slug"] == target:
+            company = Company.query.filter_by(id=branch.company_id, active=True).first()
+            if company is not None:
+                return company, branch
+    return None, None
+
+
+def _public_branch_for_slug(slug: str):
+    company, branch = _resolve_branch_slug(slug)
+    if company is None or branch is None:
+        return None
+    publication = _branch_publication(branch)
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    access = branch_vendor_access(company, branch)
+    if not publication["published"] or not access.get("allowed"):
+        return None
+    return branch
+
+
 def _public_available_company(slug: str):
+    company, branch = _resolve_branch_slug(slug)
+    if company is not None and branch is not None:
+        publication = _branch_publication(branch)
+        from services.ai_agent.branch_vendor_service import branch_vendor_access
+        if publication["published"] and branch_vendor_access(company, branch).get("allowed"):
+            return company
+        return None
     company = _resolve_company(slug)
     if company is None:
         return None
@@ -385,7 +486,7 @@ def _conversation_metadata(conversation) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _public_conversation(company, conversation_id=None, *, create=False, chat_session_id=None):
+def _public_conversation(company, conversation_id=None, *, create=False, chat_session_id=None, branch_id: int | None = None):
     visitor_id = _visitor_id(company.id)
     vendor_agent = _agent_for_company(company.id)
     conversation = None
@@ -400,6 +501,8 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         external_conversation_id=visitor_id,
         agent_id=vendor_agent.id,
     )
+    if branch_id is not None:
+        scoped_query = scoped_query.filter(Conversation.branch_id == int(branch_id))
 
     if session_digest:
         # A browser visitor can own several parallel chats. Resolve a chat only
@@ -478,7 +581,7 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         conversation = Conversation(
             company_id=company.id,
             agent_id=vendor_agent.id,
-            branch_id=get_default_branch_id(company.id),
+            branch_id=int(branch_id) if branch_id is not None else get_default_branch_id(company.id),
             channel="webchat",
             external_conversation_id=visitor_id,
             status="open",
@@ -486,9 +589,11 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         )
         db.session.add(conversation)
         db.session.flush()
+    if conversation is not None and branch_id is not None and int(conversation.branch_id or 0) != int(branch_id):
+        return None
     if conversation is not None and conversation.branch_id is None:
         from stockarmobile.branch_context import get_default_branch_id
-        conversation.branch_id = get_default_branch_id(company.id)
+        conversation.branch_id = int(branch_id) if branch_id is not None else get_default_branch_id(company.id)
         db.session.flush()
     return conversation
 
@@ -513,7 +618,7 @@ def _cart_public_state(conversation) -> dict:
             quote_url = None
     from app import Company
     company = Company.query.filter_by(id=conversation.company_id, active=True).first()
-    options = get_vendor_options(company) if company is not None else {}
+    options = get_vendor_options(company, conversation.branch_id) if company is not None else {}
     shipping_config = {
         "mode": "fixed",
         "fixed_cost": float(options.get("standard_shipping_cost") or 0),
@@ -668,7 +773,7 @@ def _recover_explicit_public_order(
     if cart_items and not any(int(item.get("product_id") or 0) == int(selected.id) for item in cart_items):
         return {"kind": "cart_conflict", **parsed, "selected_product": str(selected.name)}
 
-    options = get_vendor_options(company)
+    options = get_vendor_options(company, conversation.branch_id)
     allowed_tools = set(vendor_allowed_tool_names(options))
     if "preparar_pedido" not in allowed_tools:
         return {"kind": "tool_unavailable", **parsed}
@@ -1207,8 +1312,8 @@ def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CA
     return [_product_payload(row) for row in rows]
 
 
-def _empty_public_page_state(company) -> dict:
-    options = get_vendor_options(company)
+def _empty_public_page_state(company, branch_id: int | None = None) -> dict:
+    options = get_vendor_options(company, branch_id)
     return {
         "conversation_id": None,
         "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0},
@@ -1248,19 +1353,20 @@ def _public_chat_history(conversation, limit: int = 60) -> list[dict]:
     ]
 
 
-def _initial_page_state(company, chat_session_id=None):
+def _initial_page_state(company, chat_session_id=None, branch_id: int | None = None):
     # Never infer the current tab's state from the browser-wide visitor cookie.
     # The browser token is not available to server rendering; the tab restores
     # its own conversation through /state after loading.
     if not chat_session_id:
-        return _empty_public_page_state(company)
+        return _empty_public_page_state(company, branch_id=branch_id)
     conversation = _public_conversation(
         company,
         create=False,
         chat_session_id=chat_session_id,
+        branch_id=branch_id,
     )
     if conversation is None:
-        return _empty_public_page_state(company)
+        return _empty_public_page_state(company, branch_id=branch_id)
     try:
         return {**_cart_public_state(conversation), "messages": _public_chat_history(conversation)}
     except Exception:
@@ -1272,6 +1378,7 @@ def public_vendor_page(slug: str):
     company = _public_available_company(slug)
     if company is None:
         abort(404)
+    branch = _public_branch_for_slug(slug)
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return render_template(
@@ -1283,10 +1390,18 @@ def public_vendor_page(slug: str):
             initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
             greeting="",
         )
+    if branch is not None:
+        from services.ai_agent.branch_vendor_service import branch_vendor_access
+        branch_access = branch_vendor_access(company, branch)
+        if not branch_access.get("allowed"):
+            abort(404)
     _visitor_id(company.id)
-    options = get_vendor_options(company)
-    branch_choices = _public_branch_choices(company)
-    requested_branch_id = request.args.get("branch_id", type=int)
+    options = get_vendor_options(company, branch.id if branch else None)
+    branch_choices = (
+        [{"id": int(branch.id), "name": str(branch.name or ""), "code": str(branch.code or "")}]
+        if branch else _public_branch_choices(company)
+    )
+    requested_branch_id = int(branch.id) if branch else request.args.get("branch_id", type=int)
     shipping_config = {
         "mode": "fixed",
         "fixed_cost": float(options.get("standard_shipping_cost") or 0),
@@ -1300,7 +1415,7 @@ def public_vendor_page(slug: str):
         catalog=_catalog_for_company(company, branch_id=requested_branch_id),
         branch_choices=branch_choices,
         selected_branch_id=requested_branch_id or (branch_choices[0]["id"] if branch_choices else None),
-        initial_state=_initial_page_state(company),
+        initial_state=_initial_page_state(company, branch_id=branch.id if branch else None),
         greeting=str(options.get("greeting") or "Hola 👋 ¿Qué producto estás buscando?").strip(),
     )
 
@@ -1313,7 +1428,10 @@ def public_vendor_catalog(slug: str):
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
     query = request.args.get("q", "")
-    branch_id = request.args.get("branch_id", type=int)
+    branch = _public_branch_for_slug(slug)
+    branch_id = int(branch.id) if branch else request.args.get("branch_id", type=int)
+    if branch is not None and request.args.get("branch_id", type=int) not in (None, int(branch.id)):
+        return jsonify({"success": False, "error": "Esta publicación corresponde a otra sucursal."}), 403
     try:
         products = _catalog_for_company(company, query=query, branch_id=branch_id)
     except ValueError as exc:
@@ -1328,14 +1446,17 @@ def public_vendor_state(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
+    branch = _public_branch_for_slug(slug)
+    branch_id = int(branch.id) if branch else None
     conversation = _public_conversation(
         company,
         request.args.get("conversation_id"),
         create=False,
         chat_session_id=request.args.get("chat_session_id"),
+        branch_id=branch_id,
     )
     if conversation is None:
-        return jsonify({"success": True, **_empty_public_page_state(company)})
+        return jsonify({"success": True, **_empty_public_page_state(company, branch_id=branch_id)})
     return jsonify({
         "success": True,
         **_cart_public_state(conversation),
@@ -1351,6 +1472,7 @@ def public_vendor_branch(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
+    fixed_branch = _public_branch_for_slug(slug)
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"success": False, "error": "La solicitud no es válida."}), 400
@@ -1367,15 +1489,21 @@ def public_vendor_branch(slug: str):
                 payload.get("conversation_id"),
                 create=True,
                 chat_session_id=payload.get("chat_session_id"),
+                branch_id=int(fixed_branch.id) if fixed_branch else None,
             )
             if conversation is None:
                 return jsonify({"success": False, "error": "La conversación no es válida."}), 403
-            allowed_ids = {int(row["id"]) for row in _public_branch_choices(company)}
+            allowed_ids = (
+                {int(fixed_branch.id)}
+                if fixed_branch else {int(row["id"]) for row in _public_branch_choices(company)}
+            )
             if branch_id not in allowed_ids:
                 return jsonify({"success": False, "error": "La sucursal seleccionada no está disponible."}), 400
 
             state = _conversation_metadata(conversation)
             cart = state.get(CART_KEY) if isinstance(state.get(CART_KEY), dict) else {}
+            if fixed_branch is not None and int(conversation.branch_id or 0) != int(fixed_branch.id):
+                return jsonify({"success": False, "error": "Esta publicación está vinculada a otra sucursal."}), 403
             if cart or state.get(PENDING_QUOTE_KEY) or state.get(PENDING_PAYMENT_KEY):
                 return jsonify({
                     "success": False,
@@ -1402,6 +1530,8 @@ def public_vendor_cart(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    fixed_branch = _public_branch_for_slug(slug)
+    fixed_branch_id = int(fixed_branch.id) if fixed_branch else None
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"success": False, "error": "La solicitud debe ser un objeto JSON."}), 400
@@ -1428,7 +1558,13 @@ def public_vendor_cart(slug: str):
     visitor_id = _visitor_id(company.id)
     operation_type = f"cart:{action}"
     with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
-        conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
+        conversation = _public_conversation(
+            company,
+            payload.get("conversation_id"),
+            create=True,
+            chat_session_id=payload.get("chat_session_id"),
+            branch_id=fixed_branch_id,
+        )
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no es válida."}), 403
         with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
@@ -1493,6 +1629,8 @@ def public_vendor_checkout(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    fixed_branch = _public_branch_for_slug(slug)
+    fixed_branch_id = int(fixed_branch.id) if fixed_branch else None
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"success": False, "error": "La solicitud debe ser un objeto JSON."}), 400
@@ -1512,7 +1650,13 @@ def public_vendor_checkout(slug: str):
     delivery_notes = str(payload.get("delivery_notes") or "").strip()[:2000]
     visitor_id = _visitor_id(company.id)
     with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
-        conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
+        conversation = _public_conversation(
+            company,
+            payload.get("conversation_id"),
+            create=True,
+            chat_session_id=payload.get("chat_session_id"),
+            branch_id=fixed_branch_id,
+        )
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no es válida."}), 403
         with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
@@ -1607,7 +1751,14 @@ def public_vendor_message(slug: str):
             conversation_id=0,
             key=visitor_id,
         ):
-            conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
+            fixed_branch = _public_branch_for_slug(slug)
+            conversation = _public_conversation(
+                company,
+                payload.get("conversation_id"),
+                create=True,
+                chat_session_id=payload.get("chat_session_id"),
+                branch_id=int(fixed_branch.id) if fixed_branch else None,
+            )
             if conversation is None:
                 return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
 
@@ -1898,6 +2049,40 @@ def publication_action(action: str):
 
 
 @company_admin_required
+def branch_publication_action(branch_id: int):
+    company = _authenticated_company()
+    from app import Branch
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=company.id, active=True).first()
+    if branch is None or branch.is_default:
+        abort(404)
+    action = str(request.form.get("action") or (request.get_json(silent=True) or {}).get("action") or "publish").strip().lower()
+    try:
+        if action == "publish":
+            status = publish_branch_vendor(company, branch)
+            message = f"Vendedor Web publicado para {branch.name}."
+        elif action == "unpublish":
+            status = unpublish_branch_vendor(company, branch)
+            message = f"Vendedor Web despublicado para {branch.name}."
+        else:
+            return jsonify({"success": False, "error": "Acción inválida."}), 400
+        db.session.commit()
+        if request.is_json:
+            return jsonify({"success": True, **status, "message": message})
+        from flask import flash
+        flash(message, "success")
+        return __import__("flask").redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))
+    except ValueError as exc:
+        db.session.rollback()
+        if request.is_json:
+            return jsonify({"success": False, "error": str(exc)}), 409
+        from flask import flash
+        flash(str(exc), "warning")
+        return __import__("flask").redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))
+
+
+@company_admin_required
 def preview_vendor():
     company = _authenticated_company()
     return render_template(
@@ -1924,6 +2109,7 @@ def install_routes(app) -> None:
     app.add_url_rule("/vendedor/<slug>/message", endpoint="vendor_publication.public_vendor_message", view_func=public_vendor_message, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion", endpoint="vendor_publication.publication_page", view_func=publication_page, methods=["GET"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/<action>", endpoint="vendor_publication.publication_action", view_func=publication_action, methods=["POST"])
+    app.add_url_rule("/agentes-ia/vendedor/sucursal/<int:branch_id>/publicacion", endpoint="vendor_publication.branch_publication_action", view_func=branch_publication_action, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/preview", endpoint="vendor_publication.preview_vendor", view_func=preview_vendor, methods=["GET"])
     app.after_request(_persist_public_visitor_cookies)
     app._vendor_publication_routes_installed = True

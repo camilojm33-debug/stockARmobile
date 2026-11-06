@@ -76,6 +76,34 @@ def save_company_preferences(company, payload):
     company.preferences_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def _branch_preferences(branch) -> Dict[str, Any]:
+    raw = getattr(branch, "vendor_ai_json", None) or ""
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_branch_preferences(branch, payload: Dict[str, Any]):
+    branch.vendor_ai_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def update_branch_vendor_options(company, branch_id: int, options: Dict[str, Any]):
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None:
+        raise ValueError("La sucursal seleccionada no existe o está inactiva.")
+    prefs = _branch_preferences(branch)
+    prefs["vendor_options"] = normalize_vendor_options(options)
+    save_branch_preferences(branch, prefs)
+    db.session.flush()
+    return prefs
+
+
 def update_ai_preferences(company, *, ai_updates=None, whatsapp_updates=None):
     prefs = _company_preferences(company)
     ai = prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"), dict) else {}
@@ -213,11 +241,77 @@ def normalize_vendor_options(raw: Optional[Dict[str, Any]] = None) -> Dict[str, 
     return options
 
 
-def get_vendor_options(company) -> Dict[str, Any]:
+def get_vendor_options(company, branch_id: int | None = None) -> Dict[str, Any]:
+    """Read branch-owned options; the primary branch falls back to legacy company settings."""
+    if branch_id is not None:
+        from app import Branch
+
+        branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id)).first()
+        if branch is not None:
+            branch_prefs = _branch_preferences(branch)
+            raw_branch = branch_prefs.get("vendor_options")
+            if isinstance(raw_branch, dict):
+                return normalize_vendor_options(raw_branch)
+            if not branch.is_default:
+                return normalize_vendor_options({})
     prefs = _company_preferences(company)
     ai = prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"), dict) else {}
     raw = ai.get("vendor_options") if isinstance(ai.get("vendor_options"), dict) else {}
     return normalize_vendor_options(raw)
+
+def save_vendor_branch_settings(company, branch_id: int, *, options=None, system_prompt=None, language=None, enabled=None):
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None:
+        raise ValueError("La sucursal seleccionada no existe o está inactiva.")
+    prefs = _branch_preferences(branch)
+    if options is not None:
+        prefs["vendor_options"] = normalize_vendor_options(options)
+    config = prefs.get("vendor_config") if isinstance(prefs.get("vendor_config"), dict) else {}
+    if system_prompt is not None:
+        config["system_prompt"] = str(system_prompt or "").strip()[:12000]
+    if language is not None:
+        config["language"] = str(language or "es-AR").strip()[:8] or "es-AR"
+    if config:
+        prefs["vendor_config"] = config
+    if enabled is not None:
+        prefs["enabled"] = bool(enabled)
+    save_branch_preferences(branch, prefs)
+    db.session.flush()
+    return prefs
+
+
+def get_vendor_branch_runtime_config(company, branch_id: int | None, fallback_config=None):
+    """Overlay branch-specific prompt and language without mutating company-level configuration."""
+    if branch_id is None:
+        return fallback_config
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None or branch.is_default:
+        return fallback_config
+    config = _branch_preferences(branch).get("vendor_config")
+    if not isinstance(config, dict):
+        return {"system_prompt": "", "language": "es-AR"}
+    return {
+        "system_prompt": str(config.get("system_prompt") or "")[:12000],
+        "language": str(config.get("language") or "es-AR")[:8] or "es-AR",
+    }
+
+
+def vendor_enabled_for_branch(company, branch_id: int | None, default_enabled: bool = True) -> bool:
+    if branch_id is None:
+        return bool(default_enabled)
+    from app import Branch
+
+    branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+    if branch is None:
+        return False
+    if branch.is_default:
+        return bool(default_enabled)
+    prefs = _branch_preferences(branch)
+    return _coerce_bool(prefs.get("enabled"), True)
 
 
 def build_vendor_runtime_instructions(
@@ -408,8 +502,27 @@ def is_commercial_company(company) -> bool:
     return str(prefs.get("internal_channel") or "").strip().lower() == COMMERCIAL_COMPANY_MARKER
 
 
-def get_whatsapp_connection(company):
+def get_whatsapp_connection(company, branch_id: int | None = None):
     data = get_ai_preferences(company)["whatsapp"]
+    if branch_id is not None:
+        from app import Branch
+
+        branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id)).first()
+        if branch is not None:
+            branch_ai = _branch_preferences(branch)
+            branch_data = branch_ai.get("whatsapp") if isinstance(branch_ai.get("whatsapp"), dict) else {}
+            if branch_data:
+                data = branch_data
+            elif not branch.is_default:
+                return {
+                    "enabled": False,
+                    "phone_number_id": "",
+                    "business_account_id": "",
+                    "display_phone_number": "",
+                    "access_token": "",
+                    "template_name": "",
+                    "template_language": "es_AR",
+                }
     if is_commercial_company(company):
         commercial_enabled = _coerce_bool(os.getenv("WHATSAPP_COMMERCIAL_ENABLED"), False)
         commercial_phone = str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
@@ -444,7 +557,36 @@ def configure_whatsapp_connection(
     enabled=True,
     template_name="",
     template_language="es_AR",
+    branch_id: int | None = None,
+    whatsapp_updates: Optional[Dict[str, Any]] = None,
 ):
+    if branch_id is not None:
+        from app import Branch
+
+        branch = Branch.query.filter_by(id=int(branch_id), company_id=int(company.id), active=True).first()
+        if branch is None:
+            raise ValueError("La sucursal seleccionada no existe o está inactiva.")
+        prefs = _branch_preferences(branch)
+        whatsapp = prefs.get("whatsapp") if isinstance(prefs.get("whatsapp"), dict) else {}
+        whatsapp.update(
+            {
+                "enabled": bool(enabled),
+                "phone_number_id": str(phone_number_id or "").strip(),
+                "business_account_id": str(business_account_id or "").strip(),
+                "display_phone_number": str(display_phone_number or "").strip(),
+                "template_name": str(template_name or "").strip(),
+                "template_language": str(template_language or "es_AR").strip() or "es_AR",
+            }
+        )
+        if access_token:
+            whatsapp["access_token_encrypted"] = encrypt_secret(access_token)
+        if whatsapp_updates:
+            whatsapp.update(whatsapp_updates)
+        prefs["whatsapp"] = whatsapp
+        save_branch_preferences(branch, prefs)
+        db.session.flush()
+        return
+
     prefs = _company_preferences(company)
     ai = prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"), dict) else {}
     whatsapp = ai.get("whatsapp") if isinstance(ai.get("whatsapp"), dict) else {}
@@ -460,26 +602,49 @@ def configure_whatsapp_connection(
     )
     if access_token:
         whatsapp["access_token_encrypted"] = encrypt_secret(access_token)
+    if whatsapp_updates:
+        whatsapp.update(whatsapp_updates)
     ai["whatsapp"] = whatsapp
     prefs["ai_agent"] = ai
     save_company_preferences(company, prefs)
 
 
-def company_for_whatsapp_phone_id(phone_number_id):
-    from app import Company
+def company_branch_for_whatsapp_phone_id(phone_number_id):
+    from app import Branch, Company
 
     target = str(phone_number_id or "").strip()
     if not target:
-        return None
+        return None, None
+    candidates = (
+        Branch.query.join(Company, Company.id == Branch.company_id)
+        .filter(Company.active.is_(True), Branch.active.is_(True), Branch.vendor_ai_json.contains(target))
+        .order_by(Branch.company_id.asc(), Branch.id.asc())
+        .all()
+    )
+    for branch in candidates:
+        company = Company.query.filter_by(id=branch.company_id, active=True).first()
+        if company and get_whatsapp_connection(company, branch_id=branch.id)["phone_number_id"] == target:
+            return company, branch
+
     candidates = (
         Company.query.filter(Company.active.is_(True), Company.preferences_json.contains(target))
         .order_by(Company.id.asc())
         .all()
     )
     for company in candidates:
-        if get_whatsapp_connection(company)["phone_number_id"] == target:
-            return company
-    return None
+        connection = get_whatsapp_connection(company)
+        if connection["phone_number_id"] == target:
+            from stockarmobile.branch_context import get_default_branch_id
+            branch_id = get_default_branch_id(company.id)
+            from app import Branch
+            branch = Branch.query.filter_by(id=branch_id, company_id=company.id).first() if branch_id else None
+            return company, branch
+    return None, None
+
+
+def company_for_whatsapp_phone_id(phone_number_id):
+    company, _branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+    return company
 
 
 def choose_agent(company_id, *, channel):

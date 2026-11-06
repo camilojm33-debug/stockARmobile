@@ -21,8 +21,8 @@ class WhatsAppService:
     ).strip()
 
     @classmethod
-    def _post_message(cls, company, *, to: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        connection = get_whatsapp_connection(company)
+    def _post_message(cls, company, *, to: str, payload: Dict[str, Any], branch_id: int | None = None) -> Dict[str, Any]:
+        connection = get_whatsapp_connection(company, branch_id=branch_id)
         phone_number_id = connection["phone_number_id"]
         access_token = connection["access_token"]
         if not phone_number_id or not access_token:
@@ -50,7 +50,7 @@ class WhatsAppService:
         return data
 
     @classmethod
-    def send_text(cls, company, *, to: str, body: str) -> Dict[str, Any]:
+    def send_text(cls, company, *, to: str, body: str, branch_id: int | None = None) -> Dict[str, Any]:
         body_text = str(body or "")[:4096]
         # Mercado Pago generates a link preview whose title can show the first
         # item's unit price (e.g. $5.300) even when the checkout total is higher.
@@ -65,7 +65,7 @@ class WhatsAppService:
             "type": "text",
             "text": {"preview_url": not is_mercado_pago_link, "body": body_text},
         }
-        return cls._post_message(company, to=to, payload=payload)
+        return cls._post_message(company, to=to, payload=payload, branch_id=branch_id)
 
     @classmethod
     def send_template(
@@ -76,6 +76,7 @@ class WhatsAppService:
         template_name: str,
         template_language: str = "es_AR",
         body_parameters: Iterable[str] | None = None,
+        branch_id: int | None = None,
     ) -> Dict[str, Any]:
         """Send an approved WhatsApp template with optional text body parameters."""
         name = str(template_name or "").strip()
@@ -106,4 +107,4 @@ class WhatsAppService:
             "type": "template",
             "template": template,
         }
-        return cls._post_message(company, to=to, payload=payload)
+        return cls._post_message(company, to=to, payload=payload, branch_id=branch_id)

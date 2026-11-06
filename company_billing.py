@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from app import company_admin_required, csrf, tenant_required
+from app import Payment, company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
 from services.backup_service import BackupService
@@ -3246,6 +3246,18 @@ def create_mercadopago_subscription():
         if subscription is None:
             raise RuntimeError("No se pudo obtener la suscripción de StockArMobile.")
 
+        pending_qr_payments = Payment.query.filter(
+            Payment.company_id == company.id,
+            Payment.provider == "mercadopago_branch_vendor_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        ).all()
+        for candidate in pending_qr_payments:
+            parts = parse_external_reference(candidate.external_reference)
+            if parts.get("license_id") == str(license_row.id):
+                raise ValueError(
+                    "Esta sucursal ya tiene un QR pendiente. Cancelalo o esperá su confirmación antes de iniciar el pago mensual."
+                )
+
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         config = load_billing_config()
         current_app.logger.info(
@@ -6330,3 +6342,308 @@ def webhook_mercadopago():
                 type(persist_exc).__name__,
             )
         return jsonify({"ok": False, "error": "No se pudo procesar la notificación."}), 400
+
+
+def _branch_vendor_qr_preview(company, payment):
+    from services.ai_agent.branch_vendor_service import parse_external_reference
+    if payment is None or int(payment.company_id or 0) != int(company.id) or payment.provider != "mercadopago_branch_vendor_qr":
+        return None
+    parts = parse_external_reference(payment.external_reference)
+    if parts.get("flow") != "branch_vendor_qr" or parts.get("branch_vendor_agent") != "true":
+        return None
+    try:
+        stored = json.loads(payment.payload_json or "{}")
+    except (TypeError, ValueError):
+        stored = {}
+    url = str(stored.get("init_point") or stored.get("sandbox_init_point") or "").strip()
+    status = str(payment.status or "pending").lower()
+    state = "paid" if status == "approved" else "pending" if status in {"pending", "in_process", "authorized"} and url else "pending_recovery" if status in {"pending", "in_process", "authorized"} else "failed"
+    from app import Branch
+    branch = Branch.query.filter_by(id=int(parts.get("branch_id") or 0), company_id=company.id).first()
+    return {
+        "payment_record_id": payment.id,
+        "branch_id": branch.id if branch else None,
+        "branch_name": branch.name if branch else "Sucursal",
+        "amount": float(payment.amount or 0),
+        "status": state,
+        "payment_status": status,
+        "checkout_url": url if state == "pending" else "",
+        "qr_data_uri": BillingService._qr_data_uri(url) if state == "pending" else "",
+    }
+
+
+def _ensure_branch_vendor_qr_preference(company, branch, license_row, payment):
+    from urllib.parse import urlparse
+    from app import PaymentHistory, db
+    from services.ai_agent.branch_vendor_service import parse_external_reference
+    from services.mercadopago_service import MercadoPagoService
+    from services.billing_notification_service import NotificationService
+
+    parts = parse_external_reference(payment.external_reference)
+    expected = {
+        "flow": "branch_vendor_qr",
+        "branch_vendor_agent": "true",
+        "company_id": str(company.id),
+        "branch_id": str(branch.id),
+        "license_id": str(license_row.id),
+        "payment_record_id": str(payment.id),
+    }
+    if any(parts.get(key) != value for key, value in expected.items()):
+        raise ValueError("El QR no coincide con la licencia y sucursal seleccionadas.")
+    response = MercadoPagoService().create_branch_vendor_qr_preference(
+        title=f"StockArMobile Vendedor IA - {branch.name}",
+        amount=float(payment.amount or 0),
+        external_reference=payment.external_reference,
+        company_id=company.id,
+        branch_id=branch.id,
+        license_id=license_row.id,
+        payment_record_id=payment.id,
+        user_id=int(payment.user_id or 0),
+    )
+    preference_id = str(response.get("id") or "").strip()
+    checkout_url = str(response.get("init_point") or response.get("sandbox_init_point") or "").strip()
+    host = urlparse(checkout_url)
+    allowed = {
+        "mercadopago.com", "www.mercadopago.com", "sandbox.mercadopago.com",
+        "mercadopago.com.ar", "www.mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+        "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
+        "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+    }
+    if current_app.testing and host.hostname == "mp.test":
+        allowed.add("mp.test")
+    if not preference_id or host.scheme != "https" or host.hostname not in allowed:
+        raise RuntimeError("Mercado Pago no devolvió un checkout QR válido para la sucursal.")
+    payment.preference_id = preference_id
+    payment.payload_json = json.dumps(response, ensure_ascii=False)
+    if not PaymentHistory.query.filter_by(company_id=company.id, payment_id=payment.id, event="branch_vendor_qr_checkout_preference_created", event_id=preference_id).first():
+        NotificationService.record_event(
+            db.session,
+            company_id=company.id,
+            payment_id=payment.id,
+            event="branch_vendor_qr_checkout_preference_created",
+            detail=f"QR manual de Vendedor IA para {branch.name}; 30 días sin renovación automática.",
+            source="mercadopago",
+            status="pending",
+            event_id=preference_id,
+            payload=response,
+            user_id=payment.user_id,
+        )
+    db.session.commit()
+    return _branch_vendor_qr_preview(company, payment)
+
+
+@bp.post("/subscription/branch-vendor/checkout")
+@company_admin_required
+def create_branch_vendor_checkout():
+    from decimal import Decimal
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, urlparse
+    from app import Branch, Company, Payment, db
+    from services.ai_agent.branch_vendor_service import (
+        branch_vendor_access,
+        ensure_license,
+        monthly_price_ars,
+        parse_external_reference,
+        sync_preapproval,
+    )
+    from services.ai_agent.usage_service import can_use_ai_feature
+    from services.mercadopago_service import MercadoPagoService
+
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None), active=True).first_or_404()
+    branch = Branch.query.filter_by(id=request.form.get("branch_id", type=int), company_id=company.id, active=True).first()
+    target = url_for("ai_agents.agent", agent="vendedor", _anchor="branch-vendors")
+    if branch is None:
+        return _checkout_error_response("La sucursal no existe o está inactiva.", target, status_code=404)
+    if branch.is_default:
+        return _checkout_error_response("La sucursal principal ya incluye el Vendedor IA en el plan.", target)
+    base = can_use_ai_feature(company, "vendedor")
+    if not base.allowed:
+        return _checkout_error_response(base.reason or "La empresa necesita un plan IA con Vendedor IA.", url_for("ai_agents.agent", agent="planes"), status_code=403)
+    method = str(request.form.get("payment_method") or "automatic").lower()
+    if method not in {"qr", "automatic"}:
+        return _checkout_error_response("Modalidad de pago inválida.", target)
+    price = monthly_price_ars()
+    if price <= Decimal("0.00"):
+        return _checkout_error_response("El precio de la licencia adicional todavía no fue configurado por SuperAdmin.", target, status_code=409)
+
+    try:
+        license_row = ensure_license(company.id, branch.id, lock=True)
+        license_row.amount = price
+        license_row.currency = "ARS"
+        db.session.flush()
+
+        if method == "qr":
+            if license_row.preapproval_id and bool(license_row.auto_renew):
+                raise ValueError(
+                    "Esta sucursal tiene una renovación mensual activa. Cancelá esa renovación antes de generar un QR."
+                )
+            for candidate in Payment.query.filter(
+                Payment.company_id == company.id,
+                Payment.provider == "mercadopago_branch_vendor_qr",
+                Payment.status.in_(("pending", "in_process", "authorized")),
+            ).order_by(Payment.id.desc()).all():
+                preview = _branch_vendor_qr_preview(company, candidate)
+                if preview and preview.get("branch_id") == branch.id:
+                    if preview["status"] == "pending":
+                        session["branch_vendor_qr_preview"] = preview
+                        return redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))
+                    payment = candidate
+                    break
+            else:
+                payment = None
+            if payment is None:
+                payment = Payment(
+                    company_id=company.id,
+                    subscription_id=None,
+                    user_id=current_user.id,
+                    amount=price,
+                    currency="ARS",
+                    status="pending",
+                    payment_method="mercadopago_branch_vendor_qr",
+                    provider="mercadopago_branch_vendor_qr",
+                    reference=f"branch-vendor-qr:{license_row.id}:{uuid.uuid4().hex[:12]}",
+                )
+                db.session.add(payment)
+                db.session.flush()
+                payment.external_reference = (
+                    f"branch_vendor_agent:true|flow:branch_vendor_qr|company_id:{company.id}|branch_id:{branch.id}|"
+                    f"license_id:{license_row.id}|payment_record_id:{payment.id}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
+                )
+                db.session.commit()
+            preview = _ensure_branch_vendor_qr_preference(company, branch, license_row, payment)
+            session["branch_vendor_qr_preview"] = preview
+            flash("QR generado. El pago habilita 30 días y no se renueva automáticamente.", "success")
+            return redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))
+
+        payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
+        if not payer_email or "@" not in payer_email:
+            raise ValueError("Necesitás un email válido para autorizar el cobro mensual.")
+        if license_row.preapproval_id:
+            remote = MercadoPagoService().get_preapproval(license_row.preapproval_id)
+            if str(remote.get("id") or "") != str(license_row.preapproval_id):
+                raise ValueError("La autorización de Mercado Pago no coincide con la licencia.")
+            remote_status = str(remote.get("status") or "").lower()
+            if remote_status in {"pending", "in_process", "authorized"}:
+                sync_preapproval(remote)
+                db.session.commit()
+                checkout_url = str(remote.get("init_point") or "").strip()
+                if not checkout_url:
+                    checkout_url = "https://www.mercadopago.com.ar/subscriptions/checkout?" + urlencode({"preapproval_id": license_row.preapproval_id})
+                return _checkout_redirect_response(checkout_url)
+            license_row.preapproval_id = None
+            license_row.external_reference = None
+            license_row.auto_renew = False
+            db.session.flush()
+
+        external_reference = (
+            f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|branch_id:{branch.id}|"
+            f"license_id:{license_row.id}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
+        )
+        license_row.external_reference = external_reference
+        license_row.payment_mode = "automatic"
+        license_row.auto_renew = True
+        if not branch_vendor_access(company, branch).get("allowed"):
+            license_row.status = "pending"
+        db.session.commit()
+        config = load_billing_config()
+        back = urlsplit(config.success_url)
+        query = dict(parse_qsl(back.query, keep_blank_values=True))
+        query["mp_subscription_return"] = "branch_vendor"
+        back_url = urlunsplit((back.scheme, back.netloc, back.path, urlencode(query), "branch-vendors"))
+        response = MercadoPagoService().create_preapproval(
+            reason=f"StockArMobile Vendedor IA - {branch.name}",
+            payer_email=payer_email,
+            external_reference=external_reference,
+            amount=float(price),
+            currency="ARS",
+            frequency=1,
+            frequency_type="months",
+            notification_url=config.notification_url,
+            back_url=back_url,
+        )
+        preapproval_id = str(response.get("id") or "").strip()
+        remote_reference = str(response.get("external_reference") or "").strip()
+        checkout_url = str(response.get("init_point") or "").strip()
+        host = urlparse(checkout_url)
+        allowed = {
+            "mercadopago.com", "www.mercadopago.com", "sandbox.mercadopago.com",
+            "mercadopago.com.ar", "www.mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+            "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
+            "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+        }
+        if current_app.testing and host.hostname == "mp.test":
+            allowed.add("mp.test")
+        if not preapproval_id or (remote_reference and remote_reference != external_reference) or host.scheme != "https" or host.hostname not in allowed:
+            raise RuntimeError("Mercado Pago devolvió una autorización mensual no verificable.")
+        license_row.preapproval_id = preapproval_id
+        sync_preapproval({**response, "external_reference": external_reference})
+        db.session.commit()
+        flash("Autorización mensual creada. La sucursal se habilita cuando Mercado Pago confirme el primer cobro.", "info")
+        return _checkout_redirect_response(checkout_url)
+    except (ValueError, RuntimeError) as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo crear licencia de Vendedor IA company_id=%s branch_id=%s", company.id, branch.id)
+        return _checkout_error_response(str(exc), url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"), status_code=409)
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Error inesperado creando licencia Vendedor IA branch_id=%s", branch.id)
+        return _checkout_error_response("No se pudo iniciar el cobro de la sucursal. Intentá nuevamente.", target, status_code=500)
+
+
+@bp.post("/subscription/branch-vendor/cancel")
+@company_admin_required
+def cancel_branch_vendor_checkout():
+    from app import Branch, BranchVendorLicense, Company, Payment, db
+    from services.ai_agent.branch_vendor_service import cancel_recurring_license
+    from services.billing_notification_service import NotificationService
+
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None), active=True).first_or_404()
+    branch = Branch.query.filter_by(id=request.form.get("branch_id", type=int), company_id=company.id).first_or_404()
+    license_row = BranchVendorLicense.query.filter_by(company_id=company.id, branch_id=branch.id).with_for_update().first()
+    if license_row is None:
+        flash("La sucursal no tiene una licencia adicional registrada.", "info")
+        return redirect(url_for("ai_agents.agent", agent="vendedor", _anchor="branch-vendors"))
+    try:
+        if str(request.form.get("action") or "") == "cancel_qr":
+            payment = Payment.query.filter_by(
+                id=request.form.get("payment_record_id", type=int),
+                company_id=company.id,
+                provider="mercadopago_branch_vendor_qr",
+            ).first()
+            if payment is None:
+                raise ValueError("El checkout QR no está disponible.")
+            if str(payment.status or "").lower() == "approved":
+                raise ValueError("El QR ya fue pagado; la licencia se conserva hasta su vencimiento.")
+            if str(payment.status or "").lower() not in {"pending", "in_process", "authorized"}:
+                raise ValueError("El checkout QR ya fue finalizado.")
+            payment.status = "cancelled"
+            NotificationService.record_event(
+                db.session,
+                company_id=company.id,
+                payment_id=payment.id,
+                event="branch_vendor_qr_checkout_cancelled",
+                detail=f"Checkout QR cancelado para sucursal {branch.name}; no se habilitó la licencia.",
+                source="portal",
+                status="cancelled",
+                event_id=f"branch-vendor-qr-cancel:{payment.id}",
+                payload={"branch_id": branch.id, "license_id": license_row.id},
+                user_id=current_user.id,
+            )
+            db.session.commit()
+            flash("Checkout QR cancelado. No se activó la licencia.", "success")
+        else:
+            result = cancel_recurring_license(company.id, branch.id, user_id=current_user.id)
+            db.session.commit()
+            flash(
+                "Renovación mensual cancelada. El acceso sigue activo hasta el vencimiento pagado."
+                if result.get("access_preserved")
+                else "Suscripción mensual cancelada. La licencia adicional quedó desactivada.",
+                "success",
+            )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo cancelar Vendedor IA branch_id=%s", branch.id)
+        flash("No se pudo cancelar la licencia. Intentá nuevamente.", "danger")
+    return redirect(url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, _anchor="branch-vendors"))

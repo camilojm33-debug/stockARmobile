@@ -1257,7 +1257,12 @@
                 <div class="col-md-2"><label class="form-label">Estado</label><select class="form-select" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
                 <div class="col-md-2"><button class="btn btn-outline-secondary w-100" type="submit" title="Guarda solamente los datos generales de esta sucursal">Guardar datos de sucursal</button></div>
               </form>
-              {% if branch.is_default %}<span class="badge text-bg-primary mt-2">Casa central</span>{% endif %}
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2">
+                {% if branch.is_default %}<span class="badge text-bg-primary">Casa central · Vendedor IA incluido en el plan</span>{% else %}<span class="badge text-bg-light border">Sucursal adicional</span>{% endif %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='vendedor', branch_id=branch.id, _anchor='branch-vendors') }}">
+                  <i class="bi bi-robot me-1"></i>Vendedor IA de esta sucursal
+                </a>
+              </div>
               <form method="post" action="{{ url_for('branches.assign_users', branch_id=branch.id) }}" class="mt-3 pt-3 border-top">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">

@@ -23,6 +23,7 @@ from services.ai_agent.config_service import (
     VENDOR_AGENT_NAME,
     configure_whatsapp_connection,
     company_for_whatsapp_phone_id,
+    company_branch_for_whatsapp_phone_id,
     encrypt_secret,
     ensure_default_agents,
     get_ai_preferences,
@@ -298,6 +299,37 @@ def _context():
                 "status": str(pending_ai_qr_payment.status or "pending").strip().lower(),
             }
 
+    from services.ai_agent.branch_vendor_service import list_branch_vendor_statuses, monthly_price_ars
+    from services.ai_agent.vendor_publication import branch_publication_status
+    branch_vendor_statuses = list_branch_vendor_statuses(company)
+    for branch_status in branch_vendor_statuses:
+        if not branch_status.get("included"):
+            try:
+                branch_status["publication"] = branch_publication_status(company, branch_status["branch"])
+            except Exception:
+                branch_status["publication"] = {"published": False, "available": False, "url": None}
+        else:
+            branch_status["publication"] = None
+
+    branch_vendor_qr_preview = session.get("branch_vendor_qr_preview")
+    if isinstance(branch_vendor_qr_preview, dict):
+        try:
+            payment_row = Payment.query.filter_by(
+                id=int(branch_vendor_qr_preview.get("payment_record_id") or 0),
+                company_id=company_id,
+                provider="mercadopago_branch_vendor_qr",
+            ).first()
+            if payment_row is not None:
+                from company_billing import _branch_vendor_qr_preview
+                branch_vendor_qr_preview = _branch_vendor_qr_preview(company, payment_row)
+            else:
+                branch_vendor_qr_preview = None
+        except Exception:
+            current_app.logger.exception("No se pudo actualizar el estado del QR Vendedor IA company_id=%s", company_id)
+            branch_vendor_qr_preview = None
+        if branch_vendor_qr_preview is None or branch_vendor_qr_preview.get("status") in {"failed"}:
+            session.pop("branch_vendor_qr_preview", None)
+
     public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))
     public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None
     if agent_access["vendedor"].allowed:
@@ -308,7 +340,7 @@ def _context():
                 public_vendor_url = publication["url"]
         except Exception:
             current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "branch_vendor_statuses": branch_vendor_statuses, "branch_vendor_monthly_price": float(monthly_price_ars()), "branch_vendor_qr_preview": branch_vendor_qr_preview, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "whatsapp_connected": whatsapp_connected, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
@@ -365,7 +397,15 @@ def vendor_whatsapp_connect():
         return redirect(url_for("ai_agents.agent", agent="planes"))
     if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
         return redirect(url_for("ai_agents.agent", agent="vendedor"))
-    whatsapp = get_whatsapp_connection(company)
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    branch_id = request.args.get("branch_id", type=int) or get_default_branch_id(company.id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
+    if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+        flash("La sucursal necesita una licencia Vendedor IA activa para conectar su WhatsApp.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
+    whatsapp = get_whatsapp_connection(company, branch_id=branch.id)
     # Never pass a raw access token into a template context. The browser only needs
     # the connected state and the display fields for this setup screen.
     connected = bool(
@@ -388,8 +428,9 @@ def vendor_whatsapp_connect():
         onboarding_ready=onboarding_ready,
         connected=connected,
         whatsapp=safe_whatsapp,
-        complete_url=url_for("ai_agents.vendor_whatsapp_complete"),
-        vendor_url=url_for("ai_agents.agent", agent="vendedor"),
+        branch=branch,
+        complete_url=url_for("ai_agents.vendor_whatsapp_complete", branch_id=branch.id),
+        vendor_url=url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id),
     )
 
 
@@ -404,6 +445,14 @@ def vendor_whatsapp_complete():
     if not entitlement.allowed:
         return jsonify({"success": False, "error": entitlement.reason}), 403
     payload = request.get_json(silent=True) or request.form.to_dict()
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    requested_branch_id = request.args.get("branch_id", type=int) or payload.get("branch_id", type=int)
+    branch_id = requested_branch_id or get_default_branch_id(company.id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
+    if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+        return jsonify({"success": False, "error": "La sucursal necesita una licencia Vendedor IA activa para conectar WhatsApp."}), 403
     code = str(payload.get("code") or "").strip()
     waba_id = str(payload.get("waba_id") or "").strip()
     phone_number_id = str(payload.get("phone_number_id") or "").strip()
@@ -508,17 +557,27 @@ def vendor_whatsapp_complete():
         if commercial_enabled and commercial_phone_id and phone_number_id == commercial_phone_id:
             return jsonify({"success": False, "error": "Este número está reservado para el canal comercial de StockArMobile."}), 409
 
-        # Do not let a WhatsApp phone number be associated with two active company
-        # workspaces. The check happens before subscribing/registering the number.
+        # A WhatsApp phone number may belong to exactly one company/branch.
+        # The check occurs before Meta subscription/registration side effects.
         existing_company = company_for_whatsapp_phone_id(phone_number_id)
-        if existing_company is not None and int(existing_company.id) != int(company.id):
+        existing_company_by_branch, existing_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+        if existing_company is not None and (
+            int(existing_company.id) != int(company.id)
+            or (
+                existing_company_by_branch is not None
+                and int(existing_company_by_branch.id) != int(company.id)
+            )
+            or existing_branch is None
+            or int(existing_branch.id) != int(branch.id)
+        ):
             current_app.logger.warning(
-                "WhatsApp connection refused: phone_number_id already belongs to another company; target_company_id=%s",
+                "WhatsApp connection refused: phone_number_id already belongs to another company/branch; target_company_id=%s target_branch_id=%s",
                 company.id,
+                branch.id,
             )
             return jsonify({
                 "success": False,
-                "error": "Este número de WhatsApp ya está conectado a otra empresa de StockArMobile. Desconectalo allí antes de continuar.",
+                "error": "Este número de WhatsApp ya está conectado a otra empresa o sucursal de StockARmobile. Desconectalo allí antes de continuar.",
             }), 409
 
         subscribe = requests.post(
@@ -545,6 +604,12 @@ def vendor_whatsapp_complete():
                 current_app.logger.warning("WhatsApp Embedded Signup phone registration failed: %s", _meta_error(register))
                 return jsonify({"success": False, "error": "El número fue autorizado, pero Meta no terminó de registrarlo para Cloud API. Revisá el estado del número en WhatsApp y volvé a conectar."}), 400
 
+        whatsapp_updates = {"waba_id": waba_id}
+        if business_id:
+            whatsapp_updates["business_id"] = business_id
+        if registration_pin:
+            whatsapp_updates["registration_pin_encrypted"] = encrypt_secret(registration_pin)
+        is_extra_branch = not bool(branch.is_default)
         configure_whatsapp_connection(
             company,
             phone_number_id=phone_number_id,
@@ -554,16 +619,14 @@ def vendor_whatsapp_complete():
             enabled=True,
             template_name="",
             template_language="es_AR",
+            branch_id=branch.id if is_extra_branch else None,
+            whatsapp_updates=whatsapp_updates,
         )
-        whatsapp_updates = {"waba_id": waba_id}
-        if business_id:
-            whatsapp_updates["business_id"] = business_id
-        if registration_pin:
-            whatsapp_updates["registration_pin_encrypted"] = encrypt_secret(registration_pin)
-        update_ai_preferences(company, whatsapp_updates=whatsapp_updates)
+        if not is_extra_branch:
+            update_ai_preferences(company, whatsapp_updates=whatsapp_updates)
         db.session.commit()
         current_app.logger.info("WhatsApp Embedded Signup connected company_id=%s waba_id=%s phone_number_id=%s", current_user.company_id, waba_id, phone_number_id)
-        return jsonify({"success": True, "phone_number": str(phone.get("display_phone_number") or "").strip(), "redirect_url": url_for("ai_agents.agent", agent="vendedor", whatsapp="connected")})
+        return jsonify({"success": True, "phone_number": str(phone.get("display_phone_number") or "").strip(), "redirect_url": url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, whatsapp="connected")})
     except requests.RequestException:
         current_app.logger.exception("WhatsApp Embedded Signup network failure")
         return jsonify({"success": False, "error": "No pudimos comunicarnos con Meta. Intentá nuevamente en unos segundos."}), 502

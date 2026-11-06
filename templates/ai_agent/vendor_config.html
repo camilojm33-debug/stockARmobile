@@ -33,9 +33,11 @@
       <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
         <div>
           <h1 class="h2 fw-bold mb-2">Vendedor IA</h1>
-          <p class="lead text-muted mb-3">Configurá cómo atiende, vende y conversa con tus clientes.</p>
+          <p class="lead text-muted mb-2">Configurá cómo atiende, vende y conversa con tus clientes.</p>
+          {% if branch %}<div class="mb-3"><span class="badge text-bg-primary"><i class="bi bi-geo-alt me-1"></i>{{ branch.name }}</span>{% if branch_access and branch_access.included %}<span class="badge text-bg-success ms-1">Incluido en tu plan</span>{% else %}<span class="badge text-bg-success ms-1">Licencia activa</span>{% endif %}</div>{% endif %}
           <div class="d-flex flex-wrap gap-2">
-            <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Vendedor</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver a sucursales</a>
+            {% if branch and config.get('WHATSAPP_VENDOR_UI_ENABLED', False) %}<a class="btn btn-outline-success" href="{{ url_for('ai_agents.vendor_whatsapp_connect', branch_id=branch.id) }}"><i class="bi bi-whatsapp me-1"></i>Conectar WhatsApp de {{ branch.name }}</a>{% endif %}
           </div>
         </div>
         <div class="vendor-status {{ 'on' if vendor.active else '' }}"><i class="bi bi-circle-fill"></i>{{ 'Activo' if vendor.active else 'Desactivado' }}</div>
@@ -45,6 +47,7 @@
 
   <form method="post" action="{{ url_for('ai_admin.vendor_save') }}" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if branch %}<input type="hidden" name="branch_id" value="{{ branch.id }}">{% endif %}
 
     <section class="vendor-section mb-3">
       <div class="vendor-head">

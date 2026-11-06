@@ -1595,7 +1595,37 @@ class AgentRuntime:
         access = can_use_ai(company, agent_key)
         if not access.allowed:
             raise ValueError(access.reason or "El agente IA no está disponible para este plan.")
-        if not agent.active:
+
+        agent_enabled = bool(agent.active)
+        if agent_key == "vendedor":
+            from app import Branch
+            from services.ai_agent.branch_vendor_service import branch_vendor_access
+            from services.ai_agent.config_service import vendor_enabled_for_branch
+
+            branch = (
+                Branch.query.filter_by(
+                    id=int(conversation.branch_id),
+                    company_id=int(company_id),
+                    active=True,
+                ).first()
+                if conversation.branch_id
+                else None
+            )
+            if conversation.branch_id and branch is None:
+                raise ValueError("La sucursal vinculada a esta conversación ya no está disponible.")
+            if branch is not None:
+                branch_access = branch_vendor_access(company, branch)
+                if not branch_access.get("allowed"):
+                    raise ValueError(
+                        branch_access.get("reason")
+                        or "La sucursal necesita una licencia Vendedor IA activa."
+                    )
+                agent_enabled = vendor_enabled_for_branch(
+                    company,
+                    branch.id,
+                    default_enabled=bool(agent.active),
+                )
+        if not agent_enabled:
             return {
                 "status": "disabled",
                 "conversation_id": conversation.id,
@@ -1716,11 +1746,17 @@ class AgentRuntime:
         vendor_options = None
         allowed_tool_names = None
         if agent_key == "vendedor":
-            vendor_options = get_vendor_options(company)
+            from services.ai_agent.config_service import get_vendor_branch_runtime_config
+            vendor_options = get_vendor_options(company, conversation.branch_id)
+            vendor_runtime_config = get_vendor_branch_runtime_config(
+                company,
+                conversation.branch_id,
+                config,
+            )
             prompt += "\n\n" + build_vendor_runtime_instructions(
-                merchant_instructions=config.system_prompt if config else "",
+                merchant_instructions=(vendor_runtime_config.get("system_prompt") if isinstance(vendor_runtime_config, dict) else getattr(vendor_runtime_config, "system_prompt", "")) if vendor_runtime_config else "",
                 vendor_options=vendor_options,
-                language=(config.language if config else "es-AR"),
+                language=(vendor_runtime_config.get("language") if isinstance(vendor_runtime_config, dict) else getattr(vendor_runtime_config, "language", "es-AR")) if vendor_runtime_config else "es-AR",
                 channel=channel,
                 first_interaction=not history,
             )

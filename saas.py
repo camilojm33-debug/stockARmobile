@@ -3798,6 +3798,7 @@ def ai_subscriptions_panel():
     from services.ai_agent.subscription_service import AISubscriptionService
     from services.ai_agent.profitability_service import profitability_snapshot
     from services.ai_agent.usage_service import AI_PLANS
+    from services.ai_agent.branch_vendor_service import monthly_price_ars as branch_vendor_monthly_price
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -3837,8 +3838,39 @@ def ai_subscriptions_panel():
         rows=rows,
         ai_plans=AI_PLANS,
         profitability_totals=profitability_totals,
+        branch_vendor_monthly_price=float(branch_vendor_monthly_price()),
         filters={"q": q, "company_id": company_id},
     )
+
+
+@bp.route("/ai-subscriptions/branch-vendor-price", methods=["POST"])
+@superadmin_required
+def ai_branch_vendor_price():
+    from app import db, record_audit
+    from services.ai_agent.branch_vendor_service import set_monthly_price_ars
+
+    _require_superadmin()
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.ai_subscriptions_panel"))
+    try:
+        price = set_monthly_price_ars(
+            request.form.get("monthly_price_ars"),
+            user_id=current_user.id,
+        )
+        record_audit(
+            action="branch_vendor_ai_price_updated",
+            entity="saas_setting",
+            entity_id=None,
+            detail=f"Precio mensual global de licencia Vendedor IA por sucursal actualizado a ARS {price}.",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash(f"Precio mensual del Vendedor IA por sucursal actualizado: $ {price:.2f} ARS.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    return redirect(url_for("saas.ai_subscriptions_panel"))
+
 
 @bp.route("/ai-profitability")
 @superadmin_required

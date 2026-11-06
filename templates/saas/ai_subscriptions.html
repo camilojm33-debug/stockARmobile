@@ -29,6 +29,18 @@
     <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Buscar</button></div>
   </form>
 
+  <div class="card app-card mb-4">
+    <div class="card-body">
+      <h2 class="h5 fw-bold mb-1">Licencias adicionales de Vendedor IA por sucursal</h2>
+      <p class="small text-muted">Precio mensual global para sucursales adicionales. El QR cobra 30 días sin renovación; el mensual utiliza autorización recurrente de Mercado Pago.</p>
+      <form method="post" action="{{ url_for('saas.ai_branch_vendor_price') }}" class="row g-2 align-items-end mt-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-4"><label class="form-label fw-semibold" for="branchVendorMonthlyPrice">Precio mensual por sucursal (ARS)</label><div class="input-group"><span class="input-group-text">$</span><input id="branchVendorMonthlyPrice" class="form-control" type="number" min="0.01" max="100000000" step="0.01" name="monthly_price_ars" value="{{ branch_vendor_monthly_price }}" placeholder="Ingresar precio" required></div></div>
+        <div class="col-md-3"><button class="btn btn-primary w-100" type="submit">Guardar precio</button></div>
+        <div class="col-12 small text-muted">{% if branch_vendor_monthly_price > 0 %}Precio actual: ${{ branch_vendor_monthly_price }} ARS por 30 días.{% else %}No hay precio configurado. La contratación adicional permanece deshabilitada hasta establecer un importe.{% endif %}</div>
+      </form>
+    </div>
+  </div>
   <div class="row g-3 mb-4">
     <div class="col-md-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Empresas con plan IA</div><div class="h4 fw-bold mb-0">{{ profitability_totals.companies }}</div></div></div></div>
     <div class="col-md-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Precio mensual listado</div><div class="h4 fw-bold mb-0">$ {{ "%.2f"|format(profitability_totals.plan_list_price_ars) }}</div><div class="small text-muted">Base teórica, no cobro confirmado</div></div></div></div>

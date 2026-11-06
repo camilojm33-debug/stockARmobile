@@ -392,6 +392,38 @@ class WebhookService:
             payment_info = authorized.get("payment") or {}
             payment_id = str(payment_info.get("id") or "").strip()
             payment_status = str(payment_info.get("status") or authorized.get("summarized") or "pending").lower()
+            if ref_parts.get("branch_vendor_agent") == "true" and ref_parts.get("flow") == "branch_vendor_agent":
+                from services.ai_agent.branch_vendor_service import record_authorized_payment
+                from app import Branch, BranchVendorLicense, Company
+                branch_result = record_authorized_payment(authorized)
+                if branch_result is None:
+                    raise RuntimeError("Cobro recurrente de sucursal sin licencia asociada.")
+                license_row = branch_result["license"]
+                payment_row = branch_result["payment"]
+                NotificationService.record_event(
+                    db_session,
+                    company_id=license_row.company_id,
+                    payment_id=payment_row.id,
+                    event="branch_vendor_authorized_payment",
+                    detail=f"Cobro mensual del Vendedor IA de sucursal {license_row.branch.name if license_row.branch else license_row.branch_id}: {branch_result['status']}.",
+                    source="mercadopago",
+                    status=branch_result["status"],
+                    event_id=f"branch-vendor-authorized:{payment_id}:{branch_result['status']}",
+                    payload={"branch_id": license_row.branch_id, "license_id": license_row.id, "preapproval_id": preapproval_id, "payment_id": payment_id},
+                    user_id=None,
+                )
+                result = {
+                    "status": "processed_branch_vendor_payment",
+                    "company_id": license_row.company_id,
+                    "branch_id": license_row.branch_id,
+                    "payment_status": branch_result["status"],
+                    "payment_id": payment_id or None,
+                    "event_key": event_key,
+                }
+                event_row.status = result["status"]
+                db_session.add(event_row)
+                return result
+
             if ref_parts.get("ai_subscription") == "true":
                 from services.ai_agent.subscription_service import AISubscriptionService
 
@@ -795,13 +827,149 @@ class WebhookService:
                             number = result.get("quote_number") or f"P-{quote_id:06d}"
                             total = float(result.get("total") or 0)
                             body = f"✅ Pago recibido. Tu pedido {number} fue confirmado correctamente. Total: ${total:.2f} ARS. Gracias por tu compra."
-                            WhatsAppService.send_text(conversation.company, to=recipient, body=body)
+                            WhatsAppService.send_text(conversation.company, to=recipient, body=body, branch_id=conversation.branch_id)
                         elif recipient and payment_status in {"rejected", "cancelled", "canceled"}:
                             number = result.get("quote_number") or f"P-{quote_id:06d}"
                             body = f"⚠️ El pago de tu pedido {number} no fue aprobado. Escribime *reintentar pago* para volver a intentarlo."
                             WhatsAppService.send_text(conversation.company, to=recipient, body=body)
                 except Exception:
                     pass
+                return result
+
+            if flow == "branch_vendor_qr" or ref_parts.get("flow") == "branch_vendor_qr":
+                from app import BranchVendorLicense
+                from services.ai_agent.branch_vendor_service import activate_qr_license
+
+                mp_payment_id = str(payment_data.get("id") or "").strip()
+                payment_record_id_raw = metadata.get("payment_record_id") or ref_parts.get("payment_record_id")
+                company_id_raw = metadata.get("company_id") or ref_parts.get("company_id")
+                branch_id_raw = metadata.get("branch_id") or ref_parts.get("branch_id")
+                license_id_raw = metadata.get("license_id") or ref_parts.get("license_id")
+                ids = (payment_record_id_raw, company_id_raw, branch_id_raw, license_id_raw)
+                if not mp_payment_id or any(not str(value or "").isdigit() for value in ids):
+                    raise RuntimeError("Webhook QR de Vendedor IA sin identificadores válidos.")
+                payment_record_id, company_id, branch_id, license_id = (int(value) for value in ids)
+                if merchant_connection is not None:
+                    raise RuntimeError("El QR de licencia Vendedor IA no puede procesarse desde una cuenta vendedora conectada.")
+                for key, expected in (("company_id", company_id), ("branch_id", branch_id), ("license_id", license_id), ("payment_record_id", payment_record_id)):
+                    if str(ref_parts.get(key) or "") != str(expected):
+                        raise RuntimeError(f"Webhook QR de Vendedor IA con {key} distinto de la referencia registrada.")
+                    if metadata.get(key) not in (None, "") and str(metadata.get(key)) != str(expected):
+                        raise RuntimeError(f"Webhook QR de Vendedor IA con {key} distinto en metadata.")
+
+                company = Company.query.filter_by(id=company_id).first()
+                branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first()
+                license_row = BranchVendorLicense.query.filter_by(
+                    id=license_id, company_id=company_id, branch_id=branch_id
+                ).with_for_update().first()
+                draft = Payment.query.filter_by(
+                    id=payment_record_id,
+                    company_id=company_id,
+                    provider="mercadopago_branch_vendor_qr",
+                    payment_method="mercadopago_branch_vendor_qr",
+                ).with_for_update().first()
+                if company is None or branch is None or branch.is_default or license_row is None or draft is None:
+                    raise RuntimeError("El checkout QR no corresponde a una licencia y sucursal activa.")
+                if draft.external_reference != external_reference or not str(draft.reference or "").startswith("branch-vendor-qr:"):
+                    raise RuntimeError("La referencia del checkout QR no coincide con el borrador local.")
+                if str(ref_parts.get("user_id") or "") != str(draft.user_id or ""):
+                    raise RuntimeError("El checkout QR pertenece a otro usuario.")
+                existing_mp_payment = Payment.query.filter_by(payment_id=mp_payment_id).first()
+                if existing_mp_payment is not None and existing_mp_payment.id != draft.id:
+                    raise RuntimeError("El payment_id del QR ya pertenece a otro registro.")
+
+                try:
+                    draft_amount = float(draft.amount or 0)
+                    incoming_amount = float(payment_data.get("transaction_amount"))
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise RuntimeError("Pago QR de sucursal con importe inválido.") from exc
+                incoming_currency = str(payment_data.get("currency_id") or "").strip().upper()
+                if draft_amount <= 0 or abs(incoming_amount - draft_amount) > 0.01 or incoming_currency != "ARS":
+                    raise RuntimeError("Pago QR de sucursal rechazado por importe o moneda incorrectos.")
+
+                previous_status = str(draft.status or "pending").strip().lower()
+                draft.payment_id = mp_payment_id
+                draft.amount = incoming_amount
+                draft.currency = incoming_currency
+                draft.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                draft.paid_at = paid_at or draft.paid_at
+
+                terminal = {"cancelled", "canceled", "refunded", "refund_pending", "charged_back"}
+                if previous_status in terminal and payment_status == "approved":
+                    refund = self.mp_service.refund_payment(mp_payment_id)
+                    refund_status = str(refund.get("status") or "").strip().lower()
+                    if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                        raise RuntimeError("Mercado Pago no confirmó el reembolso del QR cancelado.")
+                    draft.status = "refunded" if refund_status in {"approved", "refunded"} else "refund_pending"
+                    NotificationService.record_event(
+                        db_session,
+                        company_id=company_id,
+                        payment_id=draft.id,
+                        event="branch_vendor_qr_terminal_payment_refund",
+                        detail="Se aprobó tarde un QR cancelado; se solicitó el reembolso y no se habilitó la sucursal.",
+                        source="mercadopago",
+                        status=refund_status,
+                        event_id=f"branch-vendor-qr-terminal-refund:{mp_payment_id}",
+                        payload={"branch_id": branch_id, "license_id": license_id, "payment_id": mp_payment_id, "refund_id": refund.get("id")},
+                        user_id=draft.user_id,
+                    )
+                    result = {"status": "cancelled_branch_vendor_qr_refunded", "payment_status": payment_status, "refund_status": refund_status, "event_key": event_key}
+                elif previous_status == "approved":
+                    draft.status = "approved"
+                    result = {"status": "processed_branch_vendor_qr_payment", "payment_status": "approved", "payment_id": mp_payment_id, "event_key": event_key}
+                elif payment_status == "approved":
+                    draft.status = "approved"
+                    try:
+                        activate_qr_license(
+                            company_id=company_id,
+                            branch_id=branch_id,
+                            license_id=license_id,
+                            payment_id=mp_payment_id,
+                            amount=__import__("decimal").Decimal(str(incoming_amount)),
+                            currency=incoming_currency,
+                            paid_at=paid_at,
+                        )
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company_id,
+                            payment_id=draft.id,
+                            event="branch_vendor_qr_license_activated",
+                            detail=f"Pago QR aprobado; Vendedor IA habilitado durante 30 días para sucursal {branch.name}.",
+                            source="mercadopago",
+                            status="approved",
+                            event_id=f"branch-vendor-qr-activated:{mp_payment_id}",
+                            payload={"branch_id": branch_id, "license_id": license_id, "payment_id": mp_payment_id, "amount": incoming_amount},
+                            user_id=draft.user_id,
+                        )
+                        result = {"status": "processed_branch_vendor_qr_payment", "payment_status": "approved", "branch_id": branch_id, "license_id": license_id, "payment_id": mp_payment_id, "event_key": event_key}
+                    except (ValueError, RuntimeError) as exc:
+                        refund = self.mp_service.refund_payment(mp_payment_id)
+                        refund_status = str(refund.get("status") or "").strip().lower()
+                        if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                            raise RuntimeError("La licencia QR no pudo activarse y el reembolso no fue confirmado.") from exc
+                        draft.status = "refunded" if refund_status in {"approved", "refunded"} else "refund_pending"
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company_id,
+                            payment_id=draft.id,
+                            event="branch_vendor_qr_payment_refunded_no_activation",
+                            detail=f"Pago QR reembolsado sin activar la licencia: {exc}",
+                            source="mercadopago",
+                            status=refund_status,
+                            event_id=f"branch-vendor-qr-no-activation:{mp_payment_id}",
+                            payload={"branch_id": branch_id, "license_id": license_id, "payment_id": mp_payment_id, "refund_id": refund.get("id"), "reason": str(exc)},
+                            user_id=draft.user_id,
+                        )
+                        result = {"status": "branch_vendor_qr_refunded_no_activation", "payment_status": "approved", "refund_status": refund_status, "event_key": event_key}
+                else:
+                    if previous_status not in terminal:
+                        draft.status = payment_status
+                    result = {"status": "processed_branch_vendor_qr_payment", "payment_status": payment_status, "payment_id": mp_payment_id, "event_key": event_key}
+
+                event_row.status = result.get("status", "processed_branch_vendor_qr_payment")
+                db_session.add(draft)
+                db_session.add(event_row)
+                db_session.commit()
                 return result
 
             if flow == "ai_subscription_qr" or ref_parts.get("ai_subscription_qr") == "true":
@@ -1459,6 +1627,20 @@ class WebhookService:
                     "company_id": commercial.get("company_id"),
                 }
             else:
+                from services.ai_agent.branch_vendor_service import sync_preapproval as sync_branch_vendor_preapproval
+                branch_license = sync_branch_vendor_preapproval(preapproval_data)
+                if branch_license is not None:
+                    result = {
+                        "status": "processed_branch_vendor_preapproval",
+                        "company_id": branch_license.company_id,
+                        "branch_id": branch_license.branch_id,
+                        "license_status": branch_license.status,
+                        "event_key": event_key,
+                    }
+                    event_row.status = result["status"]
+                    db_session.add(event_row)
+                    return result
+
                 subscription_id = preapproval_data.get("external_reference")
                 subscription = None
                 if subscription_id and str(subscription_id).isdigit():

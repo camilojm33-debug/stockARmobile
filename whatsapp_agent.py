@@ -16,7 +16,7 @@ from stockarmobile.helpers.dates import format_local_datetime, utcnow_naive
 from stockarmobile.decorators import company_admin_required
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
-from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, get_vendor_options, is_ai_enabled, choose_agent
+from services.ai_agent.config_service import company_branch_for_whatsapp_phone_id, company_for_whatsapp_phone_id, get_whatsapp_connection, get_vendor_options, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_AGENT_MESSAGE_CHARS
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
@@ -136,19 +136,22 @@ def _record_commercial_campaign_status(status_rows):
     return updated
 
 
-def _get_or_create_conversation(company_id: int, sender: str):
+def _get_or_create_conversation(company_id: int, sender: str, branch_id: int | None = None):
     agent = choose_agent(company_id, channel="whatsapp")
-    conversation = db.session.query(Conversation).filter(
+    query = db.session.query(Conversation).filter(
         Conversation.company_id == company_id,
         Conversation.agent_id == agent.id,
         Conversation.channel == "whatsapp",
         Conversation.external_conversation_id == sender,
-    ).first()
+    )
+    if branch_id is not None:
+        query = query.filter(Conversation.branch_id == int(branch_id))
+    conversation = query.order_by(Conversation.id.desc()).first()
     if conversation is None:
         conversation = Conversation(
             company_id=company_id,
             agent_id=agent.id,
-            branch_id=_vendor_fulfillment_branch_id(company_id),
+            branch_id=int(branch_id) if branch_id is not None else _vendor_fulfillment_branch_id(company_id),
             channel="whatsapp",
             external_conversation_id=sender,
             metadata_json={"whatsapp_user": sender},
@@ -502,7 +505,12 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
         db.session.commit()
         return False
 
-    result = WhatsAppService.send_text(company, to=sender, body=str(assistant.content or ""))
+    result = WhatsAppService.send_text(
+        company,
+        to=sender,
+        body=str(assistant.content or ""),
+        branch_id=conversation.branch_id,
+    )
     messages = result.get("messages") if isinstance(result, dict) else None
     provider_message_id = ""
     if isinstance(messages, list) and messages and isinstance(messages[0], dict):
@@ -678,7 +686,11 @@ def _ai_order_row(company_id: int, quote):
         attention = dict(raw_attention) if isinstance(raw_attention, dict) else {}
     from app import Company
     company = Company.query.filter_by(id=int(company_id)).first()
-    vendor_options = get_vendor_options(company)
+    vendor_options = (
+        get_vendor_options(company, conversation.branch_id)
+        if conversation is not None
+        else get_vendor_options(company)
+    )
     attention_status = str(attention.get("status") or "").strip().lower()
     if attention_status == "human":
         attention_key, attention_label, attention_badge = "human", "Atención humana", "text-bg-danger"
@@ -1052,13 +1064,18 @@ def ai_whatsapp_attention_message(conversation_id: int):
         flash("La conversación no tiene un número de WhatsApp válido.", "danger")
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
 
-    connection = get_whatsapp_connection(company)
+    connection = get_whatsapp_connection(company, branch_id=conversation.branch_id)
     if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
         flash("WhatsApp no está conectado o habilitado para este comercio.", "danger")
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
 
     try:
-        result = WhatsAppService.send_text(company, to=recipient, body=body)
+        if conversation.branch_id is not None:
+            result = WhatsAppService.send_text(
+                company, to=recipient, body=body, branch_id=conversation.branch_id
+            )
+        else:
+            result = WhatsAppService.send_text(company, to=recipient, body=body)
         messages = result.get("messages") if isinstance(result, dict) else None
         provider_message_id = ""
         if isinstance(messages, list) and messages and isinstance(messages[0], dict):
@@ -1167,6 +1184,7 @@ def ai_order_shipping(quote_id: int):
                         conversation.company,
                         to=str(conversation.external_conversation_id or "").strip(),
                         body=body,
+                        branch_id=conversation.branch_id,
                     )
                 except Exception:
                     current_app.logger.exception(
@@ -1326,16 +1344,19 @@ def webhook():
                     retryable_errors = True
                 continue
 
-            company = company_for_whatsapp_phone_id(phone_number_id)
-            if company is None:
-                errors.append({"external_message_id": external_id, "error": "company_not_configured"})
+            company, whatsapp_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+            if company is None or whatsapp_branch is None:
+                errors.append({"external_message_id": external_id, "error": "company_or_branch_not_configured"})
                 continue
 
-            connection = get_whatsapp_connection(company)
+            connection = get_whatsapp_connection(company, branch_id=whatsapp_branch.id)
             if not connection["enabled"]:
                 continue
 
-            conversation = _get_or_create_conversation(company.id, sender)
+            # A WhatsApp phone number is permanently routed to its configured
+            # branch. The same customer's number may have a separate chat/cart
+            # with another branch's phone number.
+            conversation = _get_or_create_conversation(company.id, sender, branch_id=whatsapp_branch.id)
             duplicate = db.session.query(ConversationMessage).filter(
                 ConversationMessage.company_id == company.id,
                 ConversationMessage.conversation_id == conversation.id,
@@ -1374,6 +1395,18 @@ def webhook():
                 db.session.commit()
 
             if not is_ai_enabled(company):
+                continue
+
+            from services.ai_agent.branch_vendor_service import branch_vendor_access
+            branch_access = branch_vendor_access(company, whatsapp_branch)
+            if not branch_access.get("allowed"):
+                # A webhook for an unlicensed branch is acknowledged without
+                # creating deterministic orders, quotes or AI responses.
+                current_app.logger.info(
+                    "WhatsApp Vendedor blocked by branch license company_id=%s branch_id=%s",
+                    company.id,
+                    whatsapp_branch.id,
+                )
                 continue
 
             if duplicate is not None:

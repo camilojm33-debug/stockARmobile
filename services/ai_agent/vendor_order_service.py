@@ -340,7 +340,7 @@ def _delivery_payload(*, method: str, customer_name: str, customer_phone: str, a
     return values
 
 
-def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[str, Any]:
+def _shipping_plan(company_id: int, cart_total: Decimal, method: str, branch_id: int | None = None) -> Dict[str, Any]:
     """Resolve the merchant-configured fixed shipping cost for Webchat."""
     normalized_method = _normalize_delivery_method(method)
     if normalized_method != "envio":
@@ -357,7 +357,7 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
     if company is None:
         raise ValueError("Empresa no encontrada para calcular el envío.")
 
-    options = get_vendor_options(company)
+    options = get_vendor_options(company, branch_id)
     cost = _money(options.get("standard_shipping_cost"))
     if cost < 0:
         raise ValueError("El costo fijo de envío no puede ser negativo.")
@@ -370,7 +370,7 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
     }
 
 
-def _checkout_charge_plan(company_id: int, *, product_total: Decimal, shipping_cost: Decimal) -> Dict[str, Any]:
+def _checkout_charge_plan(company_id: int, *, product_total: Decimal, shipping_cost: Decimal, branch_id: int | None = None) -> Dict[str, Any]:
     """Calculate merchant-configured checkout charges on the server."""
     from app import Company
 
@@ -378,7 +378,7 @@ def _checkout_charge_plan(company_id: int, *, product_total: Decimal, shipping_c
     if company is None:
         raise ValueError("Empresa no encontrada para calcular los cargos.")
 
-    options = get_vendor_options(company)
+    options = get_vendor_options(company, branch_id)
     configured = options.get("checkout_charges") if isinstance(options.get("checkout_charges"), list) else []
     product_base = _money(product_total)
     shipping = _money(shipping_cost)
@@ -1388,7 +1388,13 @@ class VendorOrderService:
         company = Company.query.filter_by(id=int(company_id), active=True).first()
         if company is None:
             raise ValueError("La empresa no está disponible para recibir pedidos.")
-        vendor_options = get_vendor_options(company)
+        vendor_options = get_vendor_options(company, conversation.branch_id)
+        if conversation.branch_id:
+            from services.ai_agent.branch_vendor_service import branch_vendor_access
+            from app import Branch
+            branch = Branch.query.filter_by(id=conversation.branch_id, company_id=company_id, active=True).first()
+            if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+                raise ValueError("La sucursal necesita una licencia Vendedor IA activa para recibir pedidos.")
         if not vendor_options.get("can_prepare_quotes", False):
             raise ValueError("El Vendedor IA tiene deshabilitada la preparación de presupuestos.")
         if not vendor_options.get("can_take_orders", False):
