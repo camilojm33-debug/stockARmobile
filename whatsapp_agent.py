@@ -686,7 +686,11 @@ def _ai_order_row(company_id: int, quote):
         attention = dict(raw_attention) if isinstance(raw_attention, dict) else {}
     from app import Company
     company = Company.query.filter_by(id=int(company_id)).first()
-    vendor_options = get_vendor_options(company, conversation.branch_id)
+    vendor_options = (
+        get_vendor_options(company, conversation.branch_id)
+        if conversation is not None
+        else get_vendor_options(company)
+    )
     attention_status = str(attention.get("status") or "").strip().lower()
     if attention_status == "human":
         attention_key, attention_label, attention_badge = "human", "Atención humana", "text-bg-danger"
@@ -1066,7 +1070,12 @@ def ai_whatsapp_attention_message(conversation_id: int):
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
 
     try:
-        result = WhatsAppService.send_text(company, to=recipient, body=body, branch_id=conversation.branch_id)
+        if conversation.branch_id is not None:
+            result = WhatsAppService.send_text(
+                company, to=recipient, body=body, branch_id=conversation.branch_id
+            )
+        else:
+            result = WhatsAppService.send_text(company, to=recipient, body=body)
         messages = result.get("messages") if isinstance(result, dict) else None
         provider_message_id = ""
         if isinstance(messages, list) and messages and isinstance(messages[0], dict):
