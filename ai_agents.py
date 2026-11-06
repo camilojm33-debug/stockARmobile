@@ -559,9 +559,14 @@ def vendor_whatsapp_complete():
 
         # A WhatsApp phone number may belong to exactly one company/branch.
         # The check occurs before Meta subscription/registration side effects.
-        existing_company, existing_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+        existing_company = company_for_whatsapp_phone_id(phone_number_id)
+        existing_company_by_branch, existing_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
         if existing_company is not None and (
             int(existing_company.id) != int(company.id)
+            or (
+                existing_company_by_branch is not None
+                and int(existing_company_by_branch.id) != int(company.id)
+            )
             or existing_branch is None
             or int(existing_branch.id) != int(branch.id)
         ):
