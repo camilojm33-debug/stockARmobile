@@ -3261,26 +3261,6 @@ def create_mercadopago_subscription():
                     "Esta sucursal ya tiene un QR pendiente. Cancelalo o esperá su confirmación antes de iniciar el pago mensual."
                 )
 
-        # A pending/in-process manual QR must be closed before starting a
-        # monthly contract for the same branch. Otherwise the customer could
-        # authorize two different billing modes concurrently.
-        pending_qr_rows = Payment.query.filter(
-            Payment.company_id == company.id,
-            Payment.provider == "mercadopago_branch_vendor_qr",
-            Payment.status.in_(("pending", "in_process", "authorized")),
-        ).order_by(Payment.id.desc()).all()
-        for pending_qr in pending_qr_rows:
-            qr_reference = parse_external_reference(pending_qr.external_reference)
-            if (
-                qr_reference.get("flow") == "branch_vendor_qr"
-                and qr_reference.get("company_id") == str(company.id)
-                and qr_reference.get("branch_id") == str(branch.id)
-                and qr_reference.get("license_id") == str(license_row.id)
-            ):
-                raise ValueError(
-                    "Esta sucursal tiene un pago QR pendiente. Cancelá ese intento antes de autorizar el plan mensual."
-                )
-
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         config = load_billing_config()
         current_app.logger.info(
@@ -6549,6 +6529,26 @@ def create_branch_vendor_checkout():
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         if not payer_email or "@" not in payer_email:
             raise ValueError("Necesitás un email válido para autorizar el cobro mensual.")
+
+        # A pending/in-process manual QR must be closed before starting a
+        # monthly contract for the same branch. Otherwise the customer could
+        # authorize two different billing modes concurrently.
+        pending_qr_rows = Payment.query.filter(
+            Payment.company_id == company.id,
+            Payment.provider == "mercadopago_branch_vendor_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        ).order_by(Payment.id.desc()).all()
+        for pending_qr in pending_qr_rows:
+            qr_reference = parse_external_reference(pending_qr.external_reference)
+            if (
+                qr_reference.get("flow") == "branch_vendor_qr"
+                and qr_reference.get("company_id") == str(company.id)
+                and qr_reference.get("branch_id") == str(branch.id)
+                and qr_reference.get("license_id") == str(license_row.id)
+            ):
+                raise ValueError(
+                    "Esta sucursal tiene un pago QR pendiente. Cancelá ese intento antes de autorizar el plan mensual."
+                )
         if license_row.preapproval_id:
             remote = MercadoPagoService().get_preapproval(license_row.preapproval_id)
             if str(remote.get("id") or "") != str(license_row.preapproval_id):
