@@ -23,6 +23,8 @@ from services.ai_agent.config_service import (
     get_special_options,
     get_vendor_options,
     get_whatsapp_connection,
+    save_vendor_branch_settings,
+    get_vendor_branch_runtime_config,
     update_ai_preferences,
 )
 from services.ai_agent.usage_service import AI_PLANS, can_use_ai, can_use_ai_feature, current_plan
@@ -245,26 +247,48 @@ def vendor_metrics():
 @company_admin_required
 def vendor_config():
     company_id = get_current_company_id(current_user)
-    from app import Company
+    from app import Branch, Company
 
     company = Company.query.filter_by(id=company_id, active=True).first()
     if company is None:
         return redirect(url_for("dashboard.index"))
+    branch_id = request.args.get("branch_id", type=int)
+    if branch_id is None:
+        from stockarmobile.branch_context import get_default_branch_id
+        branch_id = get_default_branch_id(company_id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first() if branch_id else None
+    if branch is None:
+        flash("No se encontró la sucursal para configurar su Vendedor IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
 
     entitlement = can_use_ai_feature(company, "vendedor")
     if not entitlement.allowed:
         return redirect(url_for("ai_agents.agent", agent="planes"))
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    branch_access = branch_vendor_access(company, branch)
+    if not branch_access["allowed"]:
+        flash(branch_access.get("reason") or "La sucursal necesita una licencia Vendedor IA activa.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
 
     agents = ensure_default_agents(company_id)
     vendor = agents[VENDOR_AGENT_NAME]
     configs = _ensure_configs(company_id, {VENDOR_AGENT_NAME: vendor})
+    default_config = configs[VENDOR_AGENT_NAME]
+    if branch.is_default:
+        vendor_config_value = default_config
+        vendor_options = get_vendor_options(company, branch.id)
+    else:
+        vendor_config_value = get_vendor_branch_runtime_config(company, branch.id, default_config)
+        vendor_options = get_vendor_options(company, branch.id)
     return render_template(
         "ai_agent/vendor_config.html",
         company=company,
+        branch=branch,
         vendor=vendor,
-        vendor_config=configs[VENDOR_AGENT_NAME],
-        vendor_options=get_vendor_options(company),
+        vendor_config=vendor_config_value,
+        vendor_options=vendor_options,
         publication=publication_status(company),
+        branch_access=branch_access,
     )
 
 
@@ -272,39 +296,36 @@ def vendor_config():
 @company_admin_required
 def vendor_save():
     company_id = get_current_company_id(current_user)
-    from app import Company, record_audit
+    from app import Branch, Company, record_audit
 
     company = Company.query.filter_by(id=company_id, active=True).first()
     if company is None:
         flash("No se encontró la empresa activa.", "danger")
         return redirect(url_for("dashboard.index"))
+    branch_id = request.form.get("branch_id", type=int)
+    if branch_id is None:
+        from stockarmobile.branch_context import get_default_branch_id
+        branch_id = get_default_branch_id(company_id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company_id, active=True).first() if branch_id else None
+    if branch is None:
+        flash("La sucursal seleccionada no existe o está inactiva.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
 
     entitlement = can_use_ai_feature(company, "vendedor")
     if not entitlement.allowed:
         flash(entitlement.reason or "Tu plan no incluye el Vendedor IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    branch_access = branch_vendor_access(company, branch)
+    if not branch_access["allowed"]:
+        flash(branch_access.get("reason") or "La sucursal necesita una licencia Vendedor IA activa.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
 
     agents = ensure_default_agents(company_id)
     vendor = agents[VENDOR_AGENT_NAME]
-    configs = _ensure_configs(company_id, {VENDOR_AGENT_NAME: vendor})
-    plan = current_plan(company)
-    entitled_agents = set(plan["agents"]) if plan else set()
-
-    if "vendor_enabled" in request.form:
-        vendor.active = request.form.get("vendor_enabled") == "1" and "vendedor" in entitled_agents
-
-    config = configs[VENDOR_AGENT_NAME]
-    prompt = request.form.get("vendor_prompt")
-    if prompt is not None:
-        config.system_prompt = prompt.strip()[:12000]
-    language = request.form.get("vendor_language")
-    if language is not None:
-        config.language = language.strip()[:8] or "es-AR"
-
-    vendor_options = get_vendor_options(company)
+    vendor_options = get_vendor_options(company, branch.id)
     if "vendor_personality" in request.form:
         vendor_options["personality"] = (request.form.get("vendor_personality") or "amigable").strip()[:30]
-
     for key, field in {
         "can_recommend": "vendor_can_recommend",
         "can_offer_alternatives": "vendor_can_offer_alternatives",
@@ -315,7 +336,6 @@ def vendor_save():
     }.items():
         if field in request.form:
             vendor_options[key] = "1" in request.form.getlist(field)
-
     for key, field, limit in (
         ("agent_name", "vendor_agent_name", 120),
         ("greeting", "vendor_greeting", 1000),
@@ -325,8 +345,6 @@ def vendor_save():
     ):
         if field in request.form:
             vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
-
-    # El modo dejó de ser seleccionable: el Vendedor Web siempre usa el costo fijo.
     vendor_options["shipping_mode"] = "fixed"
     standard_shipping_cost = request.form.get("vendor_standard_shipping_cost")
     if standard_shipping_cost is not None:
@@ -337,7 +355,6 @@ def vendor_save():
         if value < 0:
             value = Decimal("0.00")
         vendor_options["standard_shipping_cost"] = str(value.quantize(Decimal("0.01")))
-
     if "vendor_checkout_charges_json" in request.form:
         try:
             submitted_charges = json.loads(request.form.get("vendor_checkout_charges_json") or "[]")
@@ -345,22 +362,44 @@ def vendor_save():
             submitted_charges = []
         vendor_options["checkout_charges"] = submitted_charges if isinstance(submitted_charges, list) else []
 
-    update_ai_preferences(company, ai_updates={"vendor_options": vendor_options})
+    enabled = request.form.get("vendor_enabled") == "1"
+    prompt = request.form.get("vendor_prompt")
+    language = request.form.get("vendor_language")
+    if branch.is_default:
+        config = _ensure_configs(company_id, {VENDOR_AGENT_NAME: vendor})[VENDOR_AGENT_NAME]
+        entitled_agents = set(current_plan(company)["agents"]) if current_plan(company) else set()
+        vendor.active = enabled and "vendedor" in entitled_agents
+        if prompt is not None:
+            config.system_prompt = prompt.strip()[:12000]
+        if language is not None:
+            config.language = language.strip()[:8] or "es-AR"
+        from services.ai_agent.config_service import update_ai_preferences
+        update_ai_preferences(company, ai_updates={"vendor_options": vendor_options})
+        audit_entity_id = vendor.id
+    else:
+        save_vendor_branch_settings(
+            company,
+            branch.id,
+            options=vendor_options,
+            system_prompt=prompt if prompt is not None else "",
+            language=language if language is not None else "es-AR",
+            enabled=enabled,
+        )
+        audit_entity_id = branch.id
 
     try:
         record_audit(
-            action="ai_vendor_configuration_update",
-            entity="ai_agent",
-            entity_id=vendor.id,
-            detail="Configuración exclusiva del Vendedor IA actualizada",
+            action="ai_vendor_branch_configuration_update",
+            entity="ai_vendor_branch",
+            entity_id=audit_entity_id,
+            detail=f"Configuración del Vendedor IA actualizada para sucursal {branch.id} ({branch.name}).",
             company_id=company_id,
         )
     except Exception:
         pass
-
     db.session.commit()
-    flash("Configuración del Vendedor IA guardada correctamente.", "success")
-    return redirect(url_for("ai_admin.vendor_config"))
+    flash(f"Configuración del Vendedor IA de {branch.name} guardada correctamente.", "success")
+    return redirect(url_for("ai_admin.vendor_config", branch_id=branch.id))
 
 
 @bp.post("/save")
