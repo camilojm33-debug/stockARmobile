@@ -203,7 +203,7 @@ def main() -> None:
                 },
             )
 
-        _progress(f"Applying additive opening-ledger revision {HEAD_REVISION}")
+        _progress(f"Applying all pending migrations through branch Vendor IA revision {HEAD_REVISION}")
         upgrade(directory="migrations", revision="head")
         _progress("Alembic upgrade returned successfully")
         db.session.remove()
