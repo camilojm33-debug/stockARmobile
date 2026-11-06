@@ -56,13 +56,12 @@ def upgrade():
             sa.ForeignKeyConstraint(["company_id"], ["companies.id"], ondelete="CASCADE"),
             sa.ForeignKeyConstraint(["branch_id"], ["branches.id"], ondelete="CASCADE"),
             sa.UniqueConstraint("branch_id", name="uq_branch_vendor_licenses_branch"),
-            sa.UniqueConstraint("preapproval_id", name="uq_branch_vendor_licenses_preapproval"),
-            sa.UniqueConstraint("external_reference", name="uq_branch_vendor_licenses_external_reference"),
         )
         op.create_index("ix_branch_vendor_licenses_company_id", "branch_vendor_licenses", ["company_id"])
         op.create_index("ix_branch_vendor_licenses_branch_id", "branch_vendor_licenses", ["branch_id"])
         op.create_index("ix_branch_vendor_licenses_company_status", "branch_vendor_licenses", ["company_id", "status"])
-        op.create_index("ix_branch_vendor_licenses_preapproval", "branch_vendor_licenses", ["preapproval_id"], unique=True)
+        op.create_index("ix_branch_vendor_licenses_preapproval_id", "branch_vendor_licenses", ["preapproval_id"], unique=True)
+        op.create_index("ix_branch_vendor_licenses_external_reference", "branch_vendor_licenses", ["external_reference"], unique=True)
         op.create_index("ix_branch_vendor_licenses_last_payment_id", "branch_vendor_licenses", ["last_payment_id"])
 
 
@@ -73,7 +72,8 @@ def downgrade():
         indexes = {item.get("name") for item in sa.inspect(bind).get_indexes("branch_vendor_licenses")}
         for name in (
             "ix_branch_vendor_licenses_last_payment_id",
-            "ix_branch_vendor_licenses_preapproval",
+            "ix_branch_vendor_licenses_external_reference",
+            "ix_branch_vendor_licenses_preapproval_id",
             "ix_branch_vendor_licenses_company_status",
             "ix_branch_vendor_licenses_branch_id",
             "ix_branch_vendor_licenses_company_id",
