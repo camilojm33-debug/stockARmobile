@@ -47,9 +47,12 @@ def _wants_json_response() -> bool:
     return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
-def _checkout_redirect_response(checkout_url: str):
+def _checkout_redirect_response(checkout_url: str, *, return_url: str | None = None):
     if _wants_json_response():
-        return jsonify({"success": True, "redirect_url": checkout_url})
+        payload = {"success": True, "redirect_url": checkout_url}
+        if return_url:
+            payload["return_url"] = return_url
+        return jsonify(payload)
     return redirect(checkout_url)
 
 
@@ -2431,7 +2434,15 @@ def create_checkout():
     # checkout de Mercado Pago directamente. Los flujos QR existentes siguen
     # mostrando su pantalla de resumen cuando no solicitan esta modalidad.
     if request.form.get("direct_checkout") == "1":
-        return _checkout_redirect_response(checkout_url)
+        return _checkout_redirect_response(
+            checkout_url,
+            return_url=url_for(
+                "ai_agents.agent",
+                agent="vendedor",
+                branch_id=branch.id,
+                _anchor="branch-vendors",
+            ),
+        )
 
     _remember_standard_qr_checkout(company, subscription, preference)
     flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
@@ -6528,7 +6539,15 @@ def create_branch_vendor_checkout():
                 checkout_url = str(remote.get("init_point") or "").strip()
                 if not checkout_url:
                     checkout_url = "https://www.mercadopago.com.ar/subscriptions/checkout?" + urlencode({"preapproval_id": license_row.preapproval_id})
-                return _checkout_redirect_response(checkout_url)
+                return _checkout_redirect_response(
+                    checkout_url,
+                    return_url=url_for(
+                        "ai_agents.agent",
+                        agent="vendedor",
+                        branch_id=branch.id,
+                        _anchor="branch-vendors",
+                    ),
+                )
             license_row.preapproval_id = None
             license_row.external_reference = None
             license_row.auto_renew = False
