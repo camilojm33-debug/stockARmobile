@@ -3609,15 +3609,16 @@ def test_branch_vendor_qr_blocks_uncertain_monthly_preapproval(subscription_app,
         payment_mode="automatic",
         amount=Decimal("57600.00"),
         currency="ARS",
-        external_reference=(
-            f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|"
-            f"branch_id:{branch.id}|license_id:1|user_id:{user.id}|nonce:uncertain-monthly"
-        ),
         preapproval_id=None,
         auto_renew=True,
         cancel_at_period_end=False,
     )
     db.session.add(license_row)
+    db.session.flush()
+    license_row.external_reference = (
+        f"branch_vendor_agent:true|flow:branch_vendor_agent|company_id:{company.id}|"
+        f"branch_id:{branch.id}|license_id:{license_row.id}|user_id:{user.id}|nonce:uncertain-monthly"
+    )
     db.session.commit()
 
     monkeypatch.setattr(
