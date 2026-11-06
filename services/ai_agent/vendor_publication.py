@@ -1629,6 +1629,8 @@ def public_vendor_checkout(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    fixed_branch = _public_branch_for_slug(slug)
+    fixed_branch_id = int(fixed_branch.id) if fixed_branch else None
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"success": False, "error": "La solicitud debe ser un objeto JSON."}), 400
