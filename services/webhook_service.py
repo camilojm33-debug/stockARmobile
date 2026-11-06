@@ -392,6 +392,38 @@ class WebhookService:
             payment_info = authorized.get("payment") or {}
             payment_id = str(payment_info.get("id") or "").strip()
             payment_status = str(payment_info.get("status") or authorized.get("summarized") or "pending").lower()
+            if ref_parts.get("branch_vendor_agent") == "true" and ref_parts.get("flow") == "branch_vendor_agent":
+                from services.ai_agent.branch_vendor_service import record_authorized_payment
+                from app import BranchVendorLicense
+                branch_result = record_authorized_payment(authorized)
+                if branch_result is None:
+                    raise RuntimeError("Cobro recurrente de sucursal sin licencia asociada.")
+                license_row = branch_result["license"]
+                payment_row = branch_result["payment"]
+                NotificationService.record_event(
+                    db_session,
+                    company_id=license_row.company_id,
+                    payment_id=payment_row.id,
+                    event="branch_vendor_authorized_payment",
+                    detail=f"Cobro mensual del Vendedor IA de sucursal {license_row.branch.name if license_row.branch else license_row.branch_id}: {branch_result['status']}.",
+                    source="mercadopago",
+                    status=branch_result["status"],
+                    event_id=f"branch-vendor-authorized:{payment_id}:{branch_result['status']}",
+                    payload={"branch_id": license_row.branch_id, "license_id": license_row.id, "preapproval_id": preapproval_id, "payment_id": payment_id},
+                    user_id=None,
+                )
+                result = {
+                    "status": "processed_branch_vendor_payment",
+                    "company_id": license_row.company_id,
+                    "branch_id": license_row.branch_id,
+                    "payment_status": branch_result["status"],
+                    "payment_id": payment_id or None,
+                    "event_key": event_key,
+                }
+                event_row.status = result["status"]
+                db_session.add(event_row)
+                return result
+
             if ref_parts.get("ai_subscription") == "true":
                 from services.ai_agent.subscription_service import AISubscriptionService
 
