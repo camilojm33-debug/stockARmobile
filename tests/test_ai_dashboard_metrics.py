@@ -89,8 +89,11 @@ def test_vendor_dashboard_has_no_stale_pending_placeholders():
 
     assert "('Pedidos', 'Pendiente de integración')" not in template
     assert "('Ventas derivadas', 'Pendiente de integración')" not in template
-    assert "('Pedidos', metrics.orders)" in template
-    assert "('Ventas derivadas', metrics.ai_sales)" in template
+    assert "('Pedidos IA', vendor_branch_metrics.orders" in template
+    assert "('Ventas derivadas', vendor_branch_metrics.ai_sales" in template
+    assert "Cupo mensual compartido por toda la empresa" in template
+    assert "data-copy-vendor-url" in template
+    assert "branch_status.web_active" in template
     assert "('Hacer seguimiento', false)" not in template
 
 
