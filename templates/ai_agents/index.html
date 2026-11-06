@@ -501,16 +501,16 @@
     </div>
     <div class="vendor-metric-grid">
       {% for label, value, icon in [
-        ('Conversaciones', metrics.conversations, 'bi-chat-dots'),
-        ('Clientes atendidos', metrics.clients_attended, 'bi-people'),
-        ('Presupuestos', metrics.quotes, 'bi-file-earmark-text'),
-        ('Pedidos IA', metrics.orders, 'bi-bag-check'),
-        ('Ventas derivadas', metrics.ai_sales, 'bi-currency-dollar')
+        ('Conversaciones', vendor_branch_metrics.conversations, 'bi-chat-dots'),
+        ('Clientes atendidos', vendor_branch_metrics.clients_attended, 'bi-people'),
+        ('Presupuestos', vendor_branch_metrics.quotes, 'bi-file-earmark-text'),
+        ('Pedidos IA', vendor_branch_metrics.orders, 'bi-bag-check'),
+        ('Ventas derivadas', vendor_branch_metrics.ai_sales, 'bi-currency-dollar')
       ] %}
         <article class="vendor-metric-card"><i class="bi {{ icon }} text-primary fs-5"></i><div class="small text-muted mt-2">{{ label }}</div><strong>{{ value }}</strong></article>
       {% endfor %}
     </div>
-    {% if metrics.conversations == 0 %}
+    {% if vendor_branch_metrics.conversations == 0 %}
       <div class="alert alert-light border mt-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div><strong>Todavía no hay conversaciones en {{ metrics_scope_label }}.</strong><div class="small text-muted">Compartí tu vendedor IA para empezar a recibir consultas.</div></div>
         {% if vendor_webchat_live %}<a class="btn btn-sm btn-primary" href="{{ public_vendor_url }}" target="_blank" rel="noopener">Abrir vendedor</a>{% else %}<a class="btn btn-sm btn-outline-primary" href="#branch-vendors">Revisar canales</a>{% endif %}
