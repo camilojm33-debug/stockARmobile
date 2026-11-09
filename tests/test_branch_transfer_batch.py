@@ -317,6 +317,8 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     assert "sessionStorage.setItem" in script
     assert "restoreDraft()" in script
     assert "Cambiar la sucursal de origen" in script
+    assert "branch-transfer-swap" in template
+    assert "Intercambiar el origen y el destino" in script
     assert "transfer_status" in script
     service_worker = (Path(__file__).resolve().parents[1] / "static" / "service-worker.js").read_text(encoding="utf-8")
     assert "'/sucursales/api/productos-transferencia'" in service_worker
