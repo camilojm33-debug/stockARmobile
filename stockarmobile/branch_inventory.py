@@ -80,7 +80,7 @@ def available_stock(product, branch_id, *, allow_inactive=False):
     return float(row.stock or 0) if row is not None else 0.0
 
 
-def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None):
+def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity, *, user_id=None, note=None, idempotency_key=None):
     """Move units between branches atomically; company aggregate stock is unchanged."""
     from decimal import Decimal, InvalidOperation
     from app import Branch, BranchStockTransfer, db
@@ -111,6 +111,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
         product_id=product.id,
         quantity=amount,
         note=(str(note or "").strip()[:255] or None),
+        idempotency_key=(str(idempotency_key or "").strip()[:100] or None),
         created_by_user_id=user_id,
     )
     db.session.add(transfer)
@@ -128,7 +129,7 @@ def transfer_branch_stock(product, source_branch_id, target_branch_id, quantity,
     return transfer
 
 
-def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None):
+def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, user_id=None, note=None, idempotency_key=None):
     """Transfer several products in one caller-controlled database transaction.
 
     Products are locked in ascending ID order so concurrent multi-product
@@ -156,6 +157,41 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
         raise ValueError("Una transferencia puede incluir hasta 100 productos por operación.")
 
     normalized.sort(key=lambda row: row[0])
+    batch_key = str(idempotency_key or "").strip()[:100] or None
+    if idempotency_key is not None and not batch_key:
+        raise ValueError("La clave de idempotencia de la transferencia no es válida.")
+
+    if batch_key:
+        from app import BranchStockTransfer
+        company_ids = {int(getattr(product, "company_id", 0) or 0) for _, product, _ in normalized}
+        if len(company_ids) != 1 or not next(iter(company_ids)):
+            raise ValueError("Todos los productos deben pertenecer a la misma empresa.")
+        company_id = next(iter(company_ids))
+        existing = (
+            BranchStockTransfer.query.filter_by(
+                company_id=company_id, idempotency_key=batch_key
+            ).order_by(BranchStockTransfer.product_id.asc()).all()
+        )
+        if existing:
+            expected = [
+                (product_id, validate_stock_quantity(quantity, label="La cantidad de transferencia"))
+                for product_id, _product, quantity in normalized
+            ]
+            actual = [
+                (int(row.product_id), validate_stock_quantity(row.quantity, label="La cantidad de transferencia"))
+                for row in existing
+            ]
+            same_route = all(
+                int(row.source_branch_id) == int(source_branch_id)
+                and int(row.target_branch_id) == int(target_branch_id)
+                for row in existing
+            )
+            if actual == expected and same_route and len(existing) == len(expected):
+                # A browser/network retry returns the original committed rows
+                # without decrementing stock or creating movements again.
+                return existing
+            raise ValueError("La clave de esta transferencia ya fue utilizada con otros productos o cantidades.")
+
     transfers = []
     for _product_id, product, quantity in normalized:
         transfers.append(transfer_branch_stock(
@@ -165,6 +201,7 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
             quantity,
             user_id=user_id,
             note=note,
+            idempotency_key=batch_key,
         ))
     return transfers
 
