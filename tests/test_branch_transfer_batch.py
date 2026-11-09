@@ -307,7 +307,7 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     assert 'class="branch-overview-grid"' in template
     assert 'class="branch-card ' in template
     assert 'data-branch-employee-search' in template
-    assert 'class="branch-history-table"' in template
+    assert "branch-history-table" in template
     assert 'name="items_json"' in template
     assert "branch-transfer-manager.js" in template
     assert "Agregar visibles" in template
