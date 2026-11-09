@@ -412,6 +412,23 @@ def test_branch_management_template_exposes_responsive_sections_and_accessible_e
     assert "@media(max-width:767.98px)" in template
 
 
+def test_branch_management_overlay_stacks_above_transfer_workspace_and_allows_one_open_panel():
+    from pathlib import Path
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "templates"
+        / "company_billing"
+        / "settings.html"
+    ).read_text(encoding="utf-8")
+
+    assert ".branch-card.is-managing{position:relative;z-index:40;transform:none}" in template
+    assert ".branch-card.is-managing .branch-manage-content{z-index:41}" in template
+    assert "details.addEventListener('toggle'" in template
+    assert "other.open = false" in template
+    assert "overscroll-behavior:contain" in template
+
+
 def test_branch_transfer_failure_retains_return_path_and_success_marker_is_cleaned_by_script():
     from pathlib import Path
 
