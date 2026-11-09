@@ -403,6 +403,9 @@ def test_branch_management_template_exposes_responsive_sections_and_accessible_e
     assert "transfer-browser-card" in template
     assert "transfer-cart-card" in template
     assert "branch-history-section" in template
+    assert "Responsable" in template
+    assert "branch_transfer_actors.get(transfer.created_by_user_id" in template
+    assert ".transfer-cart-card{position:sticky" in template
     assert "aria-label=\"Capacidad de sucursales utilizada\"" in template
     assert "@media(max-width:767.98px)" in template
 
