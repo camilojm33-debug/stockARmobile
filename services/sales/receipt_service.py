@@ -302,7 +302,16 @@ class ReceiptService:
             configured = text_value(branch_settings.get(key))
             if configured:
                 raw_value = branch_settings.get(key)
-                printer_settings[key] = int(raw_value) if key == "printer_port" else configured
+                if key == "printer_port":
+                    try:
+                        port = int(raw_value)
+                    except (TypeError, ValueError):
+                        continue
+                    if not 1 <= port <= 65535:
+                        continue
+                    printer_settings[key] = port
+                else:
+                    printer_settings[key] = configured
         if "cashdrawer_enabled" in branch_settings:
             printer_settings["cashdrawer_enabled"] = bool(branch_settings.get("cashdrawer_enabled"))
 
