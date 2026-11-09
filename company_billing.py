@@ -5295,6 +5295,10 @@ def company_settings():
     from services.ai_agent.usage_service import can_use_commercial_feature
     multi_branch_access = can_use_commercial_feature(company, "multi_branch").allowed
     company_branches = Branch.query.filter_by(company_id=company.id).order_by(Branch.is_default.desc(), Branch.name.asc()).all()
+    branch_receipt_settings = {
+        branch.id: _json_company_dict(branch.receipt_settings_json)
+        for branch in company_branches
+    }
     branch_user_access = {
         branch.id: {row.user_id for row in UserBranchAccess.query.filter_by(company_id=company.id, branch_id=branch.id).all()}
         for branch in company_branches
@@ -5577,6 +5581,7 @@ def company_settings():
         multi_branch_access=multi_branch_access,
         company_branches=company_branches,
         branch_user_access=branch_user_access,
+        branch_receipt_settings=branch_receipt_settings,
         branch_transfer_history=branch_transfer_history,
         branch_transfer_actors=branch_transfer_actors,
         pending_branch_user_assignment=pending_branch_user_assignment,
