@@ -1248,7 +1248,7 @@
         {% for branch in company_branches %}
         <article class="branch-card {% if not branch.active %}is-inactive{% endif %}">
           <div class="branch-card-main">
-            <div class="branch-card-identity"><span class="branch-card-icon"><i class="bi bi-shop-window"></i></span><div class="min-w-0"><div class="branch-card-eyebrow">{% if branch.is_default %}CASA CENTRAL{% else %}SUCURSAL ADICIONAL{% endif %}</div><h4>{{ branch.name }}</h4><p><i class="bi bi-geo-alt me-1"></i>{{ branch.city or 'Ubicación sin configurar' }}{% if branch.province %}, {{ branch.province }}{% endif %}</p></div></div>
+            <div class="branch-card-identity"><span class="branch-card-icon"><i class="bi bi-shop-window"></i></span><div class="min-w-0"><div class="branch-card-eyebrow">{% if branch.is_default %}CASA CENTRAL{% else %}SUCURSAL ADICIONAL{% endif %} · {{ branch.code }}</div><h4>{{ branch.name }}</h4><p><i class="bi bi-geo-alt me-1"></i>{{ branch.city or 'Ubicación sin configurar' }}{% if branch.province %}, {{ branch.province }}{% endif %}</p></div></div>
             <span class="branch-state-badge {{ 'is-active' if branch.active else 'is-inactive' }}"><i class="bi {{ 'bi-check-circle-fill' if branch.active else 'bi-pause-circle-fill' }}"></i>{{ 'Activa' if branch.active else 'Inactiva' }}</span>
           </div>
           <div class="branch-card-meta"><div><i class="bi bi-people"></i><span><strong>{{ branch_user_access.get(branch.id, [])|length }}</strong> empleados</span></div><div><i class="bi bi-telephone"></i><span>{{ branch.phone or 'Sin teléfono' }}</span></div><div><i class="bi bi-robot"></i><span>{{ 'Vendedor incluido' if branch.is_default else 'Vendedor por licencia' }}</span></div></div>
