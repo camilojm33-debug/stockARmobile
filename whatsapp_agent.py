@@ -758,6 +758,32 @@ def _ai_order_row(company_id: int, quote):
     }
 
 
+def _ai_assigned_branch_ids(company_id: int):
+    """Return the active branches visible to this employee; admins remain tenant-wide."""
+    if str(getattr(current_user, "role", "") or "").strip().lower() in {"admin", "superadmin"}:
+        return None
+    from app import Branch
+    from stockarmobile.branch_context import accessible_branches
+
+    branches = accessible_branches(int(company_id))
+    if branches:
+        return {int(branch.id) for branch in branches}
+    # Keep legacy companies without branch records operational. Once branches
+    # exist, an employee with no assignment must fail closed.
+    if Branch.query.filter_by(company_id=int(company_id)).first() is not None:
+        abort(403)
+    return None
+
+
+def _scope_ai_branch(query, model, company_id: int):
+    branch_ids = _ai_assigned_branch_ids(company_id)
+    if branch_ids is None:
+        return query
+    if not hasattr(model, "branch_id"):
+        abort(403)
+    return query.filter(model.branch_id.in_(sorted(branch_ids)))
+
+
 @bp.get("/pedidos-ia")
 @login_required
 def ai_orders():
@@ -766,12 +792,10 @@ def ai_orders():
         abort(403)
     from app import Quote
     marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quotes = (
-        Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == marker)
-        .order_by(Quote.date.desc(), Quote.id.desc())
-        .limit(100)
-        .all()
-    )
+    quote_query = Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == marker)
+    quotes = _scope_ai_branch(quote_query, Quote, company_id).order_by(
+        Quote.date.desc(), Quote.id.desc()
+    ).all()
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
     allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human", "pickup_pending", "picked_up"}
@@ -817,6 +841,7 @@ def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, 
         agent_id=int(agent.id),
         channel="whatsapp",
     )
+    query = _scope_ai_branch(query, Conversation, company_id)
     if lock:
         query = query.with_for_update()
     return query.first()
@@ -843,11 +868,12 @@ def ai_order_mark_picked_up(quote_id: int):
     from stockarmobile.helpers.dates import utcnow_naive
 
     marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
+    quote_query = Quote.query.filter_by(
         id=int(quote_id),
         company_id=int(company_id),
         observations=marker,
-    ).with_for_update().first()
+    )
+    quote = _scope_ai_branch(quote_query, Quote, company_id).with_for_update().first()
     if quote is None:
         abort(404)
 
@@ -886,13 +912,12 @@ def ai_whatsapp_attention():
     if state not in {"all", "pending", "human", "ai", "resolved"}:
         state = "pending"
 
-    conversations = (
-        db.session.query(Conversation)
-        .filter_by(company_id=company_id, agent_id=int(agent.id), channel="whatsapp")
-        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
-        .limit(200)
-        .all()
+    conversation_query = db.session.query(Conversation).filter_by(
+        company_id=company_id, agent_id=int(agent.id), channel="whatsapp"
     )
+    conversations = _scope_ai_branch(
+        conversation_query, Conversation, company_id
+    ).order_by(Conversation.updated_at.desc(), Conversation.id.desc()).all()
     all_rows = []
     for conversation in conversations:
         attention = attention_for(conversation)
@@ -1146,6 +1171,14 @@ def ai_order_shipping(quote_id: int):
     company_id = get_current_company_id()
     if not company_id:
         abort(403)
+    from app import Quote
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote_query = Quote.query.filter_by(
+        id=int(quote_id), company_id=int(company_id), observations=marker
+    )
+    quote = _scope_ai_branch(quote_query, Quote, company_id).first()
+    if quote is None:
+        abort(404)
     raw_cost = str(request.form.get("shipping_cost") or "").strip().replace(",", ".")
     try:
         from decimal import Decimal, InvalidOperation
@@ -1211,11 +1244,12 @@ def ai_order_attention(quote_id: int):
     from app import Quote, record_audit
 
     marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
+    quote_query = Quote.query.filter_by(
         id=int(quote_id),
         company_id=int(company_id),
         observations=marker,
-    ).first()
+    )
+    quote = _scope_ai_branch(quote_query, Quote, company_id).first()
     if quote is None:
         abort(404)
 
@@ -1283,7 +1317,10 @@ def ai_order_detail(quote_id: int):
         abort(403)
     from app import Quote
     marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id), observations=marker).first()
+    quote_query = Quote.query.filter_by(
+        id=int(quote_id), company_id=int(company_id), observations=marker
+    )
+    quote = _scope_ai_branch(quote_query, Quote, company_id).first()
     if quote is None:
         abort(404)
     return render_template(
