@@ -2198,8 +2198,8 @@
     });
   })();
 </script>
-{% if active_branch_count > 1 %}
-<script src="{{ url_for('static', filename='assets/js/branch-transfer-manager.js', v='20261109-branch-transfer-workspace') }}"></script>
 {% endif %}
+{% if settings_panel == 'branches' and active_branch_count > 1 %}
+<script src="{{ url_for('static', filename='assets/js/branch-transfer-manager.js', v='20261109-branch-transfer-workspace') }}"></script>
 {% endif %}
 {% endblock %}
