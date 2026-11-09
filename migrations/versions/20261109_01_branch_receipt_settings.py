@@ -1,6 +1,6 @@
 """Persist per-branch receipt identity and printer overrides.
 
-Revision ID: 20261109_01_branch_receipt_settings
+Revision ID: 20261109_01_branch_receipts
 Revises: 20261106_01_branch_vendor
 Create Date: 2026-11-09
 """
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20261109_01_branch_receipt_settings"
+revision = "20261109_01_branch_receipts"
 down_revision = "20261106_01_branch_vendor"
 branch_labels = None
 depends_on = None
