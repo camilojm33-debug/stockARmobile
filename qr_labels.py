@@ -1183,12 +1183,14 @@ def print_all():
 @bp.route("/ticket/<int:sale_id>.pdf")
 @tenant_required
 def generate_pdf_ticket(sale_id):
-    from app import Company, Sale, SaleItem, scope_query_to_company
+    from app import Company, Sale, SaleItem
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import Preformatted
     from services.sales.receipt_service import ReceiptService
+    from sales import _sale_ticket_accessible_query
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale_query = Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product))
+    sale = _sale_ticket_accessible_query(sale_query, Sale).filter(Sale.id == sale_id).first_or_404()
     company = Company.query.filter_by(id=sale.company_id).first() if sale.company_id else None
     context = ReceiptService.ticket_context(company=company, sale=sale)
     ticket_text = ReceiptService.ticket_text(sale, context["ticket_name"])
