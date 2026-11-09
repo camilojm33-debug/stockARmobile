@@ -227,6 +227,15 @@ def _sale_accessible_query(query, model):
     return scoped_query
 
 
+def _sale_ticket_accessible_query(query, model):
+    """Admins may reprint historical sales from any branch in their own company."""
+    from app import scope_query_to_company
+
+    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
+        return scope_query_to_company(query, model)
+    return _sale_accessible_query(query, model)
+
+
 def _pos_qr_draft_session_key():
     """Keep pending POS QR state isolated by tenant, user, and active branch."""
     return f"pos_qr_draft_{_cart_tenant_key()}_{_active_cart_branch_scope()}"
@@ -1795,14 +1804,12 @@ def thermal_ticket(sale_id):
     from app import Company, Sale, SaleItem
 
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first_or_404()
-    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
-    ticket_brand = _ticket_brand_name()
-    try:
-        printer_settings = json.loads(company.printer_settings_json or "{}")
-    except (TypeError, ValueError):
-        printer_settings = {}
-    if not isinstance(printer_settings, dict):
-        printer_settings = {}
+    sale = _sale_ticket_accessible_query(
+        Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)),
+        Sale,
+    ).filter(Sale.id == sale_id).first_or_404()
+    ticket_context = ReceiptService.ticket_context(company=company, sale=sale)
+    ticket_brand = ticket_context["ticket_name"]
     return render_template(
         "ventas/ticket.html",
         sale=sale,
@@ -1811,7 +1818,8 @@ def thermal_ticket(sale_id):
         ticket_text=_ticket_text(sale, ticket_brand=ticket_brand),
         ticket_brand=ticket_brand,
         ticket_note=_ticket_note(sale, ticket_brand=ticket_brand),
-        printer_settings=printer_settings,
+        ticket_context=ticket_context,
+        printer_settings=ticket_context["printer_settings"],
     )
 
 
@@ -1822,7 +1830,10 @@ def print_thermal_ticket(sale_id):
     from services.thermal_printer_service import ThermalPrinterService
 
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first_or_404()
-    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_ticket_accessible_query(
+        Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)),
+        Sale,
+    ).filter(Sale.id == sale_id).first_or_404()
     result = ThermalPrinterService().print_sale_ticket(company, sale)
     if result.printed:
         flash("Ticket enviado a la impresora térmica.", "success")
@@ -1960,19 +1971,26 @@ def api_recent_sales():
     )
 
 
-def _ticket_brand_name():
+def _ticket_context(sale=None):
     from app import Company
 
-    company_id = getattr(current_user, "company_id", None)
-    if not company_id:
-        return ReceiptService.ticket_brand_name(company=None)
+    company_id = (
+        getattr(sale, "company_id", None)
+        or getattr(current_user, "company_id", None)
+    )
+    company = Company.query.filter_by(id=company_id).first() if company_id else None
+    return ReceiptService.ticket_context(company=company, sale=sale)
 
-    company = Company.query.filter_by(id=company_id).first()
-    return ReceiptService.ticket_brand_name(company=company)
+
+def _ticket_brand_name(sale=None):
+    return _ticket_context(sale).get("ticket_name") or "STOCK ARMOBILE"
 
 
 def _ticket_text(sale, ticket_brand=None):
-    return ReceiptService.ticket_text(sale, ticket_brand=(ticket_brand or _ticket_brand_name() or "STOCK ARMOBILE"))
+    return ReceiptService.ticket_text(
+        sale,
+        ticket_brand=(ticket_brand or _ticket_brand_name(sale) or "STOCK ARMOBILE"),
+    )
 
 
 def _ticket_rows(sale):
@@ -1986,7 +2004,7 @@ def _ticket_charge_rows(sale):
 def _ticket_note(sale, ticket_brand=None):
     return ReceiptService.ticket_note(
         sale,
-        ticket_brand=(ticket_brand or _ticket_brand_name() or "STOCK ARMOBILE"),
+        ticket_brand=(ticket_brand or _ticket_brand_name(sale) or "STOCK ARMOBILE"),
     )
 
 
@@ -2066,12 +2084,16 @@ def public_ticket(token):
     if sale is None:
         abort(404)
 
-    ticket_brand = sale.company.name if getattr(sale, "company", None) and getattr(sale.company, "name", None) else "STOCK ARMOBILE"
+    ticket_context = _ticket_context(sale)
+    ticket_brand = ticket_context["ticket_name"]
     return render_template(
         "ventas/ticket.html",
         sale=sale,
         rows=_ticket_rows(sale),
+        charge_rows=_ticket_charge_rows(sale),
         ticket_text=_ticket_text(sale, ticket_brand=ticket_brand),
         ticket_brand=ticket_brand,
         ticket_note=_ticket_note(sale, ticket_brand=ticket_brand),
+        ticket_context=ticket_context,
+        printer_settings=ticket_context["printer_settings"],
     )
