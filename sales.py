@@ -2047,7 +2047,7 @@ def _build_whatsapp_link(sale, phone=None):
 
 
 def _ticket_text_for_whatsapp(sale):
-    return ReceiptService.whatsapp_text(sale, _ticket_brand_name())
+    return ReceiptService.whatsapp_text(sale, _ticket_brand_name(sale))
 
 
 @bp.route("/<int:sale_id>/share-whatsapp", methods=["GET", "POST"])
