@@ -395,6 +395,9 @@ def transfer_stock():
 
     transfer_succeeded = False
     try:
+        idempotency_key = str(request.form.get("idempotency_key") or "").strip()
+        if not idempotency_key:
+            raise ValueError("Actualizá la pantalla de transferencias para generar una clave segura de operación.")
         raw_items = (request.form.get("items_json") or "").strip()
         if raw_items:
             payload = json.loads(raw_items)
@@ -448,6 +451,7 @@ def transfer_stock():
         transfers = transfer_branch_stock_batch(
             transfer_items, source.id, target.id,
             user_id=current_user.id, note=request.form.get("note"),
+            idempotency_key=idempotency_key,
         )
         db.session.commit()
         transfer_succeeded = True
