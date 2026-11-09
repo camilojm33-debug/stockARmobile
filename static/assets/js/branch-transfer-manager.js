@@ -5,6 +5,7 @@
   const form = document.getElementById('branch-transfer-form');
   const source = document.getElementById('branch-transfer-source');
   const target = document.getElementById('branch-transfer-target');
+  const swapButton = document.getElementById('branch-transfer-swap');
   const search = document.getElementById('branch-transfer-search');
   const category = document.getElementById('branch-transfer-category');
   const availableOnly = document.getElementById('branch-transfer-available-only');
@@ -309,6 +310,18 @@
   target.addEventListener('change', () => {
     ensureDifferentBranches('target');
     saveDraft();
+  });
+  swapButton?.addEventListener('click', () => {
+    if (selected.size && !window.confirm('Intercambiar el origen y el destino cambia el stock de referencia. ¿Querés quitar los productos seleccionados y continuar?')) return;
+    const previousSource = source.value;
+    source.value = target.value;
+    target.value = previousSource;
+    lastSourceId = source.value;
+    lastTargetId = target.value;
+    ensureDifferentBranches('source');
+    selected.clear();
+    renderSelected();
+    loadProducts();
   });
   noteInput?.addEventListener('input', saveDraft);
 
