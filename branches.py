@@ -337,13 +337,17 @@ def transfer_stock():
     if pin_blocked:
         return pin_blocked
 
+    return_path = _safe_return_path(
+        request.form.get("return_to"),
+        fallback=url_for("company_billing.company_settings", panel="branches"),
+    )
     source_id = request.form.get("source_branch_id", type=int)
     target_id = request.form.get("target_branch_id", type=int)
     source = Branch.query.filter_by(id=source_id, company_id=company_id, active=True).first()
     target = Branch.query.filter_by(id=target_id, company_id=company_id, active=True).first()
     if source is None or target is None or source.id == target.id:
         flash("Revisá las sucursales de origen y destino. Deben ser distintas y estar activas.", "danger")
-        return redirect(url_for("company_billing.company_settings", panel="branches"))
+        return redirect(return_path)
 
     transfer_succeeded = False
     try:
@@ -416,10 +420,6 @@ def transfer_stock():
         db.session.rollback()
         current_app.logger.exception("Branch stock transfer batch failed company_id=%s", company_id)
         flash("No se pudo completar la transferencia. No se guardaron cambios.", "danger")
-    return_path = _safe_return_path(
-        request.form.get("return_to"),
-        fallback=url_for("company_billing.company_settings", panel="branches"),
-    )
     if transfer_succeeded:
         separator = "&" if "?" in return_path else "?"
         return_path = f"{return_path}{separator}transfer_status=success"
