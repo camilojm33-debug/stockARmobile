@@ -91,8 +91,32 @@ def test_batch_branch_transfer_moves_multiple_products_in_one_operation(app):
             source.id,
             target.id,
             note="Reposición mensual",
+            idempotency_key="batch-replay-test-001",
         )
         db.session.commit()
+        replay = transfer_branch_stock_batch(
+            [(second, "3"), (first, "4.5")],
+            source.id,
+            target.id,
+            note="Reposición mensual",
+            idempotency_key="batch-replay-test-001",
+        )
+        db.session.commit()
+
+        assert [row.id for row in replay] == [row.id for row in transfers]
+        try:
+            transfer_branch_stock_batch(
+                [(second, "2"), (first, "4.5")],
+                source.id,
+                target.id,
+                note="Reposición mensual",
+                idempotency_key="batch-replay-test-001",
+            )
+        except ValueError as exc:
+            assert "clave" in str(exc).lower()
+            db.session.rollback()
+        else:
+            raise AssertionError("Una clave no debe reutilizarse para cantidades diferentes.")
 
         assert len(transfers) == 2
         assert available_stock(first, source.id) == 5.5
@@ -233,6 +257,8 @@ def test_branch_transfer_post_processes_all_selected_products_together(app, monk
         response = client.post(
             "/sucursales/transferir-stock",
             data={
+                "idempotency_key": "route-transfer-test-001",
+                "idempotency_key": "route-transfer-test-002",
                 "source_branch_id": str(source.id),
                 "target_branch_id": str(target.id),
                 "note": "Reposición de salón",
