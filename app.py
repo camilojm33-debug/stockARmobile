@@ -1511,6 +1511,11 @@ class BranchStockTransfer(db.Model):
     __tablename__ = "branch_stock_transfers"
     __table_args__ = (
         Index("ix_branch_stock_transfers_company_created", "company_id", "created_at"),
+        Index(
+            "uq_branch_stock_transfers_company_key_product",
+            "company_id", "idempotency_key", "product_id",
+            unique=True,
+        ),
     )
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -1519,6 +1524,7 @@ class BranchStockTransfer(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
     quantity = db.Column(db.Numeric(18, 3), nullable=False)
     note = db.Column(db.Text)
+    idempotency_key = db.Column(db.String(100), nullable=True)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
     source_branch = db.relationship("Branch", foreign_keys=[source_branch_id])
