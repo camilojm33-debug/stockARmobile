@@ -3,6 +3,12 @@
   if (!root) return;
 
   const form = document.getElementById('branch-transfer-form');
+  const idempotencyInput = form.querySelector('input[name="idempotency_key"]');
+  if (idempotencyInput && !idempotencyInput.value) {
+    idempotencyInput.value = (window.crypto && typeof window.crypto.randomUUID === 'function')
+      ? window.crypto.randomUUID()
+      : 'transfer-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  }
   const source = document.getElementById('branch-transfer-source');
   const target = document.getElementById('branch-transfer-target');
   const swapButton = document.getElementById('branch-transfer-swap');
