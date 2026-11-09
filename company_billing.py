@@ -5366,6 +5366,7 @@ def company_settings():
     mercado_pago_connection_summary = _mercadopago_connection_summary(company)
     active_employees = []
     branch_transfer_history = []
+    branch_transfer_actors = {}
     device_rows = []
     backups = []
     backup_plan = {}
@@ -5416,6 +5417,16 @@ def company_settings():
                 .limit(20)
                 .all()
             )
+            creator_ids = {int(row.created_by_user_id) for row in branch_transfer_history if row.created_by_user_id}
+            if creator_ids:
+                from app import User
+                branch_transfer_actors = {
+                    user.id: (user.name or user.username or "Usuario")
+                    for user in User.query.filter(
+                        User.company_id == company.id,
+                        User.id.in_(creator_ids),
+                    ).all()
+                }
         device_rows = (
             AuditLog.query.filter_by(company_id=company.id, action="login_success")
             .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
@@ -5567,6 +5578,7 @@ def company_settings():
         company_branches=company_branches,
         branch_user_access=branch_user_access,
         branch_transfer_history=branch_transfer_history,
+        branch_transfer_actors=branch_transfer_actors,
         pending_branch_user_assignment=pending_branch_user_assignment,
         branch_limit=branch_limit,
         active_branch_count=active_branch_count,
