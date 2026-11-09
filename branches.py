@@ -566,8 +566,13 @@ def update_branch_ticket_settings(branch_id):
     else:
         current["printer_port"] = ""
 
-    # An unchecked box explicitly disables an inherited cash drawer.
-    current["cashdrawer_enabled"] = request.form.get("cashdrawer_enabled") == "1"
+    drawer_choice = request.form.get("cashdrawer_enabled", "")
+    if drawer_choice == "1":
+        current["cashdrawer_enabled"] = True
+    elif drawer_choice == "0":
+        current["cashdrawer_enabled"] = False
+    else:
+        current.pop("cashdrawer_enabled", None)
 
     try:
         branch.receipt_settings_json = json.dumps(current, ensure_ascii=False)
