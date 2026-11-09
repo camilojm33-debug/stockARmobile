@@ -113,6 +113,44 @@ def _has_pending_invoice_sales(company_id, branch_id):
     )
 
 
+def _has_pending_vendor_orders(company_id, branch_id):
+    """Prevent branch shutdown while Vendor IA still owns unresolved work."""
+    from app import Quote, QuoteDelivery
+
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    terminal_statuses = ("convertido", "anulado", "rechazado", "vencido")
+    unresolved_quote = (
+        Quote.query.filter_by(
+            company_id=int(company_id),
+            branch_id=int(branch_id),
+            observations=marker,
+        )
+        .filter(func.lower(func.coalesce(Quote.status, "")).notin_(terminal_statuses))
+        .first()
+    )
+    if unresolved_quote is not None:
+        return True
+
+    # A converted sale may still await shipping confirmation or physical pickup.
+    return (
+        QuoteDelivery.query.join(Quote, Quote.id == QuoteDelivery.quote_id)
+        .filter(
+            Quote.company_id == int(company_id),
+            Quote.branch_id == int(branch_id),
+            Quote.observations == marker,
+            or_(
+                func.lower(func.coalesce(QuoteDelivery.shipping_status, "")) == "pending",
+                (
+                    (func.lower(func.coalesce(QuoteDelivery.method, "retiro")) != "envio")
+                    & (func.lower(func.coalesce(QuoteDelivery.pickup_status, "pending")) == "pending")
+                ),
+            ),
+        )
+        .first()
+        is not None
+    )
+
+
 def _require_company_pin(company):
     from company_billing import _pin_guard
     return _pin_guard(company)
@@ -228,6 +266,12 @@ def update_branch(branch_id):
         if _has_pending_invoice_sales(company_id, branch.id):
             flash(
                 "Emití los comprobantes pendientes o anulá esas ventas antes de desactivar la sucursal.",
+                "warning",
+            )
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+        if _has_pending_vendor_orders(company_id, branch.id):
+            flash(
+                "Resolvé los pedidos del Vendedor IA pendientes (pagos, envíos o retiros) antes de desactivar la sucursal.",
                 "warning",
             )
             return redirect(url_for("company_billing.company_settings", panel="branches"))
