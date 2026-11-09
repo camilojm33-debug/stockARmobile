@@ -1198,197 +1198,144 @@
     </div>
   </div>
   {% elif panel == 'branches' %}
-  <div class="card app-card mb-4">
-    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Gestión de sucursales</span>
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver a Mi Empresa</a>
-    </div>
-    <div class="card-body p-4">
-      {% if pending_branch_user_assignment %}
-      <div class="alert alert-info mb-3" role="status">
-        <div class="fw-semibold">Asignación de personal pendiente de confirmación</div>
-        <div>
-          Sucursal: <strong>{{ pending_branch_user_assignment.branch_name }}</strong>.
-          Empleados seleccionados: <strong>{{ pending_branch_user_assignment.employee_count }}</strong>.
-          Al validar el PIN, se guardarán automáticamente estos accesos.
-        </div>
+  <section class="branch-management-page">
+    <header class="branch-page-hero">
+      <div class="branch-page-hero-top">
+        <div><span class="page-kicker"><i class="bi bi-diagram-3"></i> Operación distribuida</span><h2 class="branch-page-title">Gestión de sucursales</h2><p class="branch-page-subtitle">Organizá tus locales, asigná el equipo y mové inventario desde un solo lugar.</p></div>
+        <a class="btn btn-outline-secondary branch-back-link" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
       </div>
-      {% endif %}
-      {% if not multi_branch_access %}
-        <div class="alert alert-info mb-0">
-          <strong>Disponible desde Premium.</strong>
-          <p class="mb-2">Administrá varias sedes desde una única empresa, con stock, ventas y cajas diferenciadas.</p>
-          <a class="btn btn-primary" href="{{ url_for('company_billing.subscription_portal') }}">Ver planes y actualizar</a>
-        </div>
-      {% else %}
-        {% if not pin_verified %}
-        <div class="alert alert-warning mb-0">
-          <strong>Validación de seguridad requerida.</strong>
-          <p class="mb-2">Validá el PIN de Mi Empresa antes de administrar sucursales o asignar personal.</p>
-          <a class="btn btn-outline-primary" href="{{ url_for('company_billing.company_settings', panel='security') }}">Ir a Seguridad y validar PIN</a>
-        </div>
+      <div class="branch-overview-grid" aria-label="Resumen de sucursales">
+        <article class="branch-overview-card"><span class="branch-overview-icon"><i class="bi bi-shop"></i></span><div><small>Sucursales activas</small><strong>{{ active_branch_count }}</strong><span>Locales operativos</span></div></article>
+        <article class="branch-overview-card"><span class="branch-overview-icon is-indigo"><i class="bi bi-diagram-3"></i></span><div><small>Capacidad del plan</small><strong>{{ branch_limit }}</strong><span>Sucursales permitidas</span></div></article>
+        <article class="branch-overview-card"><span class="branch-overview-icon is-green"><i class="bi bi-plus-circle"></i></span><div><small>Lugares disponibles</small><strong>{{ [branch_limit - active_branch_count, 0]|max }}</strong><span>Espacios para crecer</span></div></article>
+        <article class="branch-overview-card"><span class="branch-overview-icon is-amber"><i class="bi bi-pause-circle"></i></span><div><small>Sucursales inactivas</small><strong>{{ company_branches|rejectattr('active')|list|length }}</strong><span>Fuera de operación</span></div></article>
+      </div>
+      <div class="branch-plan-usage" role="progressbar" aria-label="Capacidad de sucursales utilizada" aria-valuenow="{{ (active_branch_count * 100 / branch_limit)|round|int if branch_limit else 0 }}" aria-valuemin="0" aria-valuemax="100"><div class="branch-plan-usage-head"><span>Uso de tu plan</span><strong>{{ active_branch_count }} de {{ branch_limit }}</strong></div><div class="branch-plan-track"><span style="width:{{ [active_branch_count * 100 / branch_limit, 100]|min if branch_limit else 0 }}%"></span></div></div>
+    </header>
+    {% if pending_branch_user_assignment %}
+    <div class="alert alert-info branch-pending-alert" role="status"><i class="bi bi-shield-check fs-5"></i><div><strong>Asignación pendiente de confirmación</strong><span>{{ pending_branch_user_assignment.employee_count }} empleado(s) seleccionados para {{ pending_branch_user_assignment.branch_name }}. Validá el PIN para guardar los accesos.</span></div></div>
+    {% endif %}
+    {% if not multi_branch_access %}
+      <div class="alert alert-info branch-access-alert mb-0"><div class="branch-access-icon"><i class="bi bi-buildings"></i></div><div class="flex-grow-1"><strong>La gestión de múltiples sucursales está disponible desde Premium.</strong><p class="mb-2">Administrá varias sedes desde una única empresa, con stock, ventas y cajas diferenciadas.</p><a class="btn btn-primary btn-sm" href="{{ url_for('company_billing.subscription_portal') }}">Ver planes y actualizar</a></div></div>
+    {% elif not pin_verified %}
+      <div class="alert alert-warning branch-access-alert mb-0"><div class="branch-access-icon"><i class="bi bi-shield-lock"></i></div><div class="flex-grow-1"><strong>Validación de seguridad requerida.</strong><p class="mb-2">Validá el PIN de Mi Empresa antes de administrar sucursales o asignar personal.</p><a class="btn btn-outline-primary btn-sm" href="{{ url_for('company_billing.company_settings', panel='security') }}">Ir a Seguridad y validar PIN</a></div></div>
+    {% else %}
+      <div class="branch-section-toolbar">
+        <div><span class="branch-section-kicker">ESTRUCTURA COMERCIAL</span><h3 class="branch-section-title">Tus sucursales</h3><p class="branch-section-help">Cada local conserva su propia operación y sus permisos.</p></div>
+        <details class="branch-create-panel">
+          <summary class="btn btn-primary branch-create-trigger"><i class="bi bi-plus-lg me-1"></i>Nueva sucursal</summary>
+          <div class="branch-create-form-wrap">
+            <div class="branch-create-form-heading"><div><strong>Crear una sucursal</strong><span>Completá los datos principales del nuevo local.</span></div><span class="badge text-bg-light border">{{ active_branch_count }}/{{ branch_limit }}</span></div>
+            {% if active_branch_count >= branch_limit %}<div class="alert alert-warning small mb-0">Alcanzaste el límite de sucursales de tu plan. Actualizá tu suscripción para agregar otra.</div>{% else %}
+            <form method="post" action="{{ url_for('branches.create_branch') }}" class="row g-3">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="col-md-6"><label class="form-label" for="new-branch-name">Nombre del local</label><input class="form-control" id="new-branch-name" name="name" required maxlength="120" placeholder="Ej.: Sucursal Norte"></div>
+              <div class="col-md-6"><label class="form-label" for="new-branch-code">Código interno</label><input class="form-control" id="new-branch-code" name="code" maxlength="40" placeholder="Ej.: NORTE"></div>
+              <div class="col-12"><div class="branch-form-group-label">Ubicación</div></div>
+              <div class="col-md-6"><label class="form-label" for="new-branch-address">Dirección</label><input class="form-control" id="new-branch-address" name="address" maxlength="255" placeholder="Calle y altura"></div>
+              <div class="col-md-3"><label class="form-label" for="new-branch-city">Ciudad</label><input class="form-control" id="new-branch-city" name="city" maxlength="120"></div>
+              <div class="col-md-3"><label class="form-label" for="new-branch-province">Provincia</label><input class="form-control" id="new-branch-province" name="province" maxlength="120"></div>
+              <div class="col-12"><div class="branch-form-group-label">Contacto</div></div>
+              <div class="col-md-6"><label class="form-label" for="new-branch-phone">Teléfono</label><input class="form-control" id="new-branch-phone" name="phone" maxlength="40" inputmode="tel"></div>
+              <div class="col-md-6"><label class="form-label" for="new-branch-whatsapp">WhatsApp</label><input class="form-control" id="new-branch-whatsapp" name="whatsapp" maxlength="40" inputmode="tel"></div>
+              <div class="col-12 d-flex flex-wrap justify-content-end gap-2"><button class="btn btn-outline-secondary" type="reset">Limpiar</button><button class="btn btn-primary" type="submit"><i class="bi bi-check2 me-1"></i>Crear sucursal</button></div>
+            </form>
+            {% endif %}
+          </div>
+        </details>
+      </div>
+      <div class="branch-cards-grid">
+        {% for branch in company_branches %}
+        <article class="branch-card {% if not branch.active %}is-inactive{% endif %}">
+          <div class="branch-card-main">
+            <div class="branch-card-identity"><span class="branch-card-icon"><i class="bi bi-shop-window"></i></span><div class="min-w-0"><div class="branch-card-eyebrow">{% if branch.is_default %}CASA CENTRAL{% else %}SUCURSAL ADICIONAL{% endif %}</div><h4>{{ branch.name }}</h4><p><i class="bi bi-geo-alt me-1"></i>{{ branch.city or 'Ubicación sin configurar' }}{% if branch.province %}, {{ branch.province }}{% endif %}</p></div></div>
+            <span class="branch-state-badge {{ 'is-active' if branch.active else 'is-inactive' }}"><i class="bi {{ 'bi-check-circle-fill' if branch.active else 'bi-pause-circle-fill' }}"></i>{{ 'Activa' if branch.active else 'Inactiva' }}</span>
+          </div>
+          <div class="branch-card-meta"><div><i class="bi bi-people"></i><span><strong>{{ branch_user_access.get(branch.id, [])|length }}</strong> empleados</span></div><div><i class="bi bi-telephone"></i><span>{{ branch.phone or 'Sin teléfono' }}</span></div><div><i class="bi bi-robot"></i><span>{{ 'Vendedor incluido' if branch.is_default else 'Vendedor por licencia' }}</span></div></div>
+          <div class="branch-card-actions">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='vendedor', branch_id=branch.id, _anchor='branch-vendors') }}"><i class="bi bi-robot me-1"></i>Vendedor IA</a>
+            <details class="branch-manage-details">
+              <summary class="btn btn-sm btn-light"><i class="bi bi-sliders me-1"></i>Administrar</summary>
+              <div class="branch-manage-content">
+                <section class="branch-manage-block">
+                  <div class="branch-manage-heading"><div><strong>Datos de la sucursal</strong><span>Actualizá la información de contacto y ubicación.</span></div></div>
+                  <form method="post" action="{{ url_for('branches.update_branch', branch_id=branch.id) }}" class="row g-2 align-items-end branch-edit-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="col-md-6"><label class="form-label" for="branch-{{ branch.id }}-name">Nombre</label><input class="form-control" id="branch-{{ branch.id }}-name" name="name" value="{{ branch.name }}" required maxlength="120"></div>
+                    <div class="col-md-6"><label class="form-label" for="branch-{{ branch.id }}-address">Dirección</label><input class="form-control" id="branch-{{ branch.id }}-address" name="address" value="{{ branch.address or '' }}" maxlength="255"></div>
+                    <div class="col-md-4"><label class="form-label" for="branch-{{ branch.id }}-city">Ciudad</label><input class="form-control" id="branch-{{ branch.id }}-city" name="city" value="{{ branch.city or '' }}" maxlength="120"></div>
+                    <div class="col-md-4"><label class="form-label" for="branch-{{ branch.id }}-province">Provincia</label><input class="form-control" id="branch-{{ branch.id }}-province" name="province" value="{{ branch.province or '' }}" maxlength="120"></div>
+                    <div class="col-md-4"><label class="form-label" for="branch-{{ branch.id }}-phone">Teléfono</label><input class="form-control" id="branch-{{ branch.id }}-phone" name="phone" value="{{ branch.phone or '' }}" maxlength="40" inputmode="tel"></div>
+                    <div class="col-md-6"><label class="form-label" for="branch-{{ branch.id }}-whatsapp">WhatsApp</label><input class="form-control" id="branch-{{ branch.id }}-whatsapp" name="whatsapp" value="{{ branch.whatsapp or '' }}" maxlength="40" inputmode="tel"></div>
+                    <div class="col-md-3"><label class="form-label" for="branch-{{ branch.id }}-active">Estado</label><select class="form-select" id="branch-{{ branch.id }}-active" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
+                    <div class="col-md-3 d-grid"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar datos</button></div>
+                  </form>
+                  {% if branch.is_default %}<div class="branch-note"><i class="bi bi-info-circle me-1"></i>Casa central debe permanecer activa para mantener la operación de la empresa.</div>{% endif %}
+                </section>
+                <section class="branch-manage-block">
+                  <form method="post" action="{{ url_for('branches.assign_users', branch_id=branch.id) }}" class="branch-employee-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="branch-manage-heading"><div><strong>Personal y permisos</strong><span>Elegí quién puede operar en {{ branch.name }}.</span></div><span class="badge text-bg-light border">{{ branch_user_access.get(branch.id, [])|length }} asignado(s)</span></div>
+                    <div class="branch-employee-tools"><div class="input-group input-group-sm"><span class="input-group-text"><i class="bi bi-search"></i></span><input class="form-control" type="search" placeholder="Buscar empleado..." aria-label="Buscar empleado" data-branch-employee-search></div><div class="d-flex flex-wrap gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-branch-employee-select="all">Seleccionar visibles</button><button class="btn btn-sm btn-outline-secondary" type="button" data-branch-employee-select="none">Quitar visibles</button></div></div>
+                    <div class="branch-employee-grid">
+                      {% for employee in active_employees if employee.role != 'superadmin' %}
+                      <label class="branch-employee-option" data-branch-employee-option data-search-text="{{ employee.name|lower }}"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, []) %}checked{% endif %}><span>{{ employee.name }}</span></label>
+                      {% else %}<div class="branch-empty-employees">No hay empleados activos para asignar.</div>{% endfor %}
+                    </div>
+                    <div class="branch-employee-footer"><span class="small text-muted" data-branch-employee-count>{{ branch_user_access.get(branch.id, [])|length }} seleccionados</span><button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-person-check me-1"></i>Guardar permisos</button></div>
+                    <p class="branch-note mb-0"><i class="bi bi-shield-lock me-1"></i>La asignación se confirma con el PIN administrativo de Mi Empresa.</p>
+                  </form>
+                </section>
+              </div>
+            </details>
+          </div>
+        </article>
         {% else %}
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
-          <div><div class="h5 mb-1">{{ active_branch_count }} de {{ branch_limit }} sucursales activas/permitidas</div><div class="text-muted small">La facturación y el catálogo siguen perteneciendo a la empresa matriz.</div></div>
-        </div>
-        <form method="post" action="{{ url_for('branches.create_branch') }}" class="row g-2 border rounded-3 p-3 mb-4">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" required maxlength="120" placeholder="Sucursal Norte"></div>
-          <div class="col-md-2"><label class="form-label">Código</label><input class="form-control" name="code" maxlength="40" placeholder="NORTE"></div>
-          <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" maxlength="255"></div>
-          <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" maxlength="120"></div>
-          <div class="col-md-2"><label class="form-label">Provincia</label><input class="form-control" name="province" maxlength="120"></div>
-          <div class="col-md-3"><label class="form-label">Teléfono</label><input class="form-control" name="phone" maxlength="40"></div>
-          <div class="col-md-3"><label class="form-label">WhatsApp</label><input class="form-control" name="whatsapp" maxlength="40"></div>
-          <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit" {% if active_branch_count >= branch_limit %}disabled{% endif %}>Crear sucursal</button></div>
-        </form>
-        <div class="row g-3">
-          {% for branch in company_branches %}
-          <div class="col-12">
-            <div class="border rounded-3 p-3">
-              <form method="post" action="{{ url_for('branches.update_branch', branch_id=branch.id) }}" class="row g-2 align-items-end">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="col-md-3"><label class="form-label">Nombre</label><input class="form-control" name="name" value="{{ branch.name }}" required maxlength="120"></div>
-                <div class="col-md-3"><label class="form-label">Dirección</label><input class="form-control" name="address" value="{{ branch.address or '' }}"></div>
-                <div class="col-md-2"><label class="form-label">Ciudad</label><input class="form-control" name="city" value="{{ branch.city or '' }}"></div>
-                <div class="col-md-2"><label class="form-label">Provincia</label><input class="form-control" name="province" value="{{ branch.province or '' }}"></div>
-                <div class="col-md-2"><label class="form-label">Teléfono</label><input class="form-control" name="phone" value="{{ branch.phone or '' }}"></div>
-                <div class="col-md-2"><label class="form-label">WhatsApp</label><input class="form-control" name="whatsapp" value="{{ branch.whatsapp or '' }}"></div>
-                <div class="col-md-2"><label class="form-label">Estado</label><select class="form-select" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
-                <div class="col-md-2"><button class="btn btn-outline-secondary w-100" type="submit" title="Guarda solamente los datos generales de esta sucursal">Guardar datos de sucursal</button></div>
-              </form>
-              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2">
-                {% if branch.is_default %}<span class="badge text-bg-primary">Casa central · Vendedor IA incluido en el plan</span>{% else %}<span class="badge text-bg-light border">Sucursal adicional</span>{% endif %}
-                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='vendedor', branch_id=branch.id, _anchor='branch-vendors') }}">
-                  <i class="bi bi-robot me-1"></i>Vendedor IA de esta sucursal
-                </a>
-              </div>
-              <form method="post" action="{{ url_for('branches.assign_users', branch_id=branch.id) }}" class="mt-3 pt-3 border-top">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
-                  <div>
-                    <div class="fw-semibold">Personal con acceso a esta sucursal</div>
-                    <div class="small text-muted">Marcá los empleados que podrán operar en {{ branch.name }}. Esta acción no modifica los datos generales de la sucursal.</div>
-                  </div>
-                  <span class="badge text-bg-light border">{{ branch_user_access.get(branch.id, [])|length }} asignado(s)</span>
-                </div>
-                <div class="row g-2">
-                  {% for employee in active_employees if employee.role != 'superadmin' %}
-                  <div class="col-sm-6 col-lg-3"><label class="form-check"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, []) %}checked{% endif %}> <span class="form-check-label">{{ employee.name }}</span></label></div>
-                  {% else %}
-                  <div class="col-12 small text-muted">No hay empleados activos para asignar.</div>
-                  {% endfor %}
-                </div>
-                <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
-                  <button class="btn btn-primary" type="submit"><i class="bi bi-person-check me-1"></i>Guardar asignación de personal</button>
-                  <span class="small text-muted">Se confirma y guarda la selección completa de esta sucursal.</span>
-                </div>
-              </form>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-        {% if active_branch_count > 1 %}
-        <div id="branch-transfer-manager" class="border rounded-3 p-3 mt-4" data-products-url="{{ url_for('branches.search_transfer_products') }}">
-          <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-            <div>
-              <h3 class="h6 fw-bold mb-1">Transferir stock entre sucursales</h3>
-              <p class="small text-muted mb-0">Buscá, seleccioná varios productos y confirmá todo junto. El stock consolidado de la empresa no cambia.</p>
-            </div>
-            <span class="badge text-bg-light border">Hasta 100 productos por operación</span>
-          </div>
+        <div class="branch-empty-state"><i class="bi bi-shop-window"></i><strong>Todavía no hay sucursales cargadas.</strong><span>Creá tu primer local para comenzar a administrar la operación.</span></div>
+        {% endfor %}
+      </div>
+      {% if active_branch_count > 1 %}
+      <section class="branch-transfer-section">
+        <div class="branch-section-toolbar branch-transfer-toolbar"><div><span class="branch-section-kicker">INVENTARIO DISTRIBUIDO</span><h3 class="branch-section-title">Transferir stock</h3><p class="branch-section-help">Mové varios productos entre locales en una sola operación, con validación de existencias.</p></div><span class="branch-transfer-limit"><i class="bi bi-box-seam me-1"></i>Hasta 100 productos por operación</span></div>
+        <div id="branch-transfer-manager" class="branch-transfer-manager" data-products-url="{{ url_for('branches.search_transfer_products') }}" data-company-id="{{ company.id }}" data-transfer-completed="{{ 1 if request.args.get('transfer_status') == 'success' else 0 }}">
           <form method="post" action="{{ url_for('branches.transfer_stock') }}" id="branch-transfer-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="items_json" id="branch-transfer-items-json">
-            <input type="hidden" name="return_to" value="{{ request.full_path }}">
-            <div class="row g-2 align-items-end">
-              <div class="col-md-4">
-                <label class="form-label" for="branch-transfer-source">Origen</label>
-                <select class="form-select" name="source_branch_id" id="branch-transfer-source" required>
-                  {% for branch in company_branches if branch.active %}
-                  <option value="{{ branch.id }}">{{ branch.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-4">
-                <label class="form-label" for="branch-transfer-target">Destino</label>
-                <select class="form-select" name="target_branch_id" id="branch-transfer-target" required>
-                  {% for branch in company_branches if branch.active %}
-                  <option value="{{ branch.id }}" {% if loop.index == 2 %}selected{% endif %}>{{ branch.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-4">
-                <label class="form-label" for="branch-transfer-note">Referencia / motivo</label>
-                <input class="form-control" name="note" id="branch-transfer-note" maxlength="255" placeholder="Ej.: Reposición semanal">
-              </div>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="items_json" id="branch-transfer-items-json"><input type="hidden" name="return_to" value="{{ request.full_path }}">
+            <div class="transfer-route-card">
+              <div class="transfer-route-field"><label class="form-label" for="branch-transfer-source">Desde</label><div class="transfer-select-wrap"><i class="bi bi-box-arrow-up-right"></i><select class="form-select" name="source_branch_id" id="branch-transfer-source" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}">{{ branch.name }}</option>{% endfor %}</select></div></div>
+              <div class="transfer-route-swap"><i class="bi bi-arrow-right"></i></div>
+              <div class="transfer-route-field"><label class="form-label" for="branch-transfer-target">Hacia</label><div class="transfer-select-wrap"><i class="bi bi-shop"></i><select class="form-select" name="target_branch_id" id="branch-transfer-target" required>{% for branch in company_branches if branch.active %}<option value="{{ branch.id }}" {% if loop.index == 2 %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}</select></div></div>
+              <div class="transfer-route-field transfer-note-field"><label class="form-label" for="branch-transfer-note">Referencia o motivo <span class="text-muted fw-normal">(opcional)</span></label><input class="form-control" name="note" id="branch-transfer-note" maxlength="255" placeholder="Ej.: Reposición semanal"></div>
             </div>
-
-            <div class="rounded-3 border p-3 mt-3">
-              <div class="row g-2 align-items-end">
-                <div class="col-lg-5">
-                  <label class="form-label" for="branch-transfer-search">Buscar producto</label>
-                  <input class="form-control" type="search" id="branch-transfer-search" autocomplete="off" placeholder="Nombre, código, categoría o marca">
-                </div>
-                <div class="col-lg-3">
-                  <label class="form-label" for="branch-transfer-category">Categoría</label>
-                  <select class="form-select" id="branch-transfer-category">
-                    <option value="">Todas las categorías</option>
-                  </select>
-                </div>
-                <div class="col-lg-2">
-                  <div class="form-check mb-2">
-                    <input class="form-check-input" type="checkbox" id="branch-transfer-available-only" checked>
-                    <label class="form-check-label small" for="branch-transfer-available-only">Con stock disponible</label>
-                  </div>
-                </div>
-                <div class="col-lg-2 d-grid">
-                  <button type="button" class="btn btn-outline-primary" id="branch-transfer-add-visible">Agregar visibles</button>
-                </div>
-              </div>
-              <div class="small text-muted mt-2" id="branch-transfer-search-status" role="status" aria-live="polite">Cargando productos de la sucursal de origen...</div>
-              <div class="list-group mt-2" id="branch-transfer-results" aria-label="Productos disponibles para transferir">
-                <div class="list-group-item small text-muted">Cargando productos...</div>
-              </div>
-              <div class="d-flex justify-content-between align-items-center gap-2 mt-2">
-                <span class="small text-muted" id="branch-transfer-result-count"></span>
-                <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="branch-transfer-load-more">Cargar más productos</button>
-              </div>
+            <div class="row g-3 align-items-start transfer-workspace">
+              <div class="col-lg-7"><section class="transfer-browser-card">
+                <div class="transfer-card-heading"><div><strong><i class="bi bi-search me-1"></i>Buscar productos</strong><span>Filtrá y agregá los artículos que vas a mover.</span></div><span class="transfer-step-number">01</span></div>
+                <div class="transfer-search-grid"><div><label class="form-label" for="branch-transfer-search">Producto, código o marca</label><div class="input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input class="form-control" type="search" id="branch-transfer-search" autocomplete="off" placeholder="Escribí para buscar..."></div></div><div><label class="form-label" for="branch-transfer-category">Categoría</label><select class="form-select" id="branch-transfer-category"><option value="">Todas las categorías</option></select></div></div>
+                <div class="transfer-filter-row"><label class="form-check"><input class="form-check-input" type="checkbox" id="branch-transfer-available-only" checked><span class="form-check-label">Mostrar solo productos con stock</span></label><button type="button" class="btn btn-sm btn-outline-primary" id="branch-transfer-add-visible"><i class="bi bi-plus-square me-1"></i>Agregar visibles</button></div>
+                <div class="transfer-search-status" id="branch-transfer-search-status" role="status" aria-live="polite">Cargando productos de la sucursal de origen...</div>
+                <div class="transfer-results-list" id="branch-transfer-results" aria-label="Productos disponibles para transferir"><div class="transfer-result-empty">Cargando productos...</div></div>
+                <div class="transfer-results-footer"><span class="small text-muted" id="branch-transfer-result-count"></span><button type="button" class="btn btn-sm btn-light d-none" id="branch-transfer-load-more">Cargar más</button></div>
+              </section></div>
+              <div class="col-lg-5"><section class="transfer-cart-card">
+                <div class="transfer-card-heading"><div><strong><i class="bi bi-basket2 me-1"></i>Tu transferencia</strong><span id="branch-transfer-summary">0 productos · 0 unidades</span></div><span class="transfer-step-number">02</span></div>
+                <div class="transfer-cart-table-wrap"><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Producto</th><th class="text-end">Disponible</th><th style="width:112px">Cantidad</th><th aria-label="Acciones"></th></tr></thead><tbody id="branch-transfer-selected"><tr><td colspan="4" class="text-center text-muted py-4"><i class="bi bi-basket d-block fs-3 mb-2"></i>Agregá productos para preparar el movimiento.</td></tr></tbody></table></div></div>
+                <div class="transfer-cart-foot"><small>Las cantidades no pueden superar el stock de origen.</small><strong id="branch-transfer-submit-status">Agregá productos para comenzar.</strong></div>
+              </section></div>
             </div>
-
-            <div class="mt-3">
-              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-                <h4 class="h6 fw-bold mb-0">Productos seleccionados</h4>
-                <span class="small text-muted" id="branch-transfer-summary">0 productos · 0 unidades</span>
-              </div>
-              <div class="table-responsive border rounded-3">
-                <table class="table table-sm table-hover align-middle mb-0">
-                  <thead class="table-light">
-                    <tr>
-                      <th>Producto</th>
-                      <th class="text-end">Stock origen</th>
-                      <th style="width: 170px;">Cantidad a transferir</th>
-                      <th class="text-end">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody id="branch-transfer-selected">
-                    <tr><td colspan="4" class="text-center text-muted py-3">Todavía no agregaste productos.</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-              <div class="small text-muted" id="branch-transfer-submit-status">Las cantidades se vuelven a validar en el servidor antes de confirmar.</div>
-              <button class="btn btn-primary" type="submit" id="branch-transfer-submit" disabled>Confirmar transferencia</button>
-            </div>
+            <div class="transfer-confirm-bar"><div><span class="transfer-confirm-icon"><i class="bi bi-shield-check"></i></span><div><strong>Confirmación segura</strong><small>El sistema valida todo nuevamente. Si una línea falla, se revierte la operación completa.</small></div></div><button class="btn btn-primary btn-lg" type="submit" id="branch-transfer-submit" disabled><i class="bi bi-arrow-left-right me-1"></i>Confirmar transferencia</button></div>
           </form>
         </div>
-        {% endif %}
-        <p class="small text-muted mt-3 mb-0">El acceso se valida en el servidor. Desactivar una sucursal conserva sus ventas, movimientos e historial.</p>
-        {% endif %}
+      </section>
       {% endif %}
-    </div>
-  </div>
+      <section class="branch-history-section">
+        <div class="branch-section-toolbar"><div><span class="branch-section-kicker">TRAZABILIDAD</span><h3 class="branch-section-title">Últimas transferencias</h3><p class="branch-section-help">Movimientos recientes registrados entre tus sucursales.</p></div><span class="branch-history-count">{{ branch_transfer_history|length }} registros</span></div>
+        <div class="branch-history-card"><div class="table-responsive"><table class="table branch-history-table align-middle mb-0"><thead><tr><th>Fecha</th><th>Origen</th><th></th><th>Destino</th><th>Producto</th><th class="text-end">Cantidad</th><th>Referencia</th></tr></thead><tbody>
+          {% for transfer in branch_transfer_history %}
+          <tr><td class="text-nowrap">{{ transfer.created_at.strftime('%d/%m/%Y %H:%M') if transfer.created_at else '-' }}</td><td><strong>{{ transfer.source_branch.name if transfer.source_branch else 'Sucursal' }}</strong></td><td class="text-center"><i class="bi bi-arrow-right text-primary"></i></td><td><strong>{{ transfer.target_branch.name if transfer.target_branch else 'Sucursal' }}</strong></td><td>{{ transfer.product.name if transfer.product else 'Producto eliminado' }}</td><td class="text-end text-nowrap">{{ '%.3f'|format(transfer.quantity or 0) }}</td><td>{{ transfer.note or '—' }}</td></tr>
+          {% else %}<tr><td colspan="7" class="text-center text-muted py-4"><i class="bi bi-arrow-left-right d-block fs-3 mb-2"></i>Todavía no hay transferencias registradas.</td></tr>{% endfor %}
+        </tbody></table></div></div>
+      </section>
+    {% endif %}
+  </section>
   {% elif panel == 'general' %}
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
@@ -2035,6 +1982,33 @@
     .company-module-title { font-size: .98rem; }
     .company-module-description { font-size: .86rem; }
   }
+
+  /* Branch management workspace */
+  .branch-management-page{display:grid;gap:1.35rem}.branch-page-hero{padding:1.4rem;border:1px solid rgba(37,99,235,.13);border-radius:22px;background:radial-gradient(circle at 88% 0,rgba(99,102,241,.10),transparent 30%),linear-gradient(135deg,#f7faff,#fff 58%,#f5f8ff);box-shadow:0 12px 34px rgba(15,23,42,.045)}
+  .branch-page-hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1.25rem}.branch-page-title{margin:.2rem 0 .3rem;font-size:clamp(1.5rem,3vw,2rem);font-weight:900;letter-spacing:-.035em;color:#172554}.branch-page-subtitle{margin:0;color:#64748b;max-width:650px}.branch-back-link{white-space:nowrap}
+  .branch-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}.branch-overview-card{min-width:0;display:flex;align-items:center;gap:.8rem;padding:.85rem;border:1px solid rgba(148,163,184,.18);border-radius:15px;background:rgba(255,255,255,.88)}.branch-overview-icon{flex:0 0 42px;width:42px;height:42px;display:grid;place-items:center;border-radius:13px;color:#2563eb;background:#eff6ff;font-size:1.15rem}.branch-overview-icon.is-indigo{color:#4f46e5;background:#eef2ff}.branch-overview-icon.is-green{color:#15803d;background:#f0fdf4}.branch-overview-icon.is-amber{color:#b45309;background:#fffbeb}.branch-overview-card small,.branch-overview-card span:not(.branch-overview-icon){display:block;color:#64748b;font-size:.72rem}.branch-overview-card strong{display:block;color:#0f172a;font-size:1.4rem;line-height:1.2;font-weight:900}
+  .branch-plan-usage{display:grid;gap:.4rem;max-width:520px;margin-top:1rem}.branch-plan-usage-head{display:flex;justify-content:space-between;color:#64748b;font-size:.76rem}.branch-plan-usage-head strong{color:#334155}.branch-plan-track{height:7px;overflow:hidden;border-radius:999px;background:#e2e8f0}.branch-plan-track span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#6366f1)}
+  .branch-pending-alert,.branch-access-alert{display:flex;align-items:flex-start;gap:.85rem;border-radius:15px}.branch-pending-alert>i{color:#2563eb}.branch-access-icon{flex:0 0 42px;width:42px;height:42px;display:grid;place-items:center;border-radius:13px;background:rgba(37,99,235,.08);color:#2563eb;font-size:1.25rem}
+  .branch-section-toolbar{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:1rem}.branch-section-kicker{display:block;color:#64748b;font-size:.68rem;letter-spacing:.11em;font-weight:900}.branch-section-title{margin:.15rem 0 .25rem;color:#0f172a;font-weight:900;font-size:1.25rem;letter-spacing:-.025em}.branch-section-help{margin:0;color:#64748b;font-size:.88rem}
+  .branch-create-panel{position:relative}.branch-create-trigger{list-style:none;cursor:pointer;padding:.68rem 1rem}.branch-create-trigger::-webkit-details-marker{display:none}.branch-create-form-wrap{position:absolute;z-index:20;top:calc(100% + .55rem);right:0;width:min(650px,calc(100vw - 2rem));padding:1.15rem;border:1px solid var(--app-line);border-radius:18px;background:#fff;box-shadow:0 22px 55px rgba(15,23,42,.16)}.branch-create-form-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem}.branch-create-form-heading strong,.branch-create-form-heading span{display:block}.branch-create-form-heading strong{color:#0f172a}.branch-create-form-heading div span{color:#64748b;font-size:.8rem;margin-top:.15rem}.branch-form-group-label{color:#334155;font-size:.76rem;font-weight:800;letter-spacing:.04em;border-bottom:1px solid #e2e8f0;padding-bottom:.35rem}
+  .branch-cards-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.branch-card{min-width:0;padding:1.05rem;border:1px solid var(--app-line);border-radius:18px;background:#fff;box-shadow:0 8px 22px rgba(15,23,42,.035);transition:box-shadow .18s ease,border-color .18s ease,transform .18s ease}.branch-card:hover{border-color:rgba(37,99,235,.23);box-shadow:0 14px 28px rgba(15,23,42,.07);transform:translateY(-1px)}.branch-card.is-inactive{background:#f8fafc;opacity:.9}
+  .branch-card-main{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem}.branch-card-identity{display:flex;align-items:center;gap:.8rem;min-width:0}.branch-card-icon{flex:0 0 46px;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;color:#2563eb;background:linear-gradient(145deg,#eff6ff,#eef2ff);font-size:1.25rem}.branch-card-eyebrow{color:#64748b;font-size:.64rem;letter-spacing:.1em;font-weight:900}.branch-card-identity h4{margin:.1rem 0 .15rem;color:#0f172a;font-size:1.05rem;font-weight:900}.branch-card-identity p{margin:0;color:#64748b;font-size:.78rem}
+  .branch-state-badge{flex:0 0 auto;display:inline-flex;align-items:center;gap:.32rem;padding:.32rem .58rem;border-radius:999px;font-size:.7rem;font-weight:800}.branch-state-badge.is-active{background:#f0fdf4;color:#15803d}.branch-state-badge.is-inactive{background:#f1f5f9;color:#64748b}.branch-card-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;margin:1rem 0 .85rem;padding:.7rem 0;border-top:1px solid #eef2f7;border-bottom:1px solid #eef2f7}.branch-card-meta>div{display:flex;align-items:center;gap:.38rem;min-width:0;color:#64748b;font-size:.72rem}.branch-card-meta i{color:#64748b}.branch-card-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.branch-card-meta strong{color:#0f172a}
+  .branch-card-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.55rem}.branch-manage-details{position:relative}.branch-manage-details>summary{list-style:none;cursor:pointer}.branch-manage-details>summary::-webkit-details-marker{display:none}.branch-manage-content{position:absolute;z-index:18;top:calc(100% + .55rem);right:0;width:min(780px,calc(100vw - 2.5rem));max-height:min(72vh,760px);overflow-y:auto;padding:1rem;border:1px solid var(--app-line);border-radius:17px;background:#fff;box-shadow:0 22px 55px rgba(15,23,42,.16)}
+  .branch-manage-block+.branch-manage-block{margin-top:1rem;padding-top:1rem;border-top:1px solid #e2e8f0}.branch-manage-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:.7rem;margin-bottom:.8rem}.branch-manage-heading strong,.branch-manage-heading span{display:block}.branch-manage-heading strong{color:#0f172a;font-size:.9rem}.branch-manage-heading div span{color:#64748b;font-size:.77rem;margin-top:.15rem}.branch-employee-tools{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.55rem;margin-bottom:.7rem}.branch-employee-tools .input-group{max-width:280px}.branch-employee-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.45rem;max-height:180px;overflow:auto;padding:.2rem}.branch-employee-option{display:flex;align-items:center;gap:.5rem;min-width:0;padding:.5rem .6rem;border:1px solid #e2e8f0;border-radius:10px;background:#fff;cursor:pointer;font-size:.8rem}.branch-employee-option:has(input:checked){border-color:#93c5fd;background:#eff6ff}.branch-employee-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.branch-empty-employees{grid-column:1/-1;color:#64748b;font-size:.8rem;padding:.5rem}.branch-employee-footer{display:flex;justify-content:space-between;align-items:center;gap:.75rem;margin-top:.75rem}.branch-note{margin:.65rem 0 0;color:#64748b;font-size:.73rem}
+  .branch-empty-state{grid-column:1/-1;display:grid;justify-items:center;gap:.4rem;padding:2.2rem 1rem;border:1px dashed #cbd5e1;border-radius:17px;color:#64748b;text-align:center}.branch-empty-state i{font-size:2rem;color:#94a3b8}.branch-empty-state strong{color:#334155}
+  .branch-transfer-section,.branch-history-section{display:grid;gap:.85rem}.branch-transfer-toolbar{align-items:center}.branch-transfer-limit,.branch-history-count{padding:.4rem .65rem;border:1px solid #dbeafe;border-radius:999px;color:#1d4ed8;background:#eff6ff;font-size:.73rem;font-weight:800}.branch-transfer-manager{padding:1rem;border:1px solid var(--app-line);border-radius:20px;background:linear-gradient(180deg,#fbfdff,#fff);box-shadow:0 10px 28px rgba(15,23,42,.045)}
+  .transfer-route-card{display:grid;grid-template-columns:minmax(0,1fr) 38px minmax(0,1fr) minmax(220px,1.1fr);gap:.7rem;align-items:end;padding:1rem;border:1px solid #e2e8f0;border-radius:15px;background:#f8fafc}.transfer-route-field{min-width:0}.transfer-route-field .form-label{font-size:.75rem;font-weight:800;color:#475569}.transfer-select-wrap{position:relative}.transfer-select-wrap>i{position:absolute;left:.75rem;top:50%;transform:translateY(-50%);z-index:1;color:#64748b}.transfer-select-wrap .form-select{padding-left:2.2rem;min-height:44px;background-color:#fff}.transfer-route-swap{display:grid;place-items:center;align-self:center;width:36px;height:36px;margin-top:1.1rem;border:1px solid #dbeafe;border-radius:50%;color:#2563eb;background:#eff6ff}
+  .transfer-search-grid{display:grid;grid-template-columns:1.3fr .8fr;gap:.7rem}.transfer-search-grid .form-label{font-size:.73rem;font-weight:800;color:#475569}.transfer-browser-card,.transfer-cart-card{height:100%;min-width:0;padding:1rem;border:1px solid var(--app-line);border-radius:16px;background:#fff}.transfer-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;margin-bottom:.85rem}.transfer-card-heading strong,.transfer-card-heading span{display:block}.transfer-card-heading strong{color:#0f172a;font-size:.94rem;font-weight:900}.transfer-card-heading>div>span{color:#64748b;font-size:.75rem;margin-top:.12rem}.transfer-step-number{display:grid;place-items:center;width:30px;height:30px;border-radius:10px;background:#eff6ff;color:#2563eb;font-size:.72rem;font-weight:900}
+  .transfer-filter-row{display:flex;justify-content:space-between;align-items:center;gap:.6rem;margin:.75rem 0 .35rem}.transfer-filter-row .form-check{margin:0;font-size:.76rem;color:#64748b}.transfer-search-status{min-height:1.25rem;color:#64748b;font-size:.72rem;padding:.4rem 0}.transfer-results-list{display:grid;gap:.45rem;max-height:390px;overflow:auto;padding:.1rem .2rem .1rem 0}.transfer-results-list .list-group-item{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.6rem;padding:.7rem;border:1px solid #e2e8f0!important;border-radius:11px!important;background:#fff}.transfer-results-list .list-group-item:hover{border-color:#bfdbfe!important;background:#f8fbff}.transfer-results-list .fw-semibold{color:#0f172a;font-size:.82rem}.transfer-results-list .text-muted{font-size:.7rem}.transfer-result-empty{padding:1.6rem .8rem;text-align:center;color:#64748b;font-size:.78rem}.transfer-results-footer{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-top:.6rem}
+  .transfer-cart-card{display:flex;flex-direction:column}.transfer-cart-table-wrap{max-height:400px;overflow:auto;border:1px solid #e2e8f0;border-radius:11px}.transfer-cart-table-wrap table{min-width:480px}.transfer-cart-table-wrap thead{position:sticky;top:0;z-index:1;background:#f8fafc}.transfer-cart-table-wrap th{color:#64748b;font-size:.68rem;white-space:nowrap}.transfer-cart-table-wrap td{font-size:.74rem}.transfer-cart-table-wrap .form-control{min-width:75px;padding:.3rem .4rem;font-size:.75rem}.transfer-cart-foot{padding:.7rem .15rem 0}.transfer-cart-foot small,.transfer-cart-foot strong{display:block}.transfer-cart-foot small{color:#64748b;font-size:.7rem;margin-bottom:.2rem}.transfer-cart-foot strong{color:#334155;font-size:.76rem}
+  .transfer-confirm-bar{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-top:1rem;padding:1rem;border:1px solid #dbeafe;border-radius:15px;background:linear-gradient(135deg,#f8fbff,#eff6ff)}.transfer-confirm-bar>div{display:flex;align-items:center;gap:.7rem;min-width:0}.transfer-confirm-icon{flex:0 0 38px;width:38px;height:38px;display:grid;place-items:center;border-radius:12px;color:#15803d;background:#f0fdf4;font-size:1.15rem}.transfer-confirm-bar strong,.transfer-confirm-bar small{display:block}.transfer-confirm-bar strong{color:#0f172a;font-size:.81rem}.transfer-confirm-bar small{max-width:580px;color:#64748b;font-size:.7rem}
+  .branch-history-card{overflow:hidden;border:1px solid var(--app-line);border-radius:17px;background:#fff}.branch-history-table{min-width:850px}.branch-history-table th{color:#64748b;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;background:#f8fafc}.branch-history-table td{font-size:.76rem}.branch-history-table td strong{color:#334155}
+  @media(max-width:1199.98px){.branch-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.transfer-route-card{grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr)}.transfer-note-field{grid-column:1/-1}}
+  @media(max-width:991.98px){.branch-cards-grid{grid-template-columns:1fr}.branch-manage-content{position:static;width:100%;max-height:none;margin-top:.65rem;box-shadow:none}.transfer-cart-card{margin-top:.2rem}}
+  @media(max-width:767.98px){.branch-page-hero{padding:1rem}.branch-page-hero-top{flex-direction:column}.branch-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.branch-overview-card{padding:.7rem;gap:.6rem}.branch-overview-icon{flex-basis:36px;width:36px;height:36px}.branch-create-panel{width:100%}.branch-create-trigger{width:100%}.branch-create-form-wrap{left:0;right:auto;width:100%}.branch-section-toolbar{align-items:flex-start}.branch-card-meta{grid-template-columns:1fr;gap:.45rem}.branch-manage-details{width:100%}.branch-manage-details>summary{width:100%;text-align:center}.branch-manage-content{max-height:70vh}.transfer-route-card{grid-template-columns:1fr}.transfer-route-swap{margin:.1rem auto;transform:rotate(90deg)}.transfer-note-field{grid-column:auto}.transfer-search-grid{grid-template-columns:1fr}.transfer-filter-row{align-items:flex-start;flex-direction:column}.transfer-confirm-bar{align-items:stretch;flex-direction:column}.transfer-confirm-bar .btn{width:100%}.branch-employee-tools{flex-direction:column}.branch-employee-tools .input-group{max-width:none}}
+  @media(max-width:420px){.branch-overview-grid{grid-template-columns:1fr 1fr}.branch-overview-card{align-items:flex-start}.branch-overview-card strong{font-size:1.15rem}.branch-card-identity{gap:.55rem}.branch-card-icon{flex-basis:39px;width:39px;height:39px}.branch-employee-grid{grid-template-columns:1fr}.branch-employee-footer{align-items:flex-start;flex-direction:column}}
+
 </style>
 {% endblock %}
 
@@ -2209,7 +2183,23 @@
   })();
 </script>
 {% endif %}
-{% if settings_panel == 'branches' and active_branch_count > 1 %}
-<script src="{{ url_for('static', filename='assets/js/branch-transfer-manager.js', v='20261103-multi-product-transfer-refresh') }}"></script>
+{% if settings_panel == 'branches' %}
+<script>
+  (() => {
+    document.querySelectorAll('.branch-employee-form').forEach(form => {
+      const search = form.querySelector('[data-branch-employee-search]');
+      const options = Array.from(form.querySelectorAll('[data-branch-employee-option]'));
+      const counter = form.querySelector('[data-branch-employee-count]');
+      const updateCount = () => { if (counter) counter.textContent = options.filter(option => option.querySelector('input')?.checked).length + ' seleccionados'; };
+      search?.addEventListener('input', () => { const query = search.value.trim().toLocaleLowerCase(); options.forEach(option => { option.hidden = query && !(option.dataset.searchText || '').includes(query); }); });
+      form.querySelectorAll('[data-branch-employee-select]').forEach(button => button.addEventListener('click', () => { const select = button.dataset.branchEmployeeSelect === 'all'; options.filter(option => !option.hidden).forEach(option => { const checkbox = option.querySelector('input'); if (checkbox) checkbox.checked = select; }); updateCount(); }));
+      form.addEventListener('change', event => { if (event.target.matches('input[name="user_ids"]')) updateCount(); });
+      updateCount();
+    });
+  })();
+</script>
+{% if active_branch_count > 1 %}
+<script src="{{ url_for('static', filename='assets/js/branch-transfer-manager.js', v='20261109-branch-transfer-workspace') }}"></script>
+{% endif %}
 {% endif %}
 {% endblock %}
