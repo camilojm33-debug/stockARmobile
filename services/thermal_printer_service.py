@@ -122,6 +122,8 @@ class ThermalPrinterService:
             printer.text(f"Teléfono: {ticket_context['phone']}\n")
         if ticket_context.get("whatsapp"):
             printer.text(f"WhatsApp: {ticket_context['whatsapp']}\n")
+        if ticket_context.get("website"):
+            printer.text(f"Web: {ticket_context['website']}\n")
         printer.text(f"Venta: #{sale.id}\n")
         printer.text(f"Fecha: {sale.date:%Y-%m-%d %H:%M}\n")
         printer.text(f"Cliente: {sale.customer or 'Consumidor final'}\n")
