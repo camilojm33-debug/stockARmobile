@@ -26,6 +26,19 @@
   let requestVersion = 0;
   let searchTimer = null;
   let lastTargetId = target.value;
+  let lastSourceId = source.value;
+  const noteInput = document.getElementById('branch-transfer-note');
+  const returnToInput = form.querySelector('input[name="return_to"]');
+  const draftStorageKey = 'stockarmobile:branch-transfer:v2:' + (root.dataset.companyId || 'company');
+  const transferCompleted = root.dataset.transferCompleted === '1';
+
+  if (transferCompleted) {
+    try { sessionStorage.removeItem(draftStorageKey); } catch (_) { /* Storage may be disabled. */ }
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('transfer_status');
+    if (returnToInput) returnToInput.value = cleanUrl.pathname + cleanUrl.search + cleanUrl.hash;
+    window.history.replaceState({}, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+  }
 
   const escapeHtml = value => {
     const node = document.createElement('div');
@@ -50,6 +63,49 @@
     return Number.isFinite(quantity) && quantity > 0 && quantity <= max;
   }
 
+  function saveDraft() {
+    try {
+      if (!selected.size) {
+        sessionStorage.removeItem(draftStorageKey);
+        return;
+      }
+      sessionStorage.setItem(draftStorageKey, JSON.stringify({
+        sourceId: source.value,
+        targetId: target.value,
+        note: noteInput ? noteInput.value : '',
+        items: Array.from(selected.values())
+      }));
+    } catch (_) { /* The transfer remains usable when browser storage is unavailable. */ }
+  }
+
+  function restoreDraft() {
+    if (transferCompleted) return;
+    try {
+      const raw = sessionStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (!draft || draft.sourceId !== source.value || draft.targetId !== target.value || !Array.isArray(draft.items)) return;
+      if (noteInput && typeof draft.note === 'string') noteInput.value = draft.note.slice(0, 255);
+      draft.items.slice(0, 100).forEach(item => {
+        const id = Number(item && item.id);
+        const stock = stockNumber(item && item.stock);
+        const quantity = String(item && item.quantity != null ? item.quantity : '');
+        if (!Number.isInteger(id) || id <= 0 || stock <= 0 || !quantityIsValid(quantity, stock)) return;
+        selected.set(id, {
+          id,
+          name: String(item.name || 'Producto').slice(0, 180),
+          barcode: String(item.barcode || '').slice(0, 80),
+          category: String(item.category || '').slice(0, 100),
+          unit_measure: String(item.unit_measure || 'u').slice(0, 20),
+          stock,
+          quantity
+        });
+      });
+    } catch (_) {
+      try { sessionStorage.removeItem(draftStorageKey); } catch (ignored) { /* Ignore unavailable storage. */ }
+    }
+  }
+
   function updateSummary() {
     let units = 0;
     let valid = selected.size > 0;
@@ -71,6 +127,7 @@
     } else {
       submitStatus.textContent = 'Todo listo. El stock se valida nuevamente al confirmar.';
     }
+    saveDraft();
   }
 
   function renderResults() {
@@ -239,12 +296,21 @@
   category.addEventListener('change', () => loadProducts());
   availableOnly.addEventListener('change', () => loadProducts());
   source.addEventListener('change', () => {
+    if (selected.size && !window.confirm('Cambiar la sucursal de origen modifica el stock disponible. ¿Querés quitar los productos seleccionados y continuar?')) {
+      source.value = lastSourceId;
+      return;
+    }
+    lastSourceId = source.value;
     ensureDifferentBranches('source');
     selected.clear();
     renderSelected();
     loadProducts();
   });
-  target.addEventListener('change', () => ensureDifferentBranches('target'));
+  target.addEventListener('change', () => {
+    ensureDifferentBranches('target');
+    saveDraft();
+  });
+  noteInput?.addEventListener('input', saveDraft);
 
   results.addEventListener('click', event => {
     const button = event.target.closest('[data-transfer-add]');
@@ -315,6 +381,7 @@
   });
 
   ensureDifferentBranches('source');
+  restoreDraft();
   renderSelected();
   loadProducts();
 })();
