@@ -56,14 +56,24 @@ class ThermalPrinterService:
         return None, None
 
     def print_sale_ticket(self, company, sale) -> ThermalPrintResult:
-        settings = self._company_printer_settings(company)
+        from services.sales.receipt_service import ReceiptService
+
+        ticket_context = ReceiptService.ticket_context(company=company, sale=sale)
+        settings = ticket_context["printer_settings"]
         preferences = self._company_preferences(company)
         printer, backend = self._build_printer(settings)
         if printer is None:
             return ThermalPrintResult(attempted=False, printed=False, message="Impresión térmica no configurada")
 
         try:
-            self._send_ticket(printer, sale, company=company, settings=settings, preferences=preferences)
+            self._send_ticket(
+                printer,
+                sale,
+                company=company,
+                settings=settings,
+                preferences=preferences,
+                ticket_context=ticket_context,
+            )
             if settings.get("cashdrawer_enabled"):
                 try:
                     printer.cashdraw()
@@ -83,15 +93,35 @@ class ThermalPrinterService:
             except Exception:
                 pass
 
-    def _send_ticket(self, printer, sale, *, company, settings: dict[str, Any], preferences: dict[str, Any]):
+    def _send_ticket(
+        self,
+        printer,
+        sale,
+        *,
+        company,
+        settings: dict[str, Any],
+        preferences: dict[str, Any],
+        ticket_context: dict[str, Any] | None = None,
+    ):
+        from services.sales.receipt_service import ReceiptService
+
         compact = bool(preferences.get("compact_print"))
-        ticket_name = (settings.get("ticket_name") or settings.get("printer_name") or getattr(company, "name", None) or "STOCK ARMOBILE").strip()[:120]
+        ticket_context = ticket_context or ReceiptService.ticket_context(company=company, sale=sale)
+        ticket_name = (ticket_context.get("ticket_name") or getattr(company, "name", None) or "STOCK ARMOBILE").strip()[:120]
         printer.set(align="center", bold=True, width=2 if not compact else 1, height=2 if not compact else 1)
         printer.text(f"{ticket_name or 'STOCK ARMOBILE'}\n")
         printer.set(align="center", bold=False)
         printer.text("Ticket de venta\n")
         printer.text("-" * 32 + "\n")
         printer.set(align="left")
+        if ticket_context.get("branch_name"):
+            printer.text(f"Sucursal: {ticket_context['branch_name']}\n")
+        if ticket_context.get("location_line"):
+            printer.text(f"Dirección: {ticket_context['location_line']}\n")
+        if ticket_context.get("phone"):
+            printer.text(f"Teléfono: {ticket_context['phone']}\n")
+        if ticket_context.get("whatsapp"):
+            printer.text(f"WhatsApp: {ticket_context['whatsapp']}\n")
         printer.text(f"Venta: #{sale.id}\n")
         printer.text(f"Fecha: {sale.date:%Y-%m-%d %H:%M}\n")
         printer.text(f"Cliente: {sale.customer or 'Consumidor final'}\n")
@@ -125,5 +155,8 @@ class ThermalPrinterService:
         printer.text(f"Impuestos: ${float(sale.tax or 0):.2f}\n")
         printer.set(align="left", bold=True)
         printer.text(f"TOTAL: ${float(sale.total_amount or 0):.2f}\n")
+        if ticket_context.get("footer"):
+            printer.set(align="center", bold=False)
+            printer.text(f"{ticket_context['footer']}\n")
         printer.set(align="center", bold=False)
         printer.text("Gracias por su compra\n\n")
