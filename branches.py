@@ -505,3 +505,94 @@ def assign_users(branch_id):
     )
     return redirect(url_for("company_billing.company_settings", panel="branches"))
 
+
+
+@bp.route("/<int:branch_id>/ticket-settings", methods=["POST"])
+@company_admin_required
+def update_branch_ticket_settings(branch_id):
+    """Save branch-owned ticket identity and printer overrides."""
+    import json
+    from app import record_audit
+
+    company_id = _company_id()
+    company = Company.query.filter_by(id=company_id, active=True).first_or_404()
+    blocked = _require_feature(company)
+    if blocked:
+        return blocked
+    pin_blocked = _require_company_pin(company)
+    if pin_blocked:
+        return pin_blocked
+
+    branch = Branch.query.filter_by(id=branch_id, company_id=company_id).first_or_404()
+    try:
+        current = json.loads(branch.receipt_settings_json or "{}")
+    except (TypeError, ValueError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+
+    text_fields = {
+        "ticket_name": 120,
+        "logo": 255,
+        "footer": 400,
+        "printer_name": 160,
+        "printer_type": 20,
+        "printer_host": 120,
+        "paper_size": 20,
+    }
+    for key, max_length in text_fields.items():
+        current[key] = (request.form.get(key) or "").strip()[:max_length]
+
+    printer_type = current.get("printer_type", "").lower()
+    if printer_type not in {"", "browser", "thermal"}:
+        flash("Seleccioná un modo de impresión válido.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+    current["printer_type"] = printer_type
+
+    if current.get("paper_size", "") not in {"", "A4", "Ticket80", "Carta"}:
+        flash("Seleccioná un tamaño de papel válido.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+
+    raw_port = (request.form.get("printer_port") or "").strip()
+    if raw_port:
+        try:
+            printer_port = int(raw_port)
+        except (TypeError, ValueError):
+            printer_port = 0
+        if not 1 <= printer_port <= 65535:
+            flash("El puerto de impresión debe estar entre 1 y 65535.", "warning")
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+        current["printer_port"] = printer_port
+    else:
+        current["printer_port"] = ""
+
+    drawer_choice = request.form.get("cashdrawer_enabled", "")
+    if drawer_choice == "1":
+        current["cashdrawer_enabled"] = True
+    elif drawer_choice == "0":
+        current["cashdrawer_enabled"] = False
+    else:
+        current.pop("cashdrawer_enabled", None)
+
+    try:
+        branch.receipt_settings_json = json.dumps(current, ensure_ascii=False)
+        record_audit(
+            action="branch_ticket_settings_update",
+            entity="branch",
+            entity_id=branch.id,
+            company_id=company_id,
+            detail=f"Configuración de ticket e impresión actualizada para {branch.name}.",
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Branch ticket settings update failed company_id=%s branch_id=%s",
+            company_id,
+            branch_id,
+        )
+        flash("No se pudo guardar la configuración de ticket. No se modificaron los datos anteriores.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="branches"))
+
+    flash(f"Configuración de ticket e impresión guardada para {branch.name}.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="branches"))

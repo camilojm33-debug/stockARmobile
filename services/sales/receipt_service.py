@@ -204,19 +204,164 @@ class ReceiptService:
         return lines
 
     @staticmethod
-    def ticket_brand_name(*, company):
+    def _json_object(raw):
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def ticket_context(*, company=None, sale=None):
+        """Resolve receipt identity and printer overrides using the sale's persisted branch."""
+        from app import Branch, Company
+
+        company_id = getattr(sale, "company_id", None) or getattr(company, "id", None)
+        if company is None and company_id:
+            company = Company.query.filter_by(id=int(company_id)).first()
+
+        branch = None
+        branch_id = getattr(sale, "branch_id", None) if sale is not None else None
+        if company is not None and branch_id:
+            branch = Branch.query.filter_by(
+                id=int(branch_id),
+                company_id=int(company.id),
+            ).first()
+
+        company_printer = ReceiptService._json_object(
+            getattr(company, "printer_settings_json", None)
+        )
+        company_preferences = ReceiptService._json_object(
+            getattr(company, "preferences_json", None)
+        )
+        branch_settings = ReceiptService._json_object(
+            getattr(branch, "receipt_settings_json", None)
+        )
+        billing = company_preferences.get("billing_business")
+        if not isinstance(billing, dict):
+            billing = {}
+        print_template = billing.get("print_template")
+        if not isinstance(print_template, dict):
+            print_template = {}
+
+        def text_value(value):
+            return str(value or "").strip()
+
+        def branch_override(key, fallback=""):
+            configured = text_value(branch_settings.get(key))
+            return configured if configured else text_value(fallback)
+
+        company_name = text_value(getattr(company, "name", None)) or "STOCK ARMOBILE"
+        if branch is not None and not bool(getattr(branch, "is_default", False)):
+            default_ticket_name = text_value(getattr(branch, "name", None)) or company_name
+        else:
+            default_ticket_name = (
+                text_value(company_printer.get("ticket_name"))
+                or text_value(company_printer.get("printer_name"))
+                or company_name
+            )
+        ticket_name = branch_override("ticket_name", default_ticket_name)[:120] or "STOCK ARMOBILE"
+
+        address = branch_override(
+            "address",
+            getattr(branch, "address", None) or getattr(company, "address", None),
+        )
+        city = branch_override(
+            "city",
+            getattr(branch, "city", None) or getattr(company, "city", None),
+        )
+        province = branch_override(
+            "province",
+            getattr(branch, "province", None) or getattr(company, "province", None),
+        )
+        phone = branch_override(
+            "phone",
+            getattr(branch, "phone", None) or getattr(company, "phone", None),
+        )
+        whatsapp = branch_override(
+            "whatsapp",
+            getattr(branch, "whatsapp", None) or getattr(company, "whatsapp", None),
+        )
+        website = branch_override("website", getattr(company, "website", None))
+        logo = branch_override("logo", getattr(company, "logo", None))
+        footer = branch_override(
+            "footer",
+            company_printer.get("ticket_footer") or print_template.get("footer"),
+        )
+
+        printer_settings = dict(company_printer)
+        for key in (
+            "printer_name",
+            "printer_type",
+            "printer_host",
+            "printer_port",
+            "paper_size",
+        ):
+            configured = text_value(branch_settings.get(key))
+            if configured:
+                raw_value = branch_settings.get(key)
+                if key == "printer_port":
+                    try:
+                        port = int(raw_value)
+                    except (TypeError, ValueError):
+                        continue
+                    if not 1 <= port <= 65535:
+                        continue
+                    printer_settings[key] = port
+                else:
+                    printer_settings[key] = configured
+        if "cashdrawer_enabled" in branch_settings:
+            printer_settings["cashdrawer_enabled"] = bool(branch_settings.get("cashdrawer_enabled"))
+
+        location_parts = [part for part in (address, city, province) if part]
+        return {
+            "branch_id": getattr(branch, "id", None),
+            "branch_name": text_value(getattr(branch, "name", None)),
+            "ticket_name": ticket_name,
+            "logo_url": logo,
+            "address": address,
+            "city": city,
+            "province": province,
+            "location_line": ", ".join(location_parts),
+            "phone": phone,
+            "whatsapp": whatsapp,
+            "website": website,
+            "footer": footer,
+            "printer_settings": printer_settings,
+        }
+
+    @staticmethod
+    def ticket_brand_name(*, company, branch=None):
         fallback = "STOCK ARMOBILE"
+        if branch is not None and not bool(getattr(branch, "is_default", False)):
+            return (getattr(branch, "name", None) or fallback)[:120]
         if company is None:
             return fallback
-        settings = {}
-        raw = getattr(company, "printer_settings_json", None)
-        if raw:
-            try:
-                settings = json.loads(raw)
-            except Exception:
-                settings = {}
-        name = (settings.get("ticket_name") or settings.get("printer_name") or getattr(company, "name", "") or fallback).strip()
-        return name[:120] or fallback
+        settings = ReceiptService._json_object(getattr(company, "printer_settings_json", None))
+        name = (
+            settings.get("ticket_name")
+            or settings.get("printer_name")
+            or getattr(company, "name", "")
+            or fallback
+        )
+        return str(name).strip()[:120] or fallback
+
+    @staticmethod
+    def _ticket_context_lines(context):
+        lines = []
+        if context.get("branch_name"):
+            lines.append(f"Sucursal: {context['branch_name']}")
+        if context.get("location_line"):
+            lines.append(f"Dirección: {context['location_line']}")
+        if context.get("phone"):
+            lines.append(f"Teléfono: {context['phone']}")
+        if context.get("whatsapp"):
+            lines.append(f"WhatsApp: {context['whatsapp']}")
+        if context.get("website"):
+            lines.append(f"Web: {context['website']}")
+        return lines
 
     @staticmethod
     def ticket_note(sale, ticket_brand=None):
@@ -234,9 +379,11 @@ class ReceiptService:
 
     @staticmethod
     def ticket_text(sale, ticket_brand):
-        brand = (ticket_brand or "STOCK ARMOBILE").strip()
+        context = ReceiptService.ticket_context(sale=sale)
+        brand = (ticket_brand or context["ticket_name"] or "STOCK ARMOBILE").strip()
         sale_datetime = ReceiptService._sale_datetime(sale)
         lines = [f"{brand} - TICKET DE VENTA", "-" * 32, f"Venta: #{sale.id}", f"Fecha: {sale_datetime}"]
+        lines.extend(ReceiptService._ticket_context_lines(context))
         if sale.customer:
             lines.append(f"Cliente: {sale.customer}")
         lines.append("-" * 32)
@@ -275,7 +422,10 @@ class ReceiptService:
                 lines.extend(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason))
             if sale.tax:
                 lines.append(f"Impuestos: ${sale.tax:.2f}")
-        lines.extend(["=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+        lines.extend(["=" * 32, f"TOTAL: ${sale.total_amount:.2f}"])
+        if context.get("footer"):
+            lines.append(context["footer"])
+        lines.append("Gracias por su compra!")
         return "\n".join(lines)
 
     @staticmethod
@@ -303,8 +453,11 @@ class ReceiptService:
 
     @staticmethod
     def whatsapp_text(sale, ticket_brand):
+        context = ReceiptService.ticket_context(sale=sale)
+        brand = (ticket_brand or context["ticket_name"] or "STOCK ARMOBILE").strip()
         sale_datetime = ReceiptService._sale_datetime(sale)
-        lines = [f"{ticket_brand} - Ticket de compra", f"Venta #{sale.id}", f"Fecha: {sale_datetime}"]
+        lines = [f"{brand} - Ticket de compra", f"Venta #{sale.id}", f"Fecha: {sale_datetime}"]
+        lines.extend(ReceiptService._ticket_context_lines(context))
         if sale.customer:
             lines.append(f"Cliente: {sale.customer}")
         lines.append("------------------------------")
@@ -329,5 +482,8 @@ class ReceiptService:
                 lines.extend(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason))
             if sale.tax:
                 lines.append(f"Impuestos: ${sale.tax:.2f}")
-        lines.extend([f"Total: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+        lines.append(f"Total: ${sale.total_amount:.2f}")
+        if context.get("footer"):
+            lines.append(context["footer"])
+        lines.append("Gracias por su compra!")
         return "\n".join(lines)

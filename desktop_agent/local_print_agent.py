@@ -57,6 +57,12 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     sale_id = ticket.get("sale_id")
     date = str(ticket.get("date") or "")
     customer = str(ticket.get("customer") or "Consumidor final")
+    branch = str(ticket.get("branch") or "")
+    address = str(ticket.get("address") or "")
+    phone = str(ticket.get("phone") or "")
+    whatsapp = str(ticket.get("whatsapp") or "")
+    website = str(ticket.get("website") or "")
+    footer = str(ticket.get("footer") or "")
     payment = str(ticket.get("payment_method") or "")
 
     data = bytearray()
@@ -70,6 +76,16 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     data += _escpos_text("Ticket de venta\n")
     data += _escpos_text("--------------------------------\n")
     data += b"\x1ba\x00"  # left
+    if branch:
+        data += _escpos_text(f"Sucursal: {branch}\n")
+    if address:
+        data += _escpos_text(f"Dirección: {address}\n")
+    if phone:
+        data += _escpos_text(f"Teléfono: {phone}\n")
+    if whatsapp:
+        data += _escpos_text(f"WhatsApp: {whatsapp}\n")
+    if website:
+        data += _escpos_text(f"Web: {website}\n")
     data += _escpos_text(f"Venta: #{sale_id}\n")
     if date:
         data += _escpos_text(f"Fecha: {date}\n")
@@ -109,6 +125,9 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     note = str(ticket.get("note") or "").strip()
     if note:
         data += _escpos_text(f"Obs.: {note}\n")
+    if footer:
+        data += b"\x1ba\x01"
+        data += _escpos_text(f"{footer}\n")
     data += b"\x1ba\x01"
     data += _escpos_text("Gracias por su compra\n\n\n")
     data += b"\x1dV\x00"  # cut

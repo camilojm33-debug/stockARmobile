@@ -27,3 +27,34 @@ def test_build_ticket_contains_sale_and_total():
     assert "TOTAL: $16.200,00".encode("cp1252") in payload
     assert payload.startswith(b"\x1b@")
     assert payload.endswith(b"\x1dV\x00")
+
+
+def test_build_ticket_includes_originating_branch_details_and_footer():
+    payload = _build_ticket_bytes(
+        {
+            "brand": "Sucursal Norte",
+            "sale_id": 521,
+            "date": "2026-11-09 14:30",
+            "customer": "Consumidor final",
+            "branch": "Sucursal Norte",
+            "address": "Av. Norte 123, Fontana, Chaco",
+            "phone": "3624111111",
+            "whatsapp": "3624222222",
+            "website": "www.comercio.test",
+            "footer": "Gracias por comprar en Sucursal Norte",
+            "items": [],
+            "subtotal": 1000,
+            "discount": 0,
+            "surcharge": 0,
+            "tax": 0,
+            "total": 1000,
+        }
+    )
+
+    decoded = payload.decode("cp1252")
+    assert "Sucursal: Sucursal Norte" in decoded
+    assert "Dirección: Av. Norte 123, Fontana, Chaco" in decoded
+    assert "Teléfono: 3624111111" in decoded
+    assert "WhatsApp: 3624222222" in decoded
+    assert "Web: www.comercio.test" in decoded
+    assert "Gracias por comprar en Sucursal Norte" in decoded

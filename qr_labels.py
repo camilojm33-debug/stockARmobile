@@ -1183,31 +1183,41 @@ def print_all():
 @bp.route("/ticket/<int:sale_id>.pdf")
 @tenant_required
 def generate_pdf_ticket(sale_id):
-    from app import Sale, SaleItem, scope_query_to_company
+    from app import Company, Sale, SaleItem, scope_query_to_company
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Preformatted
+    from services.sales.receipt_service import ReceiptService
 
     sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    company = Company.query.filter_by(id=sale.company_id).first() if sale.company_id else None
+    context = ReceiptService.ticket_context(company=company, sale=sale)
+    ticket_text = ReceiptService.ticket_text(sale, context["ticket_name"])
+
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
-    ticket_img = Image.new("RGB", (420, 560), "white")
-    draw = ImageDraw.Draw(ticket_img)
-    y = 20
-    for line in _ticket_lines(sale):
-        draw.text((20, y), line, fill="black", font=_font(16))
-        y += 26
-    img_buffer = BytesIO()
-    ticket_img.save(img_buffer, "PNG")
-    img_buffer.seek(0)
-    elements.append(PdfImage(img_buffer, width=300, height=400))
-    doc.build(elements)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=42,
+        leftMargin=42,
+        topMargin=42,
+        bottomMargin=42,
+    )
+    style = ParagraphStyle(
+        "StockArTicket",
+        fontName="Courier",
+        fontSize=8,
+        leading=11,
+        spaceAfter=0,
+    )
+    doc.build([Preformatted(ticket_text, style)])
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=False, download_name=f"ticket_{sale.id}.pdf")
 
 
 def _ticket_lines(sale):
-    lines = ["STOCK ARMOBILE - TICKET", f"Venta #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}", "-" * 28]
-    for item in sale.items:
-        name = item.product.name if item.product else "Producto"
-        lines.append(f"{name[:20]} x{item.quantity} ${item.total_amount:.2f}")
-    lines += ["-" * 28, f"Subtotal: ${sale.subtotal:.2f}", f"IVA: ${sale.tax:.2f}", f"Total: ${sale.total_amount:.2f}"]
-    return lines
+    from app import Company
+    from services.sales.receipt_service import ReceiptService
+
+    company = Company.query.filter_by(id=sale.company_id).first() if getattr(sale, "company_id", None) else None
+    context = ReceiptService.ticket_context(company=company, sale=sale)
+    return ReceiptService.ticket_text(sale, context["ticket_name"]).splitlines()

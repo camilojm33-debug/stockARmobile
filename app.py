@@ -1411,6 +1411,8 @@ class Branch(db.Model):
     # Branch-owned Vendor IA settings/channel credentials are stored separately
     # from Company.preferences_json so each licensed branch can operate alone.
     vendor_ai_json = db.Column(db.Text)
+    # Per-branch receipt identity and printer overrides. Empty values inherit company defaults.
+    receipt_settings_json = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True, nullable=False)
     is_default = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)

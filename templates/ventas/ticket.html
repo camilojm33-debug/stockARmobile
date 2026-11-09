@@ -6,11 +6,17 @@
 <div class="ticket-shell">
   <div class="ticket-paper">
     <div class="ticket-header text-center">
+      {% if ticket_context and ticket_context.logo_url %}<img class="ticket-logo" src="{{ ticket_context.logo_url }}" alt="Logo {{ ticket_brand }}" loading="eager">{% endif %}
       <div class="ticket-brand">{{ ticket_brand or 'STOCK ARMOBILE' }}</div>
       <div class="ticket-subtitle">Ticket de venta</div>
     </div>
 
     <div class="ticket-meta">
+      {% if ticket_context and ticket_context.branch_name %}<div><strong>Sucursal:</strong> {{ ticket_context.branch_name }}</div>{% endif %}
+      {% if ticket_context and ticket_context.location_line %}<div>{{ ticket_context.location_line }}</div>{% endif %}
+      {% if ticket_context and ticket_context.phone %}<div><strong>Tel.:</strong> {{ ticket_context.phone }}</div>{% endif %}
+      {% if ticket_context and ticket_context.whatsapp %}<div><strong>WhatsApp:</strong> {{ ticket_context.whatsapp }}</div>{% endif %}
+      {% if ticket_context and ticket_context.website %}<div>{{ ticket_context.website }}</div>{% endif %}
       <div><strong>Venta:</strong> #{{ sale.id }}</div>
       <div><strong>Fecha:</strong> {{ (ticket_text.split('\n')[3].replace('Fecha: ', '') if ticket_text else '') }}</div>
       <div><strong>Cliente:</strong> {{ sale.customer or 'Consumidor final' }}</div>
@@ -67,6 +73,10 @@
     <div class="ticket-note"><strong>Nota:</strong> {{ visible_ticket_note }}</div>
     {% endif %}
 
+    {% if ticket_context and ticket_context.footer %}
+    <div class="ticket-footer text-center">{{ ticket_context.footer }}</div>
+    {% endif %}
+
     <div class="ticket-actions no-print">
       <button class="btn btn-success" type="button" id="thermal-print-btn" onclick="printThermalTicket()">Imprimir en térmica</button>
       <a class="btn btn-primary" href="javascript:window.print()">Imprimir</a>
@@ -93,7 +103,9 @@
     line-height: 1.35;
   }
   .ticket-brand { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
+  .ticket-logo { display: block; max-width: 42mm; max-height: 22mm; object-fit: contain; margin: 0 auto 8px; }
   .ticket-subtitle { font-size: 12px; color: #666; margin-top: 2px; }
+  .ticket-footer { font-size: 11px; font-weight: 600; margin-top: 12px; white-space: pre-wrap; }
   .ticket-meta > div, .ticket-note { margin-bottom: 4px; }
   .ticket-line { padding: 6px 0; border-bottom: 1px dotted #ddd; }
   .ticket-line-name { font-weight: 700; }
@@ -135,6 +147,12 @@
         sale_id: {{ sale.id|tojson }},
         date: {{ ((ticket_text.split('\n')[3].replace('Fecha: ', '') if ticket_text else ''))|tojson }},
         customer: {{ (sale.customer or 'Consumidor final')|tojson }},
+        branch: {{ (ticket_context.branch_name if ticket_context else '')|tojson }},
+        address: {{ (ticket_context.location_line if ticket_context else '')|tojson }},
+        phone: {{ (ticket_context.phone if ticket_context else '')|tojson }},
+        whatsapp: {{ (ticket_context.whatsapp if ticket_context else '')|tojson }},
+        website: {{ (ticket_context.website if ticket_context else '')|tojson }},
+        footer: {{ (ticket_context.footer if ticket_context else '')|tojson }},
         payment_method: {{ ((sale.payment_method or '') ~ ((' + ' ~ sale.secondary_payment_method) if sale.secondary_payment_method else ''))|tojson }},
         items: [
           {% for row in rows %}
