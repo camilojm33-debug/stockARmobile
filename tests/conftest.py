@@ -1,4 +1,15 @@
 import json
+import os
+import tempfile
+from pathlib import Path
+
+# These fixtures intentionally drop/recreate ORM tables. Never let a local
+# SQLite default (stock_armobile.db) be used as their target. PostgreSQL test
+# URLs supplied by CI remain untouched; SQLite tests get a disposable file.
+_database_url = os.environ.get("DATABASE_URL", "sqlite:///stock_armobile.db")
+if _database_url.startswith("sqlite"):
+    _test_db_path = Path(tempfile.gettempdir()) / f"stockarmobile-pytest-{os.getpid()}.sqlite3"
+    os.environ["DATABASE_URL"] = f"sqlite:///{_test_db_path.as_posix()}"
 
 import pytest
 from sqlalchemy import inspect, text
