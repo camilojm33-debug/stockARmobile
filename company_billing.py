@@ -5365,6 +5365,7 @@ def company_settings():
     schedule_assignments = schedules_settings.get("employee_assignments", [])
     mercado_pago_connection_summary = _mercadopago_connection_summary(company)
     active_employees = []
+    branch_transfer_history = []
     device_rows = []
     backups = []
     backup_plan = {}
@@ -5402,6 +5403,19 @@ def company_settings():
             .all()
         )
         active_employees = get_company_users(company.id, active_only=True)
+        if settings_panel == "branches":
+            from app import BranchStockTransfer
+            branch_transfer_history = (
+                BranchStockTransfer.query.options(
+                    selectinload(BranchStockTransfer.product),
+                    selectinload(BranchStockTransfer.source_branch),
+                    selectinload(BranchStockTransfer.target_branch),
+                )
+                .filter_by(company_id=company.id)
+                .order_by(BranchStockTransfer.created_at.desc(), BranchStockTransfer.id.desc())
+                .limit(20)
+                .all()
+            )
         device_rows = (
             AuditLog.query.filter_by(company_id=company.id, action="login_success")
             .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
@@ -5552,6 +5566,7 @@ def company_settings():
         multi_branch_access=multi_branch_access,
         company_branches=company_branches,
         branch_user_access=branch_user_access,
+        branch_transfer_history=branch_transfer_history,
         pending_branch_user_assignment=pending_branch_user_assignment,
         branch_limit=branch_limit,
         active_branch_count=active_branch_count,
