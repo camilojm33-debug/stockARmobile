@@ -1268,21 +1268,21 @@
                     <div class="col-md-4"><label class="form-label" for="branch-{{ branch.id }}-phone">Teléfono</label><input class="form-control" id="branch-{{ branch.id }}-phone" name="phone" value="{{ branch.phone or '' }}" maxlength="40" inputmode="tel"></div>
                     <div class="col-md-6"><label class="form-label" for="branch-{{ branch.id }}-whatsapp">WhatsApp</label><input class="form-control" id="branch-{{ branch.id }}-whatsapp" name="whatsapp" value="{{ branch.whatsapp or '' }}" maxlength="40" inputmode="tel"></div>
                     <div class="col-md-3"><label class="form-label" for="branch-{{ branch.id }}-active">Estado</label><select class="form-select" id="branch-{{ branch.id }}-active" name="active"><option value="1" {% if branch.active %}selected{% endif %}>Activa</option><option value="0" {% if not branch.active %}selected{% endif %}>Inactiva</option></select></div>
-                    <div class="col-md-3 d-grid"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar datos</button></div>
+                    <div class="col-md-3 d-grid"><button class="btn btn-outline-primary" type="submit" title="Guardar datos de sucursal"><i class="bi bi-save me-1"></i>Guardar datos</button></div>
                   </form>
                   {% if branch.is_default %}<div class="branch-note"><i class="bi bi-info-circle me-1"></i>Casa central debe permanecer activa para mantener la operación de la empresa.</div>{% endif %}
                 </section>
                 <section class="branch-manage-block">
                   <form method="post" action="{{ url_for('branches.assign_users', branch_id=branch.id) }}" class="branch-employee-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="branch-manage-heading"><div><strong>Personal y permisos</strong><span>Elegí quién puede operar en {{ branch.name }}.</span></div><span class="badge text-bg-light border">{{ branch_user_access.get(branch.id, [])|length }} asignado(s)</span></div>
+                    <div class="branch-manage-heading"><div><strong>Personal y permisos</strong><span>Elegí quién puede operar en {{ branch.name }}. Esta acción no modifica los datos generales de la sucursal.</span></div><span class="badge text-bg-light border">{{ branch_user_access.get(branch.id, [])|length }} asignado(s)</span></div>
                     <div class="branch-employee-tools"><div class="input-group input-group-sm"><span class="input-group-text"><i class="bi bi-search"></i></span><input class="form-control" type="search" placeholder="Buscar empleado..." aria-label="Buscar empleado" data-branch-employee-search></div><div class="d-flex flex-wrap gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-branch-employee-select="all">Seleccionar visibles</button><button class="btn btn-sm btn-outline-secondary" type="button" data-branch-employee-select="none">Quitar visibles</button></div></div>
                     <div class="branch-employee-grid">
                       {% for employee in active_employees if employee.role != 'superadmin' %}
                       <label class="branch-employee-option" data-branch-employee-option data-search-text="{{ employee.name|lower }}"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ employee.id }}" {% if employee.id in branch_user_access.get(branch.id, []) %}checked{% endif %}><span>{{ employee.name }}</span></label>
                       {% else %}<div class="branch-empty-employees">No hay empleados activos para asignar.</div>{% endfor %}
                     </div>
-                    <div class="branch-employee-footer"><span class="small text-muted" data-branch-employee-count>{{ branch_user_access.get(branch.id, [])|length }} seleccionados</span><button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-person-check me-1"></i>Guardar permisos</button></div>
+                    <div class="branch-employee-footer"><span class="small text-muted" data-branch-employee-count>{{ branch_user_access.get(branch.id, [])|length }} seleccionados</span><button class="btn btn-primary btn-sm" type="submit" title="Guardar asignación de personal"><i class="bi bi-person-check me-1"></i>Guardar permisos</button></div>
                     <p class="branch-note mb-0"><i class="bi bi-shield-lock me-1"></i>La asignación se confirma con el PIN administrativo de Mi Empresa.</p>
                   </form>
                 </section>
