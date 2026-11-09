@@ -22,7 +22,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261106_01_branch_vendor"
+HEAD_REVISION = "20261109_01_branch_receipts"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -203,7 +203,7 @@ def main() -> None:
                 },
             )
 
-        _progress(f"Applying all pending migrations through branch Vendor IA revision {HEAD_REVISION}")
+        _progress(f"Applying all pending migrations through current branch and receipt configuration revision {HEAD_REVISION}")
         upgrade(directory="migrations", revision="head")
         _progress("Alembic upgrade returned successfully")
         db.session.remove()
@@ -235,7 +235,7 @@ def main() -> None:
             "business_documents": {"branch_id"},
             "plans": {"max_branches"},
             "conversations": {"branch_id"},
-            "branches": {"vendor_ai_json"},
+            "branches": {"vendor_ai_json", "receipt_settings_json"},
             "branch_vendor_licenses": {
                 "company_id", "branch_id", "status", "payment_mode", "amount",
                 "currency", "starts_at", "ends_at", "preapproval_id",
