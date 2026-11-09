@@ -244,6 +244,7 @@ def test_branch_transfer_post_processes_all_selected_products_together(app, monk
         )
 
         assert response.status_code == 302
+        assert "transfer_status=success" in response.headers.get("Location", "")
         assert available_stock(first, source.id) == 5
         assert available_stock(first, target.id) == 5
         assert available_stock(second, source.id) == 2.5
@@ -284,6 +285,7 @@ def test_branch_transfer_post_rolls_back_every_line_if_one_product_fails(app, mo
         )
 
         assert response.status_code == 302
+        assert "transfer_status=success" not in response.headers.get("Location", "")
         assert available_stock(first, source.id) == 6
         assert available_stock(first, target.id) == 2
         assert available_stock(second, source.id) == 1
@@ -301,15 +303,26 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     script = (Path(__file__).resolve().parents[1] / "static" / "assets" / "js" / "branch-transfer-manager.js").read_text(encoding="utf-8")
 
     assert 'id="branch-transfer-manager"' in template
+    assert 'class="branch-page-hero"' in template
+    assert 'class="branch-overview-grid"' in template
+    assert 'class="branch-card ' in template
+    assert 'data-branch-employee-search' in template
+    assert "branch-history-table" in template
     assert 'name="items_json"' in template
     assert "branch-transfer-manager.js" in template
     assert "Agregar visibles" in template
     assert "data-transfer-quantity" in script
     assert "items_json" in template
     assert "available_only" in script
+    assert "sessionStorage.setItem" in script
+    assert "restoreDraft()" in script
+    assert "Cambiar la sucursal de origen" in script
+    assert "branch-transfer-swap" in template
+    assert "Intercambiar el origen y el destino" in script
+    assert "transfer_status" in script
     service_worker = (Path(__file__).resolve().parents[1] / "static" / "service-worker.js").read_text(encoding="utf-8")
     assert "'/sucursales/api/productos-transferencia'" in service_worker
-    assert "stockarmobile-pwa-v19" in service_worker
+    assert "stockarmobile-pwa-v20" in service_worker
 
 def test_branch_transfer_script_loader_renders_for_branch_panel_context():
     from pathlib import Path
@@ -370,3 +383,46 @@ def test_branch_selector_form_keeps_current_url_and_transfer_search_disables_cac
     script = (root / "static" / "assets" / "js" / "branch-transfer-manager.js").read_text(encoding="utf-8")
     assert 'name="return_to" value="{{ request.full_path }}"' in base
     assert "cache: 'no-store'" in script
+
+
+
+def test_branch_management_template_exposes_responsive_sections_and_accessible_employee_controls():
+    from pathlib import Path
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "templates"
+        / "company_billing"
+        / "settings.html"
+    ).read_text(encoding="utf-8")
+
+    assert "branch-overview-card" in template
+    assert "branch-create-form-wrap" in template
+    assert "branch-manage-details" in template
+    assert "branch-employee-option" in template
+    assert "Seleccionar visibles" in template
+    assert "Quitar visibles" in template
+    assert "transfer-browser-card" in template
+    assert "transfer-cart-card" in template
+    assert "branch-history-section" in template
+    assert "Responsable" in template
+    assert "branch_transfer_actors.get(transfer.created_by_user_id" in template
+    assert ".transfer-cart-card{position:sticky" in template
+    assert "aria-label=\"Capacidad de sucursales utilizada\"" in template
+    assert "@media(max-width:767.98px)" in template
+
+
+def test_branch_transfer_failure_retains_return_path_and_success_marker_is_cleaned_by_script():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "templates" / "company_billing" / "settings.html").read_text(encoding="utf-8")
+    script = (root / "static" / "assets" / "js" / "branch-transfer-manager.js").read_text(encoding="utf-8")
+
+    assert 'data-transfer-completed="{{ 1 if request.args.get(\'transfer_status\') == \'success\' else 0 }}"' in template
+    assert "cleanUrl.searchParams.delete('transfer_status')" in script
+    assert "sessionStorage.removeItem(draftStorageKey)" in script
+    assert "returnToInput.value = cleanUrl.pathname + cleanUrl.search + cleanUrl.hash" in script
+    assert "sessionStorage.getItem(draftStorageKey)" in script
+    assert "sourceId: source.value" in script
+    assert "targetId: target.value" in script
