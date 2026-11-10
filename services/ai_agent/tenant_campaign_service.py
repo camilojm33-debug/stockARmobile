@@ -58,7 +58,9 @@ def _json(campaign):
 
 
 def _client_phone(client):
-    return str(getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
+    raw_phone = str(getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
+    from services.whatsapp_share_service import normalize_whatsapp_number
+    return normalize_whatsapp_number(raw_phone)
 
 
 def _eligible_clients(company_id, channel):
