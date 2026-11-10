@@ -1424,7 +1424,7 @@
         <div class="col-md-4">
           <label class="form-label">Tamaño de papel</label>
           <select class="form-select" name="paper_size">
-            <option value="A4" {% if printer_settings.get('paper_size', 'A4') == 'A4' %}selected{% endif %}>A4</option>
+            <option value="A4" {% if printer_settings.get('paper_size', 'Ticket80') == 'A4' %}selected{% endif %}>A4</option>
             <option value="Ticket80" {% if printer_settings.get('paper_size') == 'Ticket80' %}selected{% endif %}>Ticket 80mm</option>
             <option value="Carta" {% if printer_settings.get('paper_size') == 'Carta' %}selected{% endif %}>Carta</option>
           </select>
