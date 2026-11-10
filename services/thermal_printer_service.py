@@ -121,7 +121,7 @@ class ThermalPrinterService:
                 with Image.open(BytesIO(logo_payload)) as logo_file:
                     printer.set(align="center", bold=False)
                     printer.image(logo_file.convert("L"))
-                    printer.text("\\n")
+                    printer.text("\n")
             except Exception:
                 self._logger().warning("No se pudo cargar el logo del ticket para impresión térmica.")
 
@@ -131,10 +131,10 @@ class ThermalPrinterService:
             width=1 if line_width >= 48 or compact else 2,
             height=1 if line_width >= 48 or compact else 2,
         )
-        printer.text(f"{ticket_name or 'STOCK ARMOBILE'}\\n")
+        printer.text(f"{ticket_name or 'STOCK ARMOBILE'}\n")
         printer.set(align="center", bold=False)
-        printer.text("Ticket de venta\\n")
-        printer.text(separator + "\\n")
+        printer.text("Ticket de venta\n")
+        printer.text(separator + "\n")
         printer.set(align="left")
         if ticket_context.get("branch_name"):
             printer.text(f"Sucursal: {ticket_context['branch_name']}\n")
@@ -156,12 +156,12 @@ class ThermalPrinterService:
             printer.text(f"Pago: {payment_line}\n")
         from services.sales.receipt_service import ReceiptService
 
-        printer.text(separator + "\\n")
+        printer.text(separator + "\n")
         name_width = 24 if line_width >= 48 else 18
         for item in sale.items:
             name = item.product.name if item.product else f"Producto {item.product_id}"
             qty = float(item.quantity or 0)
-            line = f"{name[:name_width]}\\n{qty:g} x ${float(item.price or 0):.2f} = ${float(item.total_amount or 0):.2f}\\n"
+            line = f"{name[:name_width]}\n{qty:g} x ${float(item.price or 0):.2f} = ${float(item.total_amount or 0):.2f}\n"
             printer.text(line)
             wholesale_info = ReceiptService.wholesale_discount_info(item)
             if wholesale_info:
@@ -169,7 +169,7 @@ class ThermalPrinterService:
                     f"  Mayorista {float(wholesale_info['percent']):.2f}%: "
                     f"ahorro ${float(wholesale_info['amount']):.2f} (incluido)\n"
                 )
-        printer.text(separator + "\\n")
+        printer.text(separator + "\n")
         printer.text(f"Subtotal: ${float(sale.subtotal or 0):.2f}\n")
         wholesale_savings = ReceiptService.wholesale_discount_total(sale)
         if wholesale_savings > 0:
