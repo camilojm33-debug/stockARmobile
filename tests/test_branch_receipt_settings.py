@@ -80,6 +80,7 @@ def test_default_branch_inherits_company_ticket_identity(app):
         assert context["ticket_name"] == "Marca comercial central"
         assert context["address"] == "Mitre 100"
         assert context["printer_settings"]["printer_host"] == "10.0.0.8"
+        assert context["printer_settings"]["paper_size"] == "Ticket80"
 
 
 def test_branch_ticket_overrides_take_precedence_and_can_override_company_printer(app):
