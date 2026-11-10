@@ -20,3 +20,10 @@ def test_pedidos_ia_pickup_requires_ai_access_for_employees():
     assert _user_has_permission(employee_with_ai, required) is True
     # Administrators bypass the employee permission matrix.
     assert _user_has_permission(admin, required) is True
+
+
+def test_pdf_ticket_uses_sales_permission_while_other_qr_tools_remain_inventory():
+    from stockarmobile.permissions import employee_endpoint_permission
+
+    assert employee_endpoint_permission("qr_labels.generate_pdf_ticket", "GET") == "sales"
+    assert employee_endpoint_permission("qr_labels.generate_labels_pdf", "GET") == "inventory"
