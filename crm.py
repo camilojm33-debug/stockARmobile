@@ -716,7 +716,8 @@ def client_contact(client_id, channel):
     channel = (channel or "").strip().lower()
     if channel == "whatsapp":
         raw_phone = str(client.whatsapp or client.phone or "").strip()
-        phone = re.sub(r"\D+", "", raw_phone)
+        from services.whatsapp_share_service import normalize_whatsapp_number
+        phone = normalize_whatsapp_number(raw_phone)
         if not phone:
             flash("El cliente no tiene un teléfono válido para WhatsApp.", "warning")
             return redirect(url_for("crm.client_360", client_id=client.id))
