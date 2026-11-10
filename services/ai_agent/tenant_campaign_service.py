@@ -407,16 +407,6 @@ def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, lim
     return summary
 
 
-def mark_campaign_for_auto_dispatch(campaign, *, user_id: int) -> None:
-    """Persist an explicit dispatch request so the web-process worker can resume it after restarts."""
-    data = _json(campaign)
-    data["stockarmobile_auto_dispatch"] = {
-        "requested_at": _now().isoformat(),
-        "requested_by": int(user_id),
-    }
-    campaign.system_data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-
-
 def start_campaign_dispatch_worker(flask_app, *, poll_interval: int = 8) -> bool:
     """Start a lightweight in-process queue worker; no external cron is required."""
     global _AUTO_DISPATCH_WORKER_STARTED
@@ -446,9 +436,6 @@ def start_campaign_dispatch_worker(flask_app, *, poll_interval: int = 8) -> bool
                         .all()
                     )
                     for campaign in due_campaigns:
-                        dispatch_request = _json(campaign).get("stockarmobile_auto_dispatch")
-                        if not isinstance(dispatch_request, dict) or not dispatch_request.get("requested_at"):
-                            continue
                         result = dispatch_due_campaigns(
                             db.session,
                             company_id=campaign.company_id,
