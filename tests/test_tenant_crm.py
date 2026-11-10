@@ -371,7 +371,7 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     client_record = Client(
         name="Contacto WhatsApp",
         company_id=company.id,
-        phone="+54 (9) 11-1234-5678",
+        phone="3624228396",
         active=True,
     )
     db.session.add_all([user, client_record])
@@ -384,7 +384,7 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     from pathlib import Path
     template = Path("templates/crm/client_360.html").read_text(encoding="utf-8")
     assert 'target="_blank"' in template
-    assert response.headers["Location"] == "https://wa.me/5491112345678"
+    assert response.headers["Location"] == "https://wa.me/5493624228396"
     activity = CRMActivity.query.filter_by(company_id=company.id).one()
     assert activity.client_id == client_record.id
     assert activity.type == "whatsapp"
