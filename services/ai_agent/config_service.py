@@ -547,6 +547,53 @@ def get_whatsapp_connection(company, branch_id: int | None = None):
     }
 
 
+def _assert_whatsapp_phone_assignment_available(company, phone_number_id, *, branch_id=None):
+    """Fail closed when an active tenant or branch already owns this Meta phone ID."""
+    from app import Branch, Company
+
+    target = str(phone_number_id or "").strip()
+    if not target:
+        return
+
+    requested_owner = (int(company.id), int(branch_id) if branch_id is not None else None)
+    # Lock existing tenant rows in a stable order. Connection changes are rare;
+    # serializing them prevents two tenants from racing past the JSON-backed check.
+    (
+        Company.query.filter(Company.active.is_(True))
+        .order_by(Company.id.asc())
+        .with_for_update()
+        .all()
+    )
+
+    active_companies = Company.query.filter_by(active=True).order_by(Company.id.asc()).all()
+    for candidate_company in active_companies:
+        branches = Branch.query.filter_by(
+            company_id=int(candidate_company.id), active=True
+        ).order_by(Branch.id.asc()).all()
+        for candidate_branch in branches:
+            branch_ai = _branch_preferences(candidate_branch)
+            branch_whatsapp = branch_ai.get("whatsapp") if isinstance(branch_ai.get("whatsapp"), dict) else {}
+            candidate_id = str(branch_whatsapp.get("phone_number_id") or "").strip()
+            candidate_enabled = _coerce_bool(branch_whatsapp.get("enabled"), False)
+            if candidate_enabled and candidate_id == target:
+                owner = (int(candidate_company.id), int(candidate_branch.id))
+                if owner != requested_owner:
+                    raise ValueError(
+                        "Este número de WhatsApp ya está conectado a otra empresa o sucursal de StockARmobile."
+                    )
+
+        global_whatsapp = get_ai_preferences(candidate_company).get("whatsapp", {})
+        if not isinstance(global_whatsapp, dict):
+            global_whatsapp = {}
+        global_id = str(global_whatsapp.get("phone_number_id") or "").strip()
+        if _coerce_bool(global_whatsapp.get("enabled"), False) and global_id == target:
+            owner = (int(candidate_company.id), None)
+            if owner != requested_owner:
+                raise ValueError(
+                    "Este número de WhatsApp ya está conectado a otra empresa o sucursal de StockARmobile."
+                )
+
+
 def configure_whatsapp_connection(
     company,
     *,
@@ -560,6 +607,10 @@ def configure_whatsapp_connection(
     branch_id: int | None = None,
     whatsapp_updates: Optional[Dict[str, Any]] = None,
 ):
+    if enabled:
+        _assert_whatsapp_phone_assignment_available(
+            company, phone_number_id, branch_id=branch_id
+        )
     if branch_id is not None:
         from app import Branch
 
