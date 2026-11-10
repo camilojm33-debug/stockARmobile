@@ -64,6 +64,99 @@ def upgrade():
         op.create_index("ix_whatsapp_channel_registrations_company_id", "whatsapp_channel_registrations", ["company_id"])
         op.create_index("ix_whatsapp_channel_registrations_branch_id", "whatsapp_channel_registrations", ["branch_id"])
 
+        # Backfill only unambiguous existing configurations. If the same Meta
+        # phone ID already appears under different tenant/branch scopes, leave
+        # it unregistered and log the conflict rather than choosing an owner.
+        import json
+        import logging
+        from datetime import datetime
+
+        logger = logging.getLogger("alembic.runtime.migration")
+
+        def whatsapp_phone(raw, *, company_level=False):
+            if not raw:
+                return ""
+            try:
+                payload = json.loads(raw) if isinstance(raw, str) else {}
+            except (TypeError, ValueError):
+                return ""
+            if not isinstance(payload, dict):
+                return ""
+            if company_level:
+                ai = payload.get("ai_agent") if isinstance(payload.get("ai_agent"), dict) else {}
+                whatsapp = ai.get("whatsapp") if isinstance(ai.get("whatsapp"), dict) else {}
+            else:
+                whatsapp = payload.get("whatsapp") if isinstance(payload.get("whatsapp"), dict) else {}
+            return str(whatsapp.get("phone_number_id") or "").strip()[:40]
+
+        branch_rows = []
+        if "branches" in tables:
+            branch_rows = bind.execute(sa.text(
+                "SELECT id, company_id, is_default, vendor_ai_json FROM branches"
+            )).mappings().all()
+
+        owners_by_phone = {}
+        default_branch_by_company = {}
+        branch_override_by_default = {}
+        for row in branch_rows:
+            company_id = int(row["company_id"])
+            branch_id = int(row["id"])
+            if bool(row["is_default"]):
+                default_branch_by_company[company_id] = branch_id
+            branch_payload = row["vendor_ai_json"]
+            phone_id = whatsapp_phone(branch_payload)
+            if phone_id:
+                owners_by_phone.setdefault(phone_id, set()).add((company_id, branch_id))
+            try:
+                parsed = json.loads(branch_payload) if isinstance(branch_payload, str) and branch_payload else {}
+            except (TypeError, ValueError):
+                parsed = {}
+            branch_whatsapp = parsed.get("whatsapp") if isinstance(parsed, dict) else None
+            if bool(row["is_default"]) and isinstance(branch_whatsapp, dict) and branch_whatsapp:
+                branch_override_by_default[company_id] = True
+
+        company_rows = bind.execute(sa.text(
+            "SELECT id, preferences_json FROM companies"
+        )).mappings().all()
+        for row in company_rows:
+            company_id = int(row["id"])
+            phone_id = whatsapp_phone(row["preferences_json"], company_level=True)
+            # Company-level config falls back to the default branch only when
+            # that branch does not have its own explicit WhatsApp settings.
+            if not phone_id or branch_override_by_default.get(company_id):
+                continue
+            owners_by_phone.setdefault(phone_id, set()).add(
+                (company_id, default_branch_by_company.get(company_id))
+            )
+
+        registry = sa.table(
+            "whatsapp_channel_registrations",
+            sa.column("phone_number_id", sa.String(40)),
+            sa.column("company_id", sa.Integer()),
+            sa.column("branch_id", sa.Integer()),
+            sa.column("created_at", sa.DateTime()),
+            sa.column("updated_at", sa.DateTime()),
+        )
+        seed_rows = []
+        for phone_id, owners in owners_by_phone.items():
+            if len(owners) != 1:
+                logger.warning(
+                    "WhatsApp phone_number_id %s aparece en varias sucursales/empresas; requiere revisión manual.",
+                    phone_id,
+                )
+                continue
+            company_id, branch_id = next(iter(owners))
+            now = datetime.utcnow()
+            seed_rows.append({
+                "phone_number_id": phone_id,
+                "company_id": company_id,
+                "branch_id": branch_id,
+                "created_at": now,
+                "updated_at": now,
+            })
+        if seed_rows:
+            op.bulk_insert(registry, seed_rows)
+
 
 def downgrade():
     bind = op.get_bind()
