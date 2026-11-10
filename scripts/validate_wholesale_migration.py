@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import faulthandler
 import importlib.util
+import json
 import os
 import threading
 import time
@@ -22,7 +23,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261109_01_branch_receipts"
+HEAD_REVISION = "20261109_02_mb_integrity"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -74,7 +75,14 @@ def main() -> None:
             max_clients=100000, max_branches=5, features_json="all",
             state="active", active=True,
         ))
-        company = Company(name="Empresa migración", address="Calle 123", city="Resistencia", province="Chaco", phone="123")
+        company = Company(
+            name="Empresa migración", address="Calle 123", city="Resistencia",
+            province="Chaco", phone="123",
+            preferences_json=json.dumps({"ai_agent": {"whatsapp": {
+                "phone_number_id": "987650000000001",
+                "enabled": True,
+            }}}),
+        )
         db.session.add(company)
         db.session.flush()
         user = User(username="migration-admin", email="migration-admin@example.test",
@@ -97,6 +105,10 @@ def main() -> None:
             connection.execute(text("DROP TABLE IF EXISTS price_list_discount_rules CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
+            # Force the latest integrity migration to create its new tables and
+            # batch foreign key instead of inheriting the ORM's current schema.
+            connection.execute(text("DROP TABLE IF EXISTS whatsapp_channel_registrations CASCADE"))
+            connection.execute(text("DROP TABLE IF EXISTS branch_stock_transfer_batches CASCADE"))
             # Remove tables/columns introduced by multisucursal so the revision must
             # create them as it would on an existing production tenant.
             for table_name in ("branch_stock_transfers", "branch_stock_movements", "branch_stock", "user_branch_access", "branches"):
@@ -207,6 +219,13 @@ def main() -> None:
         upgrade(directory="migrations", revision="head")
         _progress("Alembic upgrade returned successfully")
         db.session.remove()
+        with db.engine.connect() as connection:
+            migrated_registration = connection.execute(
+                text("SELECT company_id, branch_id FROM whatsapp_channel_registrations WHERE phone_number_id=:phone"),
+                {"phone": "987650000000001"},
+            ).mappings().first()
+            if migrated_registration is None or int(migrated_registration["company_id"]) != expected_company_id:
+                raise AssertionError("WhatsApp phone-number ownership was not backfilled for the existing default branch.")
 
         # Re-run the migration function directly against the same schema to prove
         # its data backfill is idempotent, not merely protected by alembic_version.
@@ -243,6 +262,13 @@ def main() -> None:
                 "last_payment_id", "last_payment_at",
             },
             "saas_settings": {"key", "value", "updated_at", "updated_by_user_id"},
+            "branch_stock_transfer_batches": {
+                "company_id", "source_branch_id", "target_branch_id", "idempotency_key",
+                "payload_hash", "note", "created_by_user_id", "created_at",
+            },
+            "whatsapp_channel_registrations": {
+                "phone_number_id", "company_id", "branch_id", "created_at", "updated_at",
+            },
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -253,7 +279,8 @@ def main() -> None:
         expected_tables = {
             "price_lists", "price_list_items", "price_list_discount_rules",
             "branches", "user_branch_access", "branch_stock", "branch_stock_movements",
-            "branch_stock_transfers", "company_memberships", "branch_vendor_licenses",
+            "branch_stock_transfers", "branch_stock_transfer_batches",
+            "whatsapp_channel_registrations", "company_memberships", "branch_vendor_licenses",
             "saas_settings",
         }
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
@@ -266,6 +293,7 @@ def main() -> None:
             "quote_items": "fk_quote_items_price_list_id_price_lists",
             "quote_deliveries": "fk_quote_deliveries_picked_up_by_user_id_users",
             "quotes": "fk_quotes_branch_id_branches",
+            "branch_stock_transfers": "fk_branch_stock_transfers_batch_id",
         }
         for table_name, fk_name in expected_foreign_keys.items():
             present = {item.get("name") for item in inspector.get_foreign_keys(table_name)}
@@ -290,7 +318,7 @@ def main() -> None:
                 f"Branch Vendor IA license indexes missing: {sorted(required_license_indexes - license_indexes)}"
             )
         transfer_columns = {column["name"] for column in inspector.get_columns("branch_stock_transfers")}
-        if not {"source_branch_id", "target_branch_id", "product_id", "quantity", "created_by_user_id"}.issubset(transfer_columns):
+        if not {"source_branch_id", "target_branch_id", "product_id", "quantity", "created_by_user_id", "batch_id"}.issubset(transfer_columns):
             raise AssertionError("Branch stock transfer table is missing required fields.")
         migrated_branch = db.session.execute(
             text("SELECT id FROM branches WHERE company_id = :company_id AND is_default = TRUE"),
