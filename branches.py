@@ -95,21 +95,44 @@ def _lock_company_for_branch_limit(company_id):
 
 
 def _has_pending_ai_vendor_orders(company_id, branch_id):
-    """A branch cannot be disabled while its AI vendor has an unresolved order."""
-    from app import Quote
+    """Protect unresolved AI orders and their online payment attempts before branch closure."""
+    from app import Payment, Quote
+
+    ai_quotes = Quote.query.filter_by(
+        company_id=int(company_id),
+        branch_id=int(branch_id),
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    )
     terminal_statuses = (
         "ANULADO", "ANULADA", "CANCELADO", "CANCELADA", "CANCELED",
         "CANCELLED", "RECHAZADO", "RECHAZADA", "REJECTED", "VENCIDO",
         "VENCIDA", "EXPIRED", "CONVERTIDO", "CLOSED",
     )
-    return (
-        Quote.query.filter_by(
-            company_id=int(company_id), branch_id=int(branch_id),
-            observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
-        )
-        .filter(Quote.converted_sale_id.is_(None))
+    if (
+        ai_quotes.filter(Quote.converted_sale_id.is_(None))
         .filter(func.upper(func.coalesce(Quote.status, "")).notin_(terminal_statuses))
-        .first() is not None
+        .first()
+        is not None
+    ):
+        return True
+
+    quote_ids = [int(value) for (value,) in ai_quotes.with_entities(Quote.id).all()]
+    if not quote_ids:
+        return False
+    references = [
+        Payment.external_reference.like(
+            f"flow:ai_order|company_id:{int(company_id)}|quote_id:{quote_id}|%"
+        )
+        for quote_id in quote_ids
+    ]
+    return (
+        Payment.query.filter(
+            Payment.company_id == int(company_id),
+            Payment.provider == "mercadopago_ai_order",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+            or_(*references),
+        ).first()
+        is not None
     )
 
 

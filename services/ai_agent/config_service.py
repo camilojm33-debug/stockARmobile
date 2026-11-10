@@ -558,7 +558,7 @@ def _validate_whatsapp_phone_owner(company, branch_id, phone_number_id):
     target = str(phone_number_id or "").strip()
     if not target:
         return _whatsapp_registration_branch_id(company, branch_id)
-    from app import WhatsAppChannelRegistration
+    from stockarmobile.models.conversations import WhatsAppChannelRegistration
     requested_branch_id = _whatsapp_registration_branch_id(company, branch_id)
     registration = db.session.query(WhatsAppChannelRegistration).filter_by(phone_number_id=target).first()
     if registration is not None and (
@@ -580,7 +580,7 @@ def _validate_whatsapp_phone_owner(company, branch_id, phone_number_id):
 
 
 def _sync_whatsapp_phone_registration(company, branch_id, previous_phone_id, phone_number_id):
-    from app import WhatsAppChannelRegistration
+    from stockarmobile.models.conversations import WhatsAppChannelRegistration
     scope_branch_id = _whatsapp_registration_branch_id(company, branch_id)
     previous = str(previous_phone_id or "").strip()
     target = str(phone_number_id or "").strip()
@@ -685,7 +685,7 @@ def company_branch_for_whatsapp_phone_id(phone_number_id):
     target = str(phone_number_id or "").strip()
     if not target:
         return None, None
-    from app import WhatsAppChannelRegistration
+    from stockarmobile.models.conversations import WhatsAppChannelRegistration
     registration = db.session.query(WhatsAppChannelRegistration).filter_by(phone_number_id=target).first()
     if registration is not None:
         company = Company.query.filter_by(id=registration.company_id, active=True).first()

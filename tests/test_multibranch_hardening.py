@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from app import Branch, Company, Conversation, Quote, User, db
+from app import Branch, Company, Quote, User, db
+from stockarmobile.models.conversations import Conversation, WhatsAppChannelRegistration
 from services.ai_agent.config_service import configure_whatsapp_connection
 
 
@@ -79,7 +80,6 @@ def test_whatsapp_phone_number_can_be_updated_by_its_existing_owner(app):
         )
         db.session.commit()
 
-        from app import WhatsAppChannelRegistration
         registration = db.session.get(WhatsAppChannelRegistration, "987654321002")
         assert registration is not None
         assert registration.company_id == company.id
@@ -147,6 +147,33 @@ def test_branch_cannot_be_deactivated_with_an_unresolved_ai_order(app):
         quote.status = "ANULADO"
         db.session.flush()
         assert branches._has_pending_ai_vendor_orders(company.id, branch.id) is False
+
+
+def test_branch_cannot_be_deactivated_with_a_pending_ai_payment_even_if_quote_is_terminal(app):
+    from app import Payment
+    import branches
+
+    with app.app_context():
+        company = _company("Empresa pago IA pendiente")
+        branch = _branch(company, "PAYMENT")
+        owner = _user(company, "owner-ai-payment")
+        quote = Quote(
+            number="AI-PAYMENT-BLOCK", company_id=company.id, branch_id=branch.id,
+            created_by_user_id=owner.id, observations=AI_MARKER, status="ANULADO",
+        )
+        db.session.add(quote)
+        db.session.flush()
+        db.session.add(Payment(
+            company_id=company.id,
+            provider="mercadopago_ai_order",
+            status="pending",
+            external_reference=f"flow:ai_order|company_id:{company.id}|quote_id:{quote.id}|conversation_id:5",
+            amount=10,
+            currency="ARS",
+        ))
+        db.session.flush()
+
+        assert branches._has_pending_ai_vendor_orders(company.id, branch.id) is True
 
 
 def test_test_database_safety_guard_runs_before_app_import():
