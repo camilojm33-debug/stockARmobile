@@ -258,8 +258,18 @@
           <span class="campaign-status {{ 'status-approved' if marketing_send_enabled else 'status-draft' }}"><i class="bi {{ 'bi-lightning-charge' if marketing_send_enabled else 'bi-pause-circle' }}"></i>{{ 'Habilitado' if marketing_send_enabled else 'Deshabilitado' }}</span>
         </div>
         <div class="campaign-data-row">
-          <span class="small text-muted">WhatsApp</span>
-          <span class="small fw-semibold text-end">{{ campaign.whatsapp_template_name or 'Plantilla desde configuración' }}</span>
+          <span class="small text-muted">WhatsApp emisor</span>
+          <span class="small fw-semibold text-end">
+            {% if commercial_whatsapp.connected %}
+              {{ commercial_whatsapp.display_phone_number or 'Número comercial conectado' }}
+            {% else %}
+              No conectado
+            {% endif %}
+          </span>
+        </div>
+        <div class="campaign-data-row">
+          <span class="small text-muted">Plantilla</span>
+          <span class="small fw-semibold text-end">{{ campaign.whatsapp_template_name or commercial_whatsapp.template_name or 'Sin configurar' }}</span>
         </div>
       </section>
 
