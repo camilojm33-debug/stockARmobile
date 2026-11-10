@@ -362,3 +362,53 @@ def test_in_process_campaign_worker_is_wired_into_wsgi_startup():
     assert "dispatch_due_campaigns(" in service
     assert "Campaign.status == \"EN_PREPARACION\"" in service
     assert "start_campaign_dispatch_worker(app)" in wsgi
+
+
+
+def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
+    from app import Campaign, Client, Company, User, db
+
+    with app.app_context():
+        company = Company(name="WhatsApp Argentina", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(username="wa-argentina", email="wa-argentina@example.com", role="admin", active=True, company_id=company.id)
+        user.set_password("password123")
+        client = Client(
+            name="Contacto local",
+            phone="3624228396",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="WhatsApp local",
+            objective="Validar destino",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.commit()
+        CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user.id)
+        CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user.id)
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {
+                "enabled": True,
+                "phone_number_id": "test-phone-id",
+                "access_token": "test-token",
+                "template_name": "approved_campaign",
+            },
+        )
+
+        prepared = prepare_recipients(campaign.id, company_id=company.id)
+        recipient = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, channel="whatsapp").one()
+        assert prepared["added"] == 1
+        assert recipient.destination == "5493624228396"
