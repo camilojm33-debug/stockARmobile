@@ -348,6 +348,79 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         assert recipient.provider_status == "accepted"
 
 
+def test_whatsapp_campaign_uses_explicit_whatsapp_or_phone_fallback(app):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, User, db
+    from services.saas_commercial_service import build_campaign_recipients
+
+    with app.app_context():
+        user = User(
+            username="wa-fallback-admin",
+            email="wa-fallback-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        phone_only = SaaSLead(
+            company_name="Teléfono con permiso",
+            contact_name="Contacto Teléfono",
+            phone="+54 9 11-1234-5678",
+            whatsapp=None,
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        explicit = SaaSLead(
+            company_name="WhatsApp explícito",
+            contact_name="Contacto WhatsApp",
+            phone="5491111111111",
+            whatsapp="+54 9 11-2222-3333",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        no_permission = SaaSLead(
+            company_name="Sin permiso",
+            contact_name="Contacto Sin Permiso",
+            phone="5491111111112",
+            whatsapp_consent_status="unknown",
+            created_by_user_id=user.id,
+        )
+        invalid_number = SaaSLead(
+            company_name="Número corto",
+            contact_name="Contacto Número Corto",
+            phone="1234",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([phone_only, explicit, no_permission, invalid_number])
+        db.session.flush()
+
+        campaign = SaaSCampaign(
+            name="Campaña teléfono fallback",
+            subject="Hola",
+            channel="whatsapp",
+            body_html="<p>Hola</p>",
+            body_text="Hola",
+            whatsapp_template_name="stockarmobile_prospecto_01",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.commit()
+
+        summary = build_campaign_recipients(db.session, campaign.id)
+        rows = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+        by_lead = {row.lead_id: row.destination for row in rows}
+
+        assert summary["eligible_whatsapp"] == 2
+        assert by_lead == {
+            phone_only.id: "5491112345678",
+            explicit.id: "5491122223333",
+        }
+        assert no_permission.id not in by_lead
+        assert invalid_number.id not in by_lead
+
+
 def test_email_tracking_html_contains_open_pixel_and_tracked_links(app):
     from app import SaaSCampaignRecipient, SaaSLead, User, db
     from services.saas_commercial_service import _render_tracking_html

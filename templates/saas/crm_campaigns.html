@@ -71,6 +71,7 @@
     <div class="position-relative z-1 mt-4">
       <div class="campaign-readiness">
         <span class="ready-item"><i class="bi bi-envelope-check"></i> Gmail {{ 'listo' if smtp_configured else 'a revisar' }}</span>
+        <span class="ready-item"><i class="bi bi-whatsapp"></i> WhatsApp {{ 'conectado' if commercial_whatsapp.connected else 'a revisar' }}{% if commercial_whatsapp.display_phone_number %} · {{ commercial_whatsapp.display_phone_number }}{% endif %}</span>
         <span class="ready-item"><i class="bi bi-lightning-charge"></i> Motor comercial {{ 'habilitado' if marketing_send_enabled else 'deshabilitado' }}</span>
         <span class="ready-item"><i class="bi bi-shield-check"></i> Consentimiento por canal</span>
       </div>

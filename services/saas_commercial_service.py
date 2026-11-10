@@ -577,6 +577,15 @@ def parse_segment_json(raw: str | None) -> dict:
     return value
 
 
+def _lead_whatsapp_destination(lead) -> str | None:
+    """Return normalized WhatsApp destination, preferring the explicit WhatsApp field."""
+    for raw_value in (getattr(lead, "whatsapp", None), getattr(lead, "phone", None)):
+        normalized = normalize_phone(raw_value)
+        if normalized and 8 <= len(normalized) <= 15:
+            return normalized
+    return None
+
+
 def _eligible_leads_query(channel: str, filters: dict):
     from app import SaaSLead
 
@@ -595,7 +604,12 @@ def _eligible_leads_query(channel: str, filters: dict):
         )
         return _apply_consent_eligibility(query, SaaSLead, channel)
     if channel == "whatsapp":
-        query = query.filter(SaaSLead.whatsapp.isnot(None))
+        from sqlalchemy import and_, func, or_
+
+        query = query.filter(or_(
+            and_(SaaSLead.whatsapp.isnot(None), func.length(func.trim(SaaSLead.whatsapp)) > 0),
+            and_(SaaSLead.phone.isnot(None), func.length(func.trim(SaaSLead.phone)) > 0),
+        ))
         return _apply_consent_eligibility(query, SaaSLead, channel)
     raise ValueError("Canal de campaña no soportado.")
 
@@ -625,15 +639,25 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
         SaaSLead.email_status != "invalid",
     )
     email_available = sum(1 for lead in email_candidates.yield_per(1000) if _campaign_email_is_valid(lead))
-    whatsapp_available = query.filter(
-        SaaSLead.whatsapp.isnot(None),
-    ).count()
+    from sqlalchemy import and_, func, or_
+
+    whatsapp_candidates = query.filter(or_(
+        and_(SaaSLead.whatsapp.isnot(None), func.length(func.trim(SaaSLead.whatsapp)) > 0),
+        and_(SaaSLead.phone.isnot(None), func.length(func.trim(SaaSLead.phone)) > 0),
+    ))
+    whatsapp_available = sum(
+        1 for lead in whatsapp_candidates.yield_per(1000)
+        if _lead_whatsapp_destination(lead)
+    )
     email_optin_candidates = email_candidates.filter(SaaSLead.email_consent_status == "opted_in")
     email_optin = sum(1 for lead in email_optin_candidates.yield_per(1000) if _campaign_email_is_valid(lead))
-    whatsapp_optin = query.filter(
-        SaaSLead.whatsapp.isnot(None),
+    whatsapp_optin_candidates = whatsapp_candidates.filter(
         SaaSLead.whatsapp_consent_status == "opted_in",
-    ).count()
+    )
+    whatsapp_optin = sum(
+        1 for lead in whatsapp_optin_candidates.yield_per(1000)
+        if _lead_whatsapp_destination(lead)
+    )
     return {
         "total": total,
         "blocked": blocked,
@@ -650,7 +674,10 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
             if campaign.channel in {"email", "both"} else 0
         ),
         "eligible_whatsapp": (
-            _eligible_leads_query("whatsapp", filters).count()
+            sum(
+                1 for lead in _eligible_leads_query("whatsapp", filters).yield_per(1000)
+                if _lead_whatsapp_destination(lead)
+            )
             if campaign.channel in {"whatsapp", "both"} else 0
         ),
     }
@@ -682,9 +709,11 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
         ).all()
         if channel == "email":
             leads = [lead for lead in leads if _campaign_email_is_valid(lead)]
+        else:
+            leads = [lead for lead in leads if _lead_whatsapp_destination(lead)]
         eligible[channel] = len(leads)
         for lead in leads:
-            destination = normalize_email(lead.email) if channel == "email" else lead.whatsapp
+            destination = normalize_email(lead.email) if channel == "email" else _lead_whatsapp_destination(lead)
             key = (lead.id, channel)
             if not destination or key in existing:
                 continue
