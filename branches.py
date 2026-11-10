@@ -1,5 +1,6 @@
 """Premium multi-branch management routes."""
 import re
+import secrets
 import time
 from urllib.parse import urlsplit
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, request, session, url_for
@@ -426,9 +427,11 @@ def transfer_stock():
             transfer_items = [(product, quantity)]
 
         from stockarmobile.branch_inventory import transfer_branch_stock_batch
+        idempotency_key = (str(request.form.get("idempotency_key") or "").strip() or secrets.token_urlsafe(24))[:120]
         transfers = transfer_branch_stock_batch(
             transfer_items, source.id, target.id,
             user_id=current_user.id, note=request.form.get("note"),
+            idempotency_key=idempotency_key,
         )
         db.session.commit()
         transfer_succeeded = True
