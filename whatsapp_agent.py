@@ -1228,9 +1228,12 @@ def ai_order_shipping(quote_id: int):
             quote_id=int(quote_id),
         )
         if conversation_id and result.get("payment_url"):
-            conversation = Conversation.query.filter_by(
+            conversation_query = Conversation.query.filter_by(
                 id=int(conversation_id),
                 company_id=int(company_id),
+            )
+            conversation = _scope_ai_branch(
+                conversation_query, Conversation, company_id
             ).first()
             if conversation is not None and str(conversation.channel or "").lower() == "whatsapp":
                 total_text = "{:.2f}".format(float(result.get("total") or 0))
