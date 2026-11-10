@@ -409,7 +409,7 @@ def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, lim
     return summary
 
 
-def start_campaign_dispatch_worker(flask_app, *, poll_interval: int = 8) -> bool:
+def start_campaign_dispatch_worker(flask_app, *, poll_interval: int = 5) -> bool:
     """Start a lightweight in-process queue worker; no external cron is required."""
     global _AUTO_DISPATCH_WORKER_STARTED
     with _AUTO_DISPATCH_WORKER_LOCK:
