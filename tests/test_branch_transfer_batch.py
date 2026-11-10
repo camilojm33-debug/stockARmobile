@@ -258,7 +258,6 @@ def test_branch_transfer_post_processes_all_selected_products_together(app, monk
             "/sucursales/transferir-stock",
             data={
                 "idempotency_key": "route-transfer-test-001",
-                "idempotency_key": "route-transfer-test-002",
                 "source_branch_id": str(source.id),
                 "target_branch_id": str(target.id),
                 "note": "Reposición de salón",
@@ -301,6 +300,7 @@ def test_branch_transfer_post_rolls_back_every_line_if_one_product_fails(app, mo
         response = client.post(
             "/sucursales/transferir-stock",
             data={
+                "idempotency_key": "route-transfer-test-002",
                 "source_branch_id": str(source.id),
                 "target_branch_id": str(target.id),
                 "items_json": json.dumps([
@@ -348,7 +348,7 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     assert "transfer_status" in script
     service_worker = (Path(__file__).resolve().parents[1] / "static" / "service-worker.js").read_text(encoding="utf-8")
     assert "'/sucursales/api/productos-transferencia'" in service_worker
-    assert "stockarmobile-pwa-v20" in service_worker
+    assert "stockarmobile-pwa-v21" in service_worker
 
 def test_branch_transfer_script_loader_renders_for_branch_panel_context():
     from pathlib import Path
