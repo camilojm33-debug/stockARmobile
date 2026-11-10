@@ -30,7 +30,14 @@
   let lastSourceId = source.value;
   const noteInput = document.getElementById('branch-transfer-note');
   const returnToInput = form.querySelector('input[name="return_to"]');
+  const idempotencyInput = form.querySelector('input[name="idempotency_key"]');
   const draftStorageKey = 'stockarmobile:branch-transfer:v2:' + (root.dataset.companyId || 'company');
+  if (idempotencyInput && !idempotencyInput.value) {
+    const key = (window.crypto && typeof window.crypto.randomUUID === 'function')
+      ? window.crypto.randomUUID()
+      : 'branch-transfer-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    idempotencyInput.value = key;
+  }
   const transferCompleted = root.dataset.transferCompleted === '1';
 
   if (transferCompleted) {

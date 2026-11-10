@@ -7,10 +7,13 @@ thermal printers without changing the cloud application's existing behavior.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import socket
 import sys
+from io import BytesIO
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -18,6 +21,11 @@ try:
     import win32print
 except ImportError:  # pragma: no cover - optional on non-Windows development hosts
     win32print = None
+
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover - installed by desktop_agent/requirements.txt
+    Image = None
 
 HOST = os.getenv("STOCKAR_PRINT_HOST", "127.0.0.1")
 PORT = int(os.getenv("STOCKAR_PRINT_PORT", "8765"))
@@ -51,6 +59,43 @@ def _money(value: Any) -> str:
     return f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _escpos_logo(data_url: Any) -> bytes:
+    """Render a bounded PNG/JPEG data URL as ESC/POS raster graphics."""
+    if Image is None or not isinstance(data_url, str) or not data_url.startswith("data:image/"):
+        return b""
+    try:
+        _header, encoded = data_url.split(",", 1)
+        if len(encoded) > 180_000:
+            return b""
+        raw = base64.b64decode(encoded, validate=True)
+        if len(raw) > 135_000:
+            return b""
+        with Image.open(BytesIO(raw)) as source:
+            image = source.convert("L")
+            image.thumbnail((384, 180))
+            width, height = image.size
+            width_bytes = (width + 7) // 8
+            pixels = image.load()
+            raster = bytearray()
+            for y in range(height):
+                for byte_index in range(width_bytes):
+                    value = 0
+                    for bit in range(8):
+                        x = byte_index * 8 + bit
+                        if x < width and pixels[x, y] < 190:
+                            value |= 1 << (7 - bit)
+                    raster.append(value)
+            header = b"\x1dv0\x00" + bytes((
+                width_bytes & 0xFF, (width_bytes >> 8) & 0xFF,
+                height & 0xFF, (height >> 8) & 0xFF,
+            ))
+            return b"\x1ba\x01" + header + bytes(raster) + b"\n"
+    except (ValueError, TypeError, binascii.Error, OSError):
+        return b""
+    except Exception:
+        return b""
+
+
 def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     lines = []
     brand = str(ticket.get("brand") or "STOCK ARMOBILE").strip()
@@ -65,8 +110,14 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     footer = str(ticket.get("footer") or "")
     payment = str(ticket.get("payment_method") or "")
 
+    paper_size = str(ticket.get("paper_size") or "Ticket80").strip().lower()
+    separator = "-" * (48 if paper_size in {"ticket80", "80mm", "80 mm"} else 32)
+
     data = bytearray()
     data += b"\x1b@"  # initialize
+    logo = _escpos_logo(ticket.get("logo_data_url"))
+    if logo:
+        data += logo
     data += b"\x1ba\x01"  # center
     data += b"\x1bE\x01"  # bold
     data += b"\x1d!\x11"  # double width/height
@@ -74,7 +125,7 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     data += b"\x1d!\x00"
     data += b"\x1bE\x00"
     data += _escpos_text("Ticket de venta\n")
-    data += _escpos_text("--------------------------------\n")
+    data += _escpos_text(f"{separator}\n")
     data += b"\x1ba\x00"  # left
     if branch:
         data += _escpos_text(f"Sucursal: {branch}\n")
@@ -92,7 +143,7 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     data += _escpos_text(f"Cliente: {customer}\n")
     if payment:
         data += _escpos_text(f"Pago: {payment}\n")
-    data += _escpos_text("--------------------------------\n")
+    data += _escpos_text(f"{separator}\n")
 
     for item in ticket.get("items") or []:
         name = str(item.get("name") or "Producto")
@@ -106,7 +157,7 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
                 f"{name[:30]}\n{qty:g} x ${_money(unit)} = ${_money(total)}\n"
             )
 
-    data += _escpos_text("--------------------------------\n")
+    data += _escpos_text(f"{separator}\n")
     subtotal = float(ticket.get("subtotal") or 0)
     discount = float(ticket.get("discount") or 0)
     surcharge = float(ticket.get("surcharge") or 0)

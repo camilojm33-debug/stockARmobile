@@ -1,5 +1,6 @@
 """Premium multi-branch management routes."""
 import re
+import secrets
 import time
 from urllib.parse import urlsplit
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, request, session, url_for
@@ -90,6 +91,48 @@ def _lock_company_for_branch_limit(company_id):
         .with_for_update()
         .populate_existing()
         .first_or_404()
+    )
+
+
+def _has_pending_ai_vendor_orders(company_id, branch_id):
+    """Protect unresolved AI orders and their online payment attempts before branch closure."""
+    from app import Payment, Quote
+
+    ai_quotes = Quote.query.filter_by(
+        company_id=int(company_id),
+        branch_id=int(branch_id),
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    )
+    terminal_statuses = (
+        "ANULADO", "ANULADA", "CANCELADO", "CANCELADA", "CANCELED",
+        "CANCELLED", "RECHAZADO", "RECHAZADA", "REJECTED", "VENCIDO",
+        "VENCIDA", "EXPIRED", "CONVERTIDO", "CLOSED",
+    )
+    if (
+        ai_quotes.filter(Quote.converted_sale_id.is_(None))
+        .filter(func.upper(func.coalesce(Quote.status, "")).notin_(terminal_statuses))
+        .first()
+        is not None
+    ):
+        return True
+
+    quote_ids = [int(value) for (value,) in ai_quotes.with_entities(Quote.id).all()]
+    if not quote_ids:
+        return False
+    references = [
+        Payment.external_reference.like(
+            f"flow:ai_order|company_id:{int(company_id)}|quote_id:{quote_id}|%"
+        )
+        for quote_id in quote_ids
+    ]
+    return (
+        Payment.query.filter(
+            Payment.company_id == int(company_id),
+            Payment.provider == "mercadopago_ai_order",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+            or_(*references),
+        ).first()
+        is not None
     )
 
 
@@ -228,6 +271,12 @@ def update_branch(branch_id):
         if _has_pending_invoice_sales(company_id, branch.id):
             flash(
                 "Emití los comprobantes pendientes o anulá esas ventas antes de desactivar la sucursal.",
+                "warning",
+            )
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+        if _has_pending_ai_vendor_orders(company_id, branch.id):
+            flash(
+                "Completá o cancelá los pedidos pendientes del Vendedor IA y resolvé sus pagos antes de desactivar la sucursal.",
                 "warning",
             )
             return redirect(url_for("company_billing.company_settings", panel="branches"))
@@ -401,9 +450,11 @@ def transfer_stock():
             transfer_items = [(product, quantity)]
 
         from stockarmobile.branch_inventory import transfer_branch_stock_batch
+        idempotency_key = (str(request.form.get("idempotency_key") or "").strip() or secrets.token_urlsafe(24))[:120]
         transfers = transfer_branch_stock_batch(
             transfer_items, source.id, target.id,
             user_id=current_user.id, note=request.form.get("note"),
+            idempotency_key=idempotency_key,
         )
         db.session.commit()
         transfer_succeeded = True

@@ -108,6 +108,28 @@ class ThermalPrinterService:
         compact = bool(preferences.get("compact_print"))
         ticket_context = ticket_context or ReceiptService.ticket_context(company=company, sale=sale)
         ticket_name = (ticket_context.get("ticket_name") or getattr(company, "name", None) or "STOCK ARMOBILE").strip()[:120]
+        # Thermal logo support mirrors the receipt identity selected for the sale's branch.
+        logo_payload = getattr(company, "logo_data", None)
+        logo_url = str(ticket_context.get("logo_url") or "").strip()
+        if not logo_payload and logo_url.startswith("/static/") and has_app_context():
+            from pathlib import Path
+            logo_path = Path(current_app.static_folder or "") / logo_url.removeprefix("/static/")
+            try:
+                if logo_path.is_file():
+                    logo_payload = logo_path.read_bytes()
+            except OSError:
+                logo_payload = None
+        if logo_payload:
+            try:
+                from io import BytesIO
+                from PIL import Image
+                image = Image.open(BytesIO(bytes(logo_payload))).convert("RGB")
+                image.thumbnail((512, 220))
+                printer.set(align="center")
+                printer.image(image)
+                printer.text("\n")
+            except Exception:
+                self._logger().warning("No se pudo imprimir el logo del ticket de venta %s.", getattr(sale, "id", None))
         printer.set(align="center", bold=True, width=2 if not compact else 1, height=2 if not compact else 1)
         printer.text(f"{ticket_name or 'STOCK ARMOBILE'}\n")
         printer.set(align="center", bold=False)

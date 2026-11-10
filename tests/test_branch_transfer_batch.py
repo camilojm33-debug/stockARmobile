@@ -309,6 +309,8 @@ def test_branch_transfer_settings_render_multi_product_selector_and_script(app):
     assert 'data-branch-employee-search' in template
     assert "branch-history-table" in template
     assert 'name="items_json"' in template
+    assert 'name="idempotency_key"' in template
+    assert "randomUUID" in script
     assert "branch-transfer-manager.js" in template
     assert "Agregar visibles" in template
     assert "data-transfer-quantity" in script
@@ -427,6 +429,72 @@ def test_branch_management_overlay_stacks_above_transfer_workspace_and_allows_on
     assert "details.addEventListener('toggle'" in template
     assert "other.open = false" in template
     assert "overscroll-behavior:contain" in template
+
+
+def test_branch_transfer_idempotency_returns_original_batch_without_moving_stock_twice(app):
+    with app.app_context():
+        company = _company("Empresa transferencia idempotente")
+        source = _branch(company, "Casa central", "CENTRAL")
+        target = _branch(company, "Sucursal", "SUC")
+        product = _product(company, "TR-IDEM-001", "Producto idempotente", "General", 10)
+        set_branch_stock(product, source.id, 10)
+        set_branch_stock(product, target.id, 0)
+        db.session.commit()
+
+        from app import BranchStockTransferBatch
+        from stockarmobile.branch_inventory import transfer_branch_stock_batch
+
+        first = transfer_branch_stock_batch(
+            [(product, "3")], source.id, target.id,
+            user_id=77, note="Reposición", idempotency_key="transfer-test-key-001",
+        )
+        db.session.commit()
+        original_ids = [row.id for row in first]
+
+        retry = transfer_branch_stock_batch(
+            [(product, "3")], source.id, target.id,
+            user_id=77, note="Reposición", idempotency_key="transfer-test-key-001",
+        )
+        db.session.commit()
+
+        assert [row.id for row in retry] == original_ids
+        assert available_stock(product, source.id) == 7
+        assert available_stock(product, target.id) == 3
+        assert BranchStockTransfer.query.filter_by(company_id=company.id).count() == 1
+        assert BranchStockTransferBatch.query.filter_by(company_id=company.id).count() == 1
+
+
+def test_branch_transfer_idempotency_rejects_reusing_key_with_changed_payload(app):
+    with app.app_context():
+        company = _company("Empresa transferencia clave conflictiva")
+        source = _branch(company, "Casa central", "CENTRAL")
+        target = _branch(company, "Sucursal", "SUC")
+        product = _product(company, "TR-IDEM-002", "Producto conflictivo", "General", 10)
+        set_branch_stock(product, source.id, 10)
+        set_branch_stock(product, target.id, 0)
+        db.session.commit()
+
+        from stockarmobile.branch_inventory import transfer_branch_stock_batch
+        transfer_branch_stock_batch(
+            [(product, "1")], source.id, target.id,
+            user_id=88, note="Primera", idempotency_key="transfer-test-key-002",
+        )
+        db.session.commit()
+
+        try:
+            transfer_branch_stock_batch(
+                [(product, "2")], source.id, target.id,
+                user_id=88, note="Primera", idempotency_key="transfer-test-key-002",
+            )
+        except ValueError as exc:
+            assert "idempotencia" in str(exc).lower()
+        else:
+            raise AssertionError("La misma clave no debe aceptar un payload diferente.")
+
+        db.session.rollback()
+        assert available_stock(product, source.id) == 9
+        assert available_stock(product, target.id) == 1
+        assert BranchStockTransfer.query.filter_by(company_id=company.id).count() == 1
 
 
 def test_branch_transfer_failure_retains_return_path_and_success_marker_is_cleaned_by_script():

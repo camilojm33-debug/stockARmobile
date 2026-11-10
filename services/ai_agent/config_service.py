@@ -547,6 +547,71 @@ def get_whatsapp_connection(company, branch_id: int | None = None):
     }
 
 
+def _whatsapp_registration_branch_id(company, branch_id):
+    if branch_id is not None:
+        return int(branch_id)
+    from stockarmobile.branch_context import get_default_branch_id
+    return get_default_branch_id(int(company.id))
+
+
+def _validate_whatsapp_phone_owner(company, branch_id, phone_number_id):
+    target = str(phone_number_id or "").strip()
+    if not target:
+        return _whatsapp_registration_branch_id(company, branch_id)
+    from stockarmobile.models.conversations import WhatsAppChannelRegistration
+    requested_branch_id = _whatsapp_registration_branch_id(company, branch_id)
+    registration = db.session.query(WhatsAppChannelRegistration).filter_by(phone_number_id=target).first()
+    if registration is not None and (
+        int(registration.company_id) != int(company.id)
+        or (registration.branch_id or None) != (requested_branch_id or None)
+    ):
+        raise ValueError("Este número de WhatsApp ya está conectado a otra empresa o sucursal.")
+
+    # Existing installations may have JSON configuration written before the registry existed.
+    legacy_company, legacy_branch = company_branch_for_whatsapp_phone_id(target)
+    if legacy_company is not None:
+        legacy_branch_id = int(legacy_branch.id) if legacy_branch is not None else None
+        if (
+            int(legacy_company.id) != int(company.id)
+            or (legacy_branch_id or None) != (requested_branch_id or None)
+        ):
+            raise ValueError("Este número de WhatsApp ya está conectado a otra empresa o sucursal.")
+    return requested_branch_id
+
+
+def _sync_whatsapp_phone_registration(company, branch_id, previous_phone_id, phone_number_id):
+    from stockarmobile.models.conversations import WhatsAppChannelRegistration
+    scope_branch_id = _whatsapp_registration_branch_id(company, branch_id)
+    previous = str(previous_phone_id or "").strip()
+    target = str(phone_number_id or "").strip()
+    if previous and previous != target:
+        old_registration = db.session.query(WhatsAppChannelRegistration).filter_by(phone_number_id=previous).first()
+        if old_registration is not None and (
+            int(old_registration.company_id) == int(company.id)
+            and (old_registration.branch_id or None) == (scope_branch_id or None)
+        ):
+            db.session.delete(old_registration)
+    if target:
+        registration = (
+            db.session.query(WhatsAppChannelRegistration)
+            .filter_by(phone_number_id=target)
+            .with_for_update()
+            .first()
+        )
+        if registration is not None and (
+            int(registration.company_id) != int(company.id)
+            or (registration.branch_id or None) != (scope_branch_id or None)
+        ):
+            raise ValueError("Este número de WhatsApp ya está conectado a otra empresa o sucursal.")
+        if registration is None:
+            db.session.add(WhatsAppChannelRegistration(
+                phone_number_id=target,
+                company_id=int(company.id),
+                branch_id=scope_branch_id,
+            ))
+    db.session.flush()
+
+
 def configure_whatsapp_connection(
     company,
     *,
@@ -568,6 +633,8 @@ def configure_whatsapp_connection(
             raise ValueError("La sucursal seleccionada no existe o está inactiva.")
         prefs = _branch_preferences(branch)
         whatsapp = prefs.get("whatsapp") if isinstance(prefs.get("whatsapp"), dict) else {}
+        previous_phone_id = str(whatsapp.get("phone_number_id") or "").strip()
+        target_branch_id = _validate_whatsapp_phone_owner(company, branch.id, phone_number_id)
         whatsapp.update(
             {
                 "enabled": bool(enabled),
@@ -584,12 +651,14 @@ def configure_whatsapp_connection(
             whatsapp.update(whatsapp_updates)
         prefs["whatsapp"] = whatsapp
         save_branch_preferences(branch, prefs)
-        db.session.flush()
+        _sync_whatsapp_phone_registration(company, target_branch_id, previous_phone_id, phone_number_id)
         return
 
     prefs = _company_preferences(company)
     ai = prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"), dict) else {}
     whatsapp = ai.get("whatsapp") if isinstance(ai.get("whatsapp"), dict) else {}
+    previous_phone_id = str(whatsapp.get("phone_number_id") or "").strip()
+    target_branch_id = _validate_whatsapp_phone_owner(company, None, phone_number_id)
     whatsapp.update(
         {
             "enabled": bool(enabled),
@@ -607,6 +676,7 @@ def configure_whatsapp_connection(
     ai["whatsapp"] = whatsapp
     prefs["ai_agent"] = ai
     save_company_preferences(company, prefs)
+    _sync_whatsapp_phone_registration(company, target_branch_id, previous_phone_id, phone_number_id)
 
 
 def company_branch_for_whatsapp_phone_id(phone_number_id):
@@ -615,6 +685,15 @@ def company_branch_for_whatsapp_phone_id(phone_number_id):
     target = str(phone_number_id or "").strip()
     if not target:
         return None, None
+    from stockarmobile.models.conversations import WhatsAppChannelRegistration
+    registration = db.session.query(WhatsAppChannelRegistration).filter_by(phone_number_id=target).first()
+    if registration is not None:
+        company = Company.query.filter_by(id=registration.company_id, active=True).first()
+        branch = Branch.query.filter_by(
+            id=registration.branch_id, company_id=registration.company_id
+        ).first() if registration.branch_id else None
+        if company is not None:
+            return company, branch
     candidates = (
         Branch.query.join(Company, Company.id == Branch.company_id)
         .filter(Company.active.is_(True), Branch.active.is_(True), Branch.vendor_ai_json.contains(target))

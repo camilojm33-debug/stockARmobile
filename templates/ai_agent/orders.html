@@ -254,6 +254,16 @@
     {% endif %}
     </div>
     {% endif %}
+    {% if pagination and pagination.total_pages > 1 %}
+    <nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 px-3 py-3 border-top" aria-label="Paginación de pedidos IA">
+      <span class="small text-muted">Mostrando {{ orders|length }} de {{ pagination.total }} pedidos</span>
+      <div class="btn-group btn-group-sm">
+        {% if pagination.has_prev %}<a class="btn btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_orders', status=selected_status, page=pagination.page - 1) }}">Anterior</a>{% endif %}
+        <span class="btn btn-light disabled">Página {{ pagination.page }} / {{ pagination.total_pages }}</span>
+        {% if pagination.has_next %}<a class="btn btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_orders', status=selected_status, page=pagination.page + 1) }}">Siguiente</a>{% endif %}
+      </div>
+    </nav>
+    {% endif %}
   </section>
 </div>
 
