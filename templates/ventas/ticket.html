@@ -88,10 +88,14 @@
 {% endblock %}
 
 {% block extra_css %}
+{% set _ticket_paper_size = (printer_settings.get('paper_size', 'A4') if printer_settings else 'A4') %}
+{% set _ticket_paper_width = '210mm' if _ticket_paper_size == 'A4' else ('216mm' if _ticket_paper_size == 'Carta' else '80mm') %}
+{% set _ticket_page_size = 'A4' if _ticket_paper_size == 'A4' else ('Letter' if _ticket_paper_size == 'Carta' else '80mm auto') %}
 <style>
+  @page { size: {{ _ticket_page_size }}; margin: {% if _ticket_paper_size == 'Ticket80' %}4mm{% else %}10mm{% endif %}; }
   .ticket-shell { display: flex; justify-content: center; padding: 24px 12px; }
   .ticket-paper {
-    width: 80mm;
+    width: {{ _ticket_paper_width }};
     max-width: calc(100vw - 24px);
     background: #fff;
     color: #111;
@@ -123,7 +127,7 @@
     body { background: #fff !important; }
     .no-print, .app-sidebar, .app-mobilebar, .app-navbar, .toast-container { display: none !important; }
     .ticket-shell { padding: 0; }
-    .ticket-paper { border: 0; border-radius: 0; width: 80mm; max-width: 80mm; }
+    .ticket-paper { border: 0; border-radius: 0; width: {{ _ticket_paper_width }}; max-width: none; padding: 0; }
   }
 </style>
 {% endblock %}
