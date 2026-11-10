@@ -412,3 +412,11 @@ def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
         recipient = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, channel="whatsapp").one()
         assert prepared["added"] == 1
         assert recipient.destination == "5493624228396"
+
+
+
+def test_campaign_dispatch_worker_does_not_start_during_tests(app):
+    from services.ai_agent.tenant_campaign_service import start_campaign_dispatch_worker
+
+    assert app.testing is True
+    assert start_campaign_dispatch_worker(app) is False
