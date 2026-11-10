@@ -10,6 +10,7 @@ import json
 import re
 import secrets
 import smtplib
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
@@ -411,6 +412,9 @@ def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, lim
 
 def start_campaign_dispatch_worker(flask_app, *, poll_interval: int = 5) -> bool:
     """Start a lightweight in-process queue worker; no external cron is required."""
+    if flask_app.testing or "pytest" in sys.modules:
+        return False
+
     global _AUTO_DISPATCH_WORKER_STARTED
     with _AUTO_DISPATCH_WORKER_LOCK:
         if _AUTO_DISPATCH_WORKER_STARTED:
