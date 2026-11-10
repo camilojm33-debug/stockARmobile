@@ -338,7 +338,19 @@ class ReceiptService:
         """Resolve an uploaded or local static logo without fetching arbitrary URLs."""
         import os
         import mimetypes
+        from io import BytesIO
+        from PIL import Image
         from flask import current_app, has_app_context
+
+        def verified_image(payload):
+            if not payload or len(payload) > 3 * 1024 * 1024:
+                return None
+            try:
+                with Image.open(BytesIO(payload)) as image:
+                    image.verify()
+            except Exception:
+                return None
+            return bytes(payload)
 
         logo_url = str((context or {}).get("logo_url") or "").strip()
         if not logo_url:
@@ -350,8 +362,8 @@ class ReceiptService:
         ):
             payload = getattr(company, "logo_data", None)
             mime_type = str(getattr(company, "logo_mime_type", None) or "").strip().lower()
-            if payload and mime_type.startswith("image/") and len(payload) <= 3 * 1024 * 1024:
-                return bytes(payload)
+            if mime_type.startswith("image/"):
+                return verified_image(payload)
 
         # Branch-specific logos may reference a public static upload. Do not
         # fetch remote URLs or arbitrary local paths (SSRF/path traversal).
@@ -369,7 +381,7 @@ class ReceiptService:
             if not mime_type.startswith("image/"):
                 return None
             with open(candidate, "rb") as handle:
-                return handle.read()
+                return verified_image(handle.read())
         except (OSError, ValueError):
             return None
 
