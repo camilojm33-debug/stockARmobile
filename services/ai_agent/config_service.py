@@ -674,7 +674,8 @@ def company_branch_for_whatsapp_phone_id(phone_number_id):
     )
     for branch in branch_candidates:
         company = Company.query.filter_by(id=branch.company_id, active=True).first()
-        if company and get_whatsapp_connection(company, branch_id=branch.id)["phone_number_id"] == target:
+        connection = get_whatsapp_connection(company, branch_id=branch.id) if company else {}
+        if connection.get("enabled") and connection.get("phone_number_id") == target:
             matches.append((company, branch))
 
     company_candidates = (
@@ -684,7 +685,7 @@ def company_branch_for_whatsapp_phone_id(phone_number_id):
     )
     for company in company_candidates:
         connection = get_whatsapp_connection(company)
-        if connection["phone_number_id"] == target:
+        if connection.get("enabled") and connection["phone_number_id"] == target:
             from stockarmobile.branch_context import get_default_branch_id
             branch_id = get_default_branch_id(company.id)
             branch = Branch.query.filter_by(id=branch_id, company_id=company.id).first() if branch_id else None
