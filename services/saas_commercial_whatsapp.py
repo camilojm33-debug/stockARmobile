@@ -79,6 +79,30 @@ def is_commercial_phone_number_id(phone_number_id: str) -> bool:
     return bool(configured and configured == str(phone_number_id or "").strip())
 
 
+def commercial_whatsapp_summary() -> dict:
+    """Return safe display data for the dedicated Stockarmobile acquisition channel."""
+    try:
+        company = get_commercial_company()
+        if company is None:
+            return {"connected": False, "display_phone_number": "", "template_name": ""}
+        from services.ai_agent.config_service import get_whatsapp_connection
+
+        connection = get_whatsapp_connection(company)
+        connected = bool(
+            connection.get("enabled")
+            and connection.get("phone_number_id")
+            and connection.get("access_token")
+        )
+        return {
+            "connected": connected,
+            "display_phone_number": str(connection.get("display_phone_number") or "").strip(),
+            "template_name": str(connection.get("template_name") or "").strip(),
+        }
+    except Exception:
+        # Status panels fail closed and never return provider credentials.
+        return {"connected": False, "display_phone_number": "", "template_name": ""}
+
+
 def _default_model() -> str:
     provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
     if provider == "gemini":
