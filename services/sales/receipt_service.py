@@ -333,6 +333,46 @@ class ReceiptService:
         }
 
     @staticmethod
+    def ticket_logo_bytes(*, company=None, context=None):
+        """Resolve an uploaded or local static logo without fetching arbitrary URLs."""
+        import os
+        import mimetypes
+        from flask import current_app, has_app_context
+
+        logo_url = str((context or {}).get("logo_url") or "").strip()
+        if not logo_url:
+            return None
+
+        if (
+            company is not None
+            and logo_url == str(getattr(company, "logo", None) or "").strip()
+        ):
+            payload = getattr(company, "logo_data", None)
+            mime_type = str(getattr(company, "logo_mime_type", None) or "").strip().lower()
+            if payload and mime_type.startswith("image/") and len(payload) <= 3 * 1024 * 1024:
+                return bytes(payload)
+
+        # Branch-specific logos may reference a public static upload. Do not
+        # fetch remote URLs or arbitrary local paths (SSRF/path traversal).
+        if not has_app_context() or not logo_url.startswith("/static/uploads/"):
+            return None
+        relative_path = logo_url[len("/static/"):]
+        static_root = os.path.realpath(current_app.static_folder or "")
+        candidate = os.path.realpath(os.path.join(static_root, relative_path))
+        try:
+            if os.path.commonpath((static_root, candidate)) != static_root:
+                return None
+            if not os.path.isfile(candidate) or os.path.getsize(candidate) > 3 * 1024 * 1024:
+                return None
+            mime_type = (mimetypes.guess_type(candidate)[0] or "").lower()
+            if not mime_type.startswith("image/"):
+                return None
+            with open(candidate, "rb") as handle:
+                return handle.read()
+        except (OSError, ValueError):
+            return None
+
+    @staticmethod
     def ticket_brand_name(*, company, branch=None):
         fallback = "STOCK ARMOBILE"
         if branch is not None and not bool(getattr(branch, "is_default", False)):
