@@ -375,7 +375,7 @@ def test_whatsapp_campaign_uses_explicit_whatsapp_or_phone_fallback(app):
             company_name="WhatsApp explícito",
             contact_name="Contacto WhatsApp",
             phone="5491111111111",
-            whatsapp="+54 9 2222-3333",
+            whatsapp="+54 9 11-2222-3333",
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
         )
@@ -415,7 +415,7 @@ def test_whatsapp_campaign_uses_explicit_whatsapp_or_phone_fallback(app):
         assert summary["eligible_whatsapp"] == 2
         assert by_lead == {
             phone_only.id: "5491112345678",
-            explicit.id: "549222223333",
+            explicit.id: "5491122223333",
         }
         assert no_permission.id not in by_lead
         assert invalid_number.id not in by_lead
