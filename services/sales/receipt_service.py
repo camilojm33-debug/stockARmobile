@@ -315,6 +315,10 @@ class ReceiptService:
         if "cashdrawer_enabled" in branch_settings:
             printer_settings["cashdrawer_enabled"] = bool(branch_settings.get("cashdrawer_enabled"))
 
+        configured_paper = text_value(printer_settings.get("paper_size")) or "A4"
+        paper_aliases = {"a4": "A4", "carta": "Carta", "letter": "Carta", "ticket80": "Ticket80"}
+        printer_settings["paper_size"] = paper_aliases.get(configured_paper.lower(), "A4")
+
         location_parts = [part for part in (address, city, province) if part]
         return {
             "branch_id": getattr(branch, "id", None),
