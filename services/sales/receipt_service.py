@@ -355,7 +355,7 @@ class ReceiptService:
 
         # Branch-specific logos may reference a public static upload. Do not
         # fetch remote URLs or arbitrary local paths (SSRF/path traversal).
-        if not has_app_context() or not logo_url.startswith("/static/uploads/"):
+        if not has_app_context() or not logo_url.startswith("/static/"):
             return None
         relative_path = logo_url[len("/static/"):]
         static_root = os.path.realpath(current_app.static_folder or "")
