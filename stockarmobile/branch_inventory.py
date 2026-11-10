@@ -162,11 +162,21 @@ def transfer_branch_stock_batch(items, source_branch_id, target_branch_id, *, us
         raise ValueError("La clave de idempotencia de la transferencia no es válida.")
 
     if batch_key:
-        from app import BranchStockTransfer
+        from app import BranchStockTransfer, Company
         company_ids = {int(getattr(product, "company_id", 0) or 0) for _, product, _ in normalized}
         if len(company_ids) != 1 or not next(iter(company_ids)):
             raise ValueError("Todos los productos deben pertenecer a la misma empresa.")
         company_id = next(iter(company_ids))
+        # Serialize idempotency decisions per tenant. This closes the race where
+        # two simultaneous POSTs could both observe an unused key before either
+        # transaction inserted its transfer rows.
+        locked_company = (
+            Company.query.filter_by(id=company_id)
+            .with_for_update()
+            .first()
+        )
+        if locked_company is None:
+            raise ValueError("La empresa de la transferencia ya no está disponible.")
         existing = (
             BranchStockTransfer.query.filter_by(
                 company_id=company_id, idempotency_key=batch_key
