@@ -384,6 +384,8 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     from pathlib import Path
     template = Path("templates/crm/client_360.html").read_text(encoding="utf-8")
     assert 'target="_blank"' in template
+    base_template = Path("templates/base_master.html").read_text(encoding="utf-8")
+    assert "if ((form.target || '').toLowerCase() === '_blank') return;" in base_template
     assert response.headers["Location"] == "https://wa.me/5493624228396"
     activity = CRMActivity.query.filter_by(company_id=company.id).one()
     assert activity.client_id == client_record.id
