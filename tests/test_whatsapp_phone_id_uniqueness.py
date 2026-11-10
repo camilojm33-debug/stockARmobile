@@ -83,3 +83,34 @@ def test_whatsapp_phone_id_can_be_assigned_to_a_different_number(app):
         db.session.commit()
 
         assert second_branch.company_id == second_company.id
+
+
+
+def test_webhook_phone_lookup_fails_closed_for_legacy_duplicate_assignments(app):
+    from services.ai_agent.config_service import company_branch_for_whatsapp_phone_id
+
+    with app.app_context():
+        first_company, _first_branch = _company("WhatsApp legacy duplicate A")
+        second_company, _second_branch = _company("WhatsApp legacy duplicate B")
+        shared_phone_id = "998877665544"
+
+        configure_whatsapp_connection(
+            first_company,
+            phone_number_id=shared_phone_id,
+            access_token="token-a",
+            enabled=True,
+        )
+        second_company.preferences_json = json.dumps({
+            "ai_agent": {
+                "whatsapp": {
+                    "enabled": True,
+                    "phone_number_id": shared_phone_id,
+                }
+            }
+        })
+        db.session.commit()
+
+        owner, branch = company_branch_for_whatsapp_phone_id(shared_phone_id)
+
+        assert owner is None
+        assert branch is None
