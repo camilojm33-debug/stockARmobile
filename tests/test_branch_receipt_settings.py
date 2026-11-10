@@ -171,3 +171,25 @@ def test_ticket_text_displays_persisted_sale_branch_not_current_branch(app):
         assert "Sucursal: Sucursal Costanera" in ticket
         assert "Dirección: Costanera 456" in ticket
         assert "Sucursal: Casa central" not in ticket
+
+
+
+def test_branch_logo_bytes_only_loads_safe_local_static_uploads(app, tmp_path, monkeypatch):
+    with app.app_context():
+        monkeypatch.setattr(app, "static_folder", str(tmp_path))
+        uploads = tmp_path / "uploads"
+        uploads.mkdir()
+        logo_file = uploads / "branch-logo.png"
+        logo_file.write_bytes(b"test-logo-bytes")
+
+        payload = ReceiptService.ticket_logo_bytes(
+            company=None,
+            context={"logo_url": "/static/uploads/branch-logo.png"},
+        )
+        remote_payload = ReceiptService.ticket_logo_bytes(
+            company=None,
+            context={"logo_url": "https://example.invalid/logo.png"},
+        )
+
+        assert payload == b"test-logo-bytes"
+        assert remote_payload is None
