@@ -1196,7 +1196,7 @@ def generate_pdf_ticket(sale_id):
     ticket_text = ReceiptService.ticket_text(sale, context["ticket_name"])
 
     printer_settings = context.get("printer_settings") or {}
-    paper_size = str(printer_settings.get("paper_size") or "A4").strip()
+    paper_size = str(printer_settings.get("paper_size") or "Ticket80").strip()
     if paper_size == "Ticket80":
         line_count = max(1, len(ticket_text.splitlines()))
         page_height = max(110, min(900, 24 + line_count * 5))
