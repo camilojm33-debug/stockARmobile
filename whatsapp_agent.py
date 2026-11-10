@@ -569,6 +569,35 @@ def _persist_deterministic_turn(conversation, *, external_id: str, text: str, re
     return assistant
 
 
+AI_ORDER_MARKER = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+
+
+def _active_employee_branch_id():
+    """Resolve the employee's currently selected, explicitly assigned branch."""
+    if getattr(current_user, "role", None) != "user":
+        return None
+    from stockarmobile.branch_context import get_active_branch_id
+    return get_active_branch_id()
+
+
+def _scope_vendor_query_to_active_branch(query, model):
+    """Admins remain company-wide; employees are limited to their active branch."""
+    if getattr(current_user, "role", None) == "user":
+        query = query.filter(model.branch_id == _active_employee_branch_id())
+    return query
+
+
+def _tenant_ai_order_query(company_id: int, quote_id: int | None = None):
+    from app import Quote
+    query = Quote.query.filter(
+        Quote.company_id == int(company_id),
+        Quote.observations == AI_ORDER_MARKER,
+    )
+    if quote_id is not None:
+        query = query.filter(Quote.id == int(quote_id))
+    return _scope_vendor_query_to_active_branch(query, Quote)
+
+
 def _ai_order_payment(company_id: int, quote_id: int):
     from app import Payment
     prefix = f"flow:ai_order|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
@@ -596,10 +625,11 @@ def _ai_order_conversation(company_id: int, quote_id: int, payment=None):
     conversation_id = _ai_order_conversation_id(payment)
     if conversation_id is None:
         return None
-    return Conversation.query.filter_by(
+    query = Conversation.query.filter_by(
         id=conversation_id,
         company_id=int(company_id),
-    ).first()
+    )
+    return _scope_vendor_query_to_active_branch(query, Conversation).first()
 
 
 def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
@@ -611,10 +641,11 @@ def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
         # through the original public webchat flow.
         return "webchat"
 
-    conversation = Conversation.query.filter_by(
+    conversation_query = Conversation.query.filter_by(
         id=conversation_id,
         company_id=int(company_id),
-    ).first()
+    )
+    conversation = _scope_vendor_query_to_active_branch(conversation_query, Conversation).first()
     if conversation is None:
         # An explicit but unresolved conversation must not be silently labeled
         # Webchat: it may be stale data or an attempt to reference another tenant.
@@ -765,11 +796,9 @@ def ai_orders():
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
     quotes = (
-        Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == marker)
+        _tenant_ai_order_query(company_id)
         .order_by(Quote.date.desc(), Quote.id.desc())
-        .limit(100)
         .all()
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
@@ -805,7 +834,21 @@ def ai_orders():
         "channel_label": channel_labels[0] if len(channel_labels) == 1 and channel_labels else ("Varios canales" if channel_labels else "Webchat"),
         "channel_icon": _ai_order_channel_meta(channel_keys[0])["icon"] if len(channel_keys) == 1 else "bi-broadcast",
     }
-    return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    per_page = 25
+    total_filtered = len(rows)
+    total_pages = max(1, (total_filtered + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    pagination = {
+        "page": page, "per_page": per_page, "total": total_filtered,
+        "total_pages": total_pages, "has_prev": page > 1, "has_next": page < total_pages,
+    }
+    return render_template(
+        "ai_agent/orders.html", orders=page_rows, summary=summary,
+        selected_status=selected_status if selected_status in allowed_filters else "",
+        pagination=pagination,
+    )
 
 
 def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, *, lock: bool = False):
@@ -817,6 +860,7 @@ def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, 
         agent_id=int(agent.id),
         channel="whatsapp",
     )
+    query = _scope_vendor_query_to_active_branch(query, Conversation)
     if lock:
         query = query.with_for_update()
     return query.first()
@@ -830,6 +874,8 @@ def _tenant_attention_actor():
     company = Company.query.filter_by(id=int(company_id), active=True).first()
     if company is None:
         abort(404)
+    if getattr(current_user, "role", None) == "user":
+        _active_employee_branch_id()
     return int(company_id), company
 
 
@@ -842,12 +888,7 @@ def ai_order_mark_picked_up(quote_id: int):
     from app import Quote, QuoteDelivery
     from stockarmobile.helpers.dates import utcnow_naive
 
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
-        id=int(quote_id),
-        company_id=int(company_id),
-        observations=marker,
-    ).with_for_update().first()
+    quote = _tenant_ai_order_query(company_id, quote_id).with_for_update().first()
     if quote is None:
         abort(404)
 
@@ -887,11 +928,12 @@ def ai_whatsapp_attention():
         state = "pending"
 
     conversations = (
-        db.session.query(Conversation)
-        .filter_by(company_id=company_id, agent_id=int(agent.id), channel="whatsapp")
-        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
-        .limit(200)
-        .all()
+        _scope_vendor_query_to_active_branch(
+            db.session.query(Conversation).filter_by(
+                company_id=company_id, agent_id=int(agent.id), channel="whatsapp"
+            ), Conversation,
+        )
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc()).all()
     )
     all_rows = []
     for conversation in conversations:
@@ -932,13 +974,24 @@ def ai_whatsapp_attention():
     else:
         rows = all_rows
 
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    per_page = 30
+    rows_total = len(rows)
+    pages_total = max(1, (rows_total + per_page - 1) // per_page)
+    page = min(page, pages_total)
+    rows_for_page = rows[(page - 1) * per_page: page * per_page]
+    pagination = {
+        "page": page, "per_page": per_page, "total": rows_total,
+        "total_pages": pages_total, "has_prev": page > 1, "has_next": page < pages_total,
+    }
+
     selected = None
     selected_view = None
     selected_id = request.args.get("conversation_id", type=int)
     if selected_id:
         selected = _tenant_vendor_whatsapp_conversation(company_id, selected_id)
     if selected is None:
-        preferred = next((row for row in rows if row["attention"]["pending"]), None) or (rows[0] if rows else None)
+        preferred = next((row for row in rows_for_page if row["attention"]["pending"]), None) or (rows_for_page[0] if rows_for_page else None)
         if preferred:
             selected = _tenant_vendor_whatsapp_conversation(company_id, preferred["conversation_id"])
     if selected is not None:
@@ -960,12 +1013,13 @@ def ai_whatsapp_attention():
     return render_template(
         "ai_agent/whatsapp_attention.html",
         company=company,
-        rows=rows,
+        rows=rows_for_page,
         selected=selected_view,
         q=query_text,
         state=state,
         counts=counts,
         message_limit=300,
+        pagination=pagination,
     )
 
 
@@ -1153,6 +1207,9 @@ def ai_order_shipping(quote_id: int):
     except (InvalidOperation, ValueError):
         flash("Ingresá un costo de envío válido.", "danger")
         return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote_id))
+    quote = _tenant_ai_order_query(company_id, quote_id).first()
+    if quote is None:
+        abort(404)
     try:
         result = VendorOrderService.set_shipping_cost_and_generate_payment(
             company_id=int(company_id),
@@ -1210,12 +1267,7 @@ def ai_order_attention(quote_id: int):
         abort(403)
     from app import Quote, record_audit
 
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(
-        id=int(quote_id),
-        company_id=int(company_id),
-        observations=marker,
-    ).first()
+    quote = _tenant_ai_order_query(company_id, quote_id).first()
     if quote is None:
         abort(404)
 
@@ -1282,8 +1334,7 @@ def ai_order_detail(quote_id: int):
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
-    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
-    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id), observations=marker).first()
+    quote = _tenant_ai_order_query(company_id, quote_id).first()
     if quote is None:
         abort(404)
     return render_template(

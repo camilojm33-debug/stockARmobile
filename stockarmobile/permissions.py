@@ -61,6 +61,8 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
         return EMPLOYEE_ADMIN_ONLY
     if ep.startswith(("cash.",)):
         return "cash"
+    if ep == "qr_labels.generate_pdf_ticket":
+        return "sales"
     if ep.startswith(("qr_labels.",)):
         return "inventory"
     if ep.startswith(("expenses.",)):

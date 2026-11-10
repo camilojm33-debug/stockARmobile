@@ -93,6 +93,25 @@ def _lock_company_for_branch_limit(company_id):
     )
 
 
+def _has_pending_ai_vendor_orders(company_id, branch_id):
+    """A branch cannot be disabled while its AI vendor has an unresolved order."""
+    from app import Quote
+    terminal_statuses = (
+        "ANULADO", "ANULADA", "CANCELADO", "CANCELADA", "CANCELED",
+        "CANCELLED", "RECHAZADO", "RECHAZADA", "REJECTED", "VENCIDO",
+        "VENCIDA", "EXPIRED", "CONVERTIDO", "CLOSED",
+    )
+    return (
+        Quote.query.filter_by(
+            company_id=int(company_id), branch_id=int(branch_id),
+            observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+        )
+        .filter(Quote.converted_sale_id.is_(None))
+        .filter(func.upper(func.coalesce(Quote.status, "")).notin_(terminal_statuses))
+        .first() is not None
+    )
+
+
 def _has_pending_invoice_sales(company_id, branch_id):
     from app import Sale
 
@@ -228,6 +247,12 @@ def update_branch(branch_id):
         if _has_pending_invoice_sales(company_id, branch.id):
             flash(
                 "Emití los comprobantes pendientes o anulá esas ventas antes de desactivar la sucursal.",
+                "warning",
+            )
+            return redirect(url_for("company_billing.company_settings", panel="branches"))
+        if _has_pending_ai_vendor_orders(company_id, branch.id):
+            flash(
+                "Completá o cancelá los pedidos pendientes del Vendedor IA y resolvé sus pagos antes de desactivar la sucursal.",
                 "warning",
             )
             return redirect(url_for("company_billing.company_settings", panel="branches"))

@@ -1,7 +1,53 @@
 import json
+import os
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.engine import make_url
+
+
+def _configure_isolated_test_database():
+    """Never let destructive pytest fixtures touch a developer or production database."""
+    if "pytest" not in sys.modules and not os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    if os.environ.get("RENDER") or os.environ.get("FLASK_ENV") == "production":
+        raise RuntimeError("Las pruebas no pueden ejecutarse dentro de un entorno Render/producción.")
+    raw_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if not raw_url:
+        target = Path(tempfile.gettempdir()) / f"stockarmobile-pytest-{os.getpid()}.db"
+        os.environ["DATABASE_URL"] = "sqlite:////" + str(target).lstrip("/")
+        return
+    parsed = make_url(raw_url)
+    if parsed.get_backend_name() == "sqlite":
+        database = parsed.database
+        if database in (None, "", ":memory:"):
+            return
+        path = Path(database)
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            path.relative_to(temp_root)
+            safe = True
+        except ValueError:
+            safe = False
+        if not safe:
+            target = temp_root / f"stockarmobile-pytest-{os.getpid()}.db"
+            os.environ["DATABASE_URL"] = "sqlite:////" + str(target).lstrip("/")
+        return
+    if parsed.get_backend_name() in {"postgresql", "postgres"}:
+        host = (parsed.host or "").lower()
+        database = (parsed.database or "").lower()
+        if host not in {"localhost", "127.0.0.1", "::1"} or "test" not in database:
+            raise RuntimeError("DATABASE_URL de pytest debe apuntar a PostgreSQL local con nombre de base de pruebas.")
+        return
+    raise RuntimeError("DATABASE_URL no permitido para pytest; use SQLite temporal o PostgreSQL local de pruebas.")
+
+
+_configure_isolated_test_database()
 
 import app as stock_app
 from app import Company, db
