@@ -829,7 +829,22 @@ def ai_orders():
         "channel_label": channel_labels[0] if len(channel_labels) == 1 and channel_labels else ("Varios canales" if channel_labels else "Webchat"),
         "channel_icon": _ai_order_channel_meta(channel_keys[0])["icon"] if len(channel_keys) == 1 else "bi-broadcast",
     }
-    return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
+    total_rows = len(rows)
+    page_size = 50
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    pages = max(1, (total_rows + page_size - 1) // page_size)
+    page = min(page, pages)
+    rows = rows[(page - 1) * page_size: page * page_size]
+    return render_template(
+        "ai_agent/orders.html",
+        orders=rows,
+        summary=summary,
+        selected_status=selected_status if selected_status in allowed_filters else "",
+        page=page,
+        pages=pages,
+        page_size=page_size,
+        total_rows=total_rows,
+    )
 
 
 def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, *, lock: bool = False):
@@ -957,13 +972,20 @@ def ai_whatsapp_attention():
     else:
         rows = all_rows
 
+    total_rows = len(rows)
+    page_size = 40
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    pages = max(1, (total_rows + page_size - 1) // page_size)
+    page = min(page, pages)
+    page_rows = rows[(page - 1) * page_size: page * page_size]
+
     selected = None
     selected_view = None
     selected_id = request.args.get("conversation_id", type=int)
     if selected_id:
         selected = _tenant_vendor_whatsapp_conversation(company_id, selected_id)
     if selected is None:
-        preferred = next((row for row in rows if row["attention"]["pending"]), None) or (rows[0] if rows else None)
+        preferred = next((row for row in page_rows if row["attention"]["pending"]), None) or (page_rows[0] if page_rows else None)
         if preferred:
             selected = _tenant_vendor_whatsapp_conversation(company_id, preferred["conversation_id"])
     if selected is not None:
@@ -985,11 +1007,15 @@ def ai_whatsapp_attention():
     return render_template(
         "ai_agent/whatsapp_attention.html",
         company=company,
-        rows=rows,
+        rows=page_rows,
         selected=selected_view,
         q=query_text,
         state=state,
         counts=counts,
+        page=page,
+        pages=pages,
+        page_size=page_size,
+        total_rows=total_rows,
         message_limit=300,
     )
 
