@@ -582,11 +582,9 @@ def _assert_whatsapp_phone_assignment_available(company, phone_number_id, *, bra
                         "Este número de WhatsApp ya está conectado a otra empresa o sucursal de StockARmobile."
                     )
 
-        global_whatsapp = get_ai_preferences(candidate_company).get("whatsapp", {})
-        if not isinstance(global_whatsapp, dict):
-            global_whatsapp = {}
-        global_id = str(global_whatsapp.get("phone_number_id") or "").strip()
-        if _coerce_bool(global_whatsapp.get("enabled"), False) and global_id == target:
+        global_connection = get_whatsapp_connection(candidate_company)
+        global_id = str(global_connection.get("phone_number_id") or "").strip()
+        if bool(global_connection.get("enabled")) and global_id == target:
             owner = (int(candidate_company.id), None)
             if owner != requested_owner:
                 raise ValueError(
