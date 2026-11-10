@@ -6810,6 +6810,14 @@ def whatsapp_commercial_migrate_connection():
         flash("Confirmá la migración de la conexión para continuar.", "warning")
         return redirect(url_for("saas.whatsapp_commercial_settings"))
 
+    # Coordinate this move with all normal WhatsApp connection writes,
+    # which take the same tenant-row locks before checking phone ownership.
+    (
+        Company.query.filter(Company.active.is_(True))
+        .order_by(Company.id.asc())
+        .with_for_update()
+        .all()
+    )
     candidates = []
     for source in Company.query.filter(Company.active.is_(True)).order_by(Company.id.asc()).all():
         if int(source.id) == int(destination.id):
