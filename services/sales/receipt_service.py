@@ -292,6 +292,7 @@ class ReceiptService:
         )
 
         printer_settings = dict(company_printer)
+        printer_settings.setdefault("paper_size", "Ticket80")
         for key in (
             "printer_name",
             "printer_type",
