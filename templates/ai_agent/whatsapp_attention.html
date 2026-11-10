@@ -42,7 +42,7 @@
         <div class="col-12 col-md-auto"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search me-1"></i>Buscar</button></div>
         <div class="col-12 col-md-auto"><a class="btn btn-outline-secondary w-100" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', state='all') }}">Ver todas</a></div>
       </form>
-      <div class="small text-muted mt-2">Se muestran hasta 200 conversaciones recientes de WhatsApp de este comercio. El canal comercial de SuperAdmin permanece separado.</div>
+      <div class="small text-muted mt-2">Mostrando {{ rows|length }} de {{ pagination.total }} conversaciones para este filtro. El canal comercial de SuperAdmin permanece separado.</div>
     </div>
   </section>
 
@@ -50,7 +50,7 @@
     <aside class="card app-card vendor-wa-list-card">
       <div class="card-header bg-transparent d-flex justify-content-between align-items-center gap-2">
         <strong><i class="bi bi-inboxes me-2"></i>Conversaciones</strong>
-        <span class="badge text-bg-light border">{{ rows|length }}</span>
+        <span class="badge text-bg-light border">{{ pagination.total if pagination else rows|length }}</span>
       </div>
       <div class="vendor-wa-list">
         {% for row in rows %}
@@ -85,6 +85,17 @@
         </div>
         {% endfor %}
       </div>
+      {% if pagination and pagination.total_pages > 1 %}
+      <nav class="d-flex justify-content-between align-items-center gap-2 p-3 border-top" aria-label="Paginación de conversaciones">
+        {% if pagination.has_prev %}
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', state=state, q=q, page=pagination.page - 1, conversation_id=selected.conversation_id if selected else None) }}">Anterior</a>
+        {% else %}<span></span>{% endif %}
+        <span class="small text-muted">Página {{ pagination.page }} / {{ pagination.total_pages }}</span>
+        {% if pagination.has_next %}
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', state=state, q=q, page=pagination.page + 1, conversation_id=selected.conversation_id if selected else None) }}">Siguiente</a>
+        {% endif %}
+      </nav>
+      {% endif %}
     </aside>
 
     <main class="card app-card vendor-wa-chat-card">
