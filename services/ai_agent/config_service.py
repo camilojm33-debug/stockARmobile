@@ -664,31 +664,35 @@ def company_branch_for_whatsapp_phone_id(phone_number_id):
     target = str(phone_number_id or "").strip()
     if not target:
         return None, None
-    candidates = (
+
+    matches = []
+    branch_candidates = (
         Branch.query.join(Company, Company.id == Branch.company_id)
         .filter(Company.active.is_(True), Branch.active.is_(True), Branch.vendor_ai_json.contains(target))
         .order_by(Branch.company_id.asc(), Branch.id.asc())
         .all()
     )
-    for branch in candidates:
+    for branch in branch_candidates:
         company = Company.query.filter_by(id=branch.company_id, active=True).first()
         if company and get_whatsapp_connection(company, branch_id=branch.id)["phone_number_id"] == target:
-            return company, branch
+            matches.append((company, branch))
 
-    candidates = (
+    company_candidates = (
         Company.query.filter(Company.active.is_(True), Company.preferences_json.contains(target))
         .order_by(Company.id.asc())
         .all()
     )
-    for company in candidates:
+    for company in company_candidates:
         connection = get_whatsapp_connection(company)
         if connection["phone_number_id"] == target:
             from stockarmobile.branch_context import get_default_branch_id
             branch_id = get_default_branch_id(company.id)
-            from app import Branch
             branch = Branch.query.filter_by(id=branch_id, company_id=company.id).first() if branch_id else None
-            return company, branch
-    return None, None
+            matches.append((company, branch))
+
+    # Historical duplicates can predate the configuration guard. Never route an
+    # ambiguous webhook to whichever tenant happened to sort first.
+    return matches[0] if len(matches) == 1 else (None, None)
 
 
 def company_for_whatsapp_phone_id(phone_number_id):
