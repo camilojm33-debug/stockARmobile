@@ -1183,33 +1183,68 @@ def print_all():
 @bp.route("/ticket/<int:sale_id>.pdf")
 @tenant_required
 def generate_pdf_ticket(sale_id):
-    from app import Company, Sale, SaleItem, scope_query_to_company
+    from app import Company, Sale, SaleItem
+    from flask import current_app
+    from pathlib import Path
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import Preformatted
     from services.sales.receipt_service import ReceiptService
+    from sales import _sale_ticket_accessible_query
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale_query = Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product))
+    sale = _sale_ticket_accessible_query(sale_query, Sale).filter(Sale.id == sale_id).first_or_404()
     company = Company.query.filter_by(id=sale.company_id).first() if sale.company_id else None
     context = ReceiptService.ticket_context(company=company, sale=sale)
     ticket_text = ReceiptService.ticket_text(sale, context["ticket_name"])
 
+    settings = context.get("printer_settings") or {}
+    paper_size = str(settings.get("paper_size") or "Ticket80").strip().lower()
+    is_a4 = paper_size == "a4"
+    is_letter = paper_size in {"carta", "letter"}
+    if is_a4:
+        page_size, margin, font_size, leading, max_line = A4, 12 * mm, 8, 10, 95
+    elif is_letter:
+        page_size, margin, font_size, leading, max_line = letter, 12 * mm, 8, 10, 95
+    else:
+        # Thermal roll: estimate page length from the actual ticket line count.
+        lines = ticket_text.splitlines()
+        page_size = (80 * mm, max(110 * mm, (len(lines) * 4.6 + 16) * mm))
+        margin, font_size, leading, max_line = 4 * mm, 6.5, 8, 38
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=letter,
-        rightMargin=42,
-        leftMargin=42,
-        topMargin=42,
-        bottomMargin=42,
+        pagesize=page_size,
+        rightMargin=margin,
+        leftMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
     )
     style = ParagraphStyle(
         "StockArTicket",
         fontName="Courier",
-        fontSize=8,
-        leading=11,
+        fontSize=font_size,
+        leading=leading,
         spaceAfter=0,
     )
-    doc.build([Preformatted(ticket_text, style)])
+    story = []
+    logo_payload = getattr(company, "logo_data", None) if company is not None else None
+    logo_url = str(context.get("logo_url") or "").strip()
+    if not logo_payload and logo_url.startswith("/static/"):
+        logo_path = Path(current_app.static_folder or "") / logo_url.removeprefix("/static/")
+        try:
+            if logo_path.is_file():
+                logo_payload = logo_path.read_bytes()
+        except OSError:
+            logo_payload = None
+    if logo_payload:
+        try:
+            story.append(PdfImage(BytesIO(bytes(logo_payload)), width=42 * mm, height=22 * mm, kind="proportional"))
+            story.append(Spacer(1, 3 * mm))
+        except Exception:
+            current_app.logger.warning("No se pudo incluir el logo en el PDF del ticket de venta %s.", sale.id)
+    story.append(Preformatted(ticket_text, style, maxLineLength=max_line))
+    doc.build(story)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=False, download_name=f"ticket_{sale.id}.pdf")
 
