@@ -10,6 +10,17 @@ def test_superadmin_campaigns_ui_covers_all_terminal_statuses():
         assert status in template
 
 
+def test_campaign_ui_discloses_the_commercial_whatsapp_sender_status():
+    listing = (ROOT / "templates/saas/crm_campaigns.html").read_text(encoding="utf-8")
+    detail = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    crm = (ROOT / "templates/saas/crm.html").read_text(encoding="utf-8")
+
+    assert "commercial_whatsapp.connected" in listing
+    assert "commercial_whatsapp.display_phone_number" in listing
+    assert "WhatsApp emisor" in detail
+    assert "WhatsApp comercial" in crm
+
+
 def test_superadmin_campaigns_ui_has_operational_hierarchy():
     template = (ROOT / "templates/saas/crm_campaigns.html").read_text(encoding="utf-8")
     assert "campaigns-hero" in template
