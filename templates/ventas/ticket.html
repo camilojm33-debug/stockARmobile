@@ -88,10 +88,14 @@
 {% endblock %}
 
 {% block extra_css %}
+{% set ticket_paper_size = (printer_settings|default({})).get('paper_size', 'Ticket80') %}
+{% set ticket_width = '190mm' if ticket_paper_size == 'A4' else '196mm' if ticket_paper_size == 'Carta' else '80mm' %}
+{% set ticket_page_size = 'A4' if ticket_paper_size == 'A4' else 'letter' if ticket_paper_size == 'Carta' else '80mm 220mm' %}
 <style>
+  @page { size: {{ ticket_page_size }}; margin: 0; }
   .ticket-shell { display: flex; justify-content: center; padding: 24px 12px; }
   .ticket-paper {
-    width: 80mm;
+    width: {{ ticket_width }};
     max-width: calc(100vw - 24px);
     background: #fff;
     color: #111;
@@ -123,7 +127,7 @@
     body { background: #fff !important; }
     .no-print, .app-sidebar, .app-mobilebar, .app-navbar, .toast-container { display: none !important; }
     .ticket-shell { padding: 0; }
-    .ticket-paper { border: 0; border-radius: 0; width: 80mm; max-width: 80mm; }
+    .ticket-paper { border: 0; border-radius: 0; width: {{ ticket_width }}; max-width: none; }
   }
 </style>
 {% endblock %}
