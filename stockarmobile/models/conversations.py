@@ -79,6 +79,17 @@ class AgentConfiguration(db.Model):
     )
 
 
+class WhatsAppChannelRegistration(db.Model):
+    """Global ownership registry for a Meta WhatsApp phone_number_id."""
+    __tablename__ = "whatsapp_channel_registrations"
+
+    phone_number_id = db.Column(db.String(40), primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class Conversation(db.Model):
     __tablename__ = "conversations"
 
