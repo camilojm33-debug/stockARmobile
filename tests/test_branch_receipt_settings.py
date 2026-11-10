@@ -176,11 +176,16 @@ def test_ticket_text_displays_persisted_sale_branch_not_current_branch(app):
 
 def test_branch_logo_bytes_only_loads_safe_local_static_uploads(app, tmp_path, monkeypatch):
     with app.app_context():
+        from io import BytesIO
+        from PIL import Image
+
         monkeypatch.setattr(app, "static_folder", str(tmp_path))
         uploads = tmp_path / "uploads"
         uploads.mkdir()
         logo_file = uploads / "branch-logo.png"
-        logo_file.write_bytes(b"test-logo-bytes")
+        image_buffer = BytesIO()
+        Image.new("RGB", (2, 2), "white").save(image_buffer, format="PNG")
+        logo_file.write_bytes(image_buffer.getvalue())
 
         payload = ReceiptService.ticket_logo_bytes(
             company=None,
@@ -191,5 +196,5 @@ def test_branch_logo_bytes_only_loads_safe_local_static_uploads(app, tmp_path, m
             context={"logo_url": "https://example.invalid/logo.png"},
         )
 
-        assert payload == b"test-logo-bytes"
+        assert payload == logo_file.read_bytes()
         assert remote_payload is None
