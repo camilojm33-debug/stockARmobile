@@ -147,6 +147,8 @@
       printer_host: host,
       printer_port: Number(settings.printer_port || 9100),
       ticket: {
+        paper_size: String(settings.paper_size || 'Ticket80'),
+        logo_url: {{ (ticket_context.logo_url if ticket_context else '')|tojson }},
         brand: {{ (ticket_brand or 'STOCK ARMOBILE')|tojson }},
         sale_id: {{ sale.id|tojson }},
         date: {{ ((ticket_text.split('\n')[3].replace('Fecha: ', '') if ticket_text else ''))|tojson }},
@@ -181,10 +183,34 @@
     try {
       const health = await fetch(STOCKARMOBILE_PRINT_AGENT + '/health', { cache: 'no-store' });
       if (!health.ok) throw new Error('Agente de impresión no disponible');
+      const printPayload = thermalTicketPayload();
+      const logoUrl = String(printPayload.ticket.logo_url || '').trim();
+      if (logoUrl) {
+        try {
+          const logoResponse = await fetch(logoUrl, { cache: 'no-store', credentials: 'same-origin' });
+          if (logoResponse.ok) {
+            const logoBlob = await logoResponse.blob();
+            if (logoBlob.size <= 3 * 1024 * 1024 && window.createImageBitmap) {
+              const bitmap = await createImageBitmap(logoBlob);
+              const canvas = document.createElement('canvas');
+              const scale = Math.min(1, 384 / bitmap.width, 180 / bitmap.height);
+              canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+              canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+              canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+              bitmap.close();
+              let logoData = canvas.toDataURL('image/png');
+              if (logoData.length > 180000) logoData = canvas.toDataURL('image/jpeg', 0.68);
+              if (logoData.length <= 180000) printPayload.ticket.logo_data_url = logoData;
+            }
+          }
+        } catch (logoError) {
+          console.warn('No se pudo preparar el logo para la impresora térmica.', logoError);
+        }
+      }
       const response = await fetch(STOCKARMOBILE_PRINT_AGENT + '/print', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(thermalTicketPayload())
+        body: JSON.stringify(printPayload)
       });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo imprimir');

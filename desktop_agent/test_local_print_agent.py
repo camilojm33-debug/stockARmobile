@@ -1,3 +1,8 @@
+import base64
+from io import BytesIO
+
+from PIL import Image
+
 from local_print_agent import _build_ticket_bytes
 
 
@@ -27,6 +32,32 @@ def test_build_ticket_contains_sale_and_total():
     assert "TOTAL: $16.200,00".encode("cp1252") in payload
     assert payload.startswith(b"\x1b@")
     assert payload.endswith(b"\x1dV\x00")
+
+
+def test_build_ticket_prints_branch_logo_as_escpos_raster():
+    image = Image.new("RGB", (24, 12), "white")
+    for x in range(5, 19):
+        for y in range(3, 9):
+            image.putpixel((x, y), (0, 0, 0))
+    handle = BytesIO()
+    image.save(handle, format="PNG")
+    logo_url = "data:image/png;base64," + base64.b64encode(handle.getvalue()).decode("ascii")
+
+    payload = _build_ticket_bytes({
+        "brand": "Logo Test",
+        "sale_id": 522,
+        "logo_data_url": logo_url,
+        "paper_size": "Ticket80",
+        "items": [],
+        "subtotal": 100,
+        "discount": 0,
+        "surcharge": 0,
+        "tax": 0,
+        "total": 100,
+    })
+
+    assert b"\x1dv0\x00" in payload
+    assert b"Logo Test" in payload
 
 
 def test_build_ticket_includes_originating_branch_details_and_footer():
