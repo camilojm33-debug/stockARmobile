@@ -290,10 +290,9 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
 
 
 
-def test_auto_dispatch_marker_and_campaign_scoped_dispatch(app, monkeypatch):
-    import json
+
+def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
     from app import Campaign, Client, Company, User, db
-    from services.ai_agent.tenant_campaign_service import mark_campaign_for_auto_dispatch
 
     with app.app_context():
         app.config["AI_MARKETING_SEND_ENABLED"] = True
@@ -333,11 +332,7 @@ def test_auto_dispatch_marker_and_campaign_scoped_dispatch(app, monkeypatch):
             CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=user.id)
             campaigns.append(campaign)
 
-        mark_campaign_for_auto_dispatch(campaigns[0], user_id=user.id)
         db.session.commit()
-        stored = json.loads(campaigns[0].system_data_json)
-        assert stored["stockarmobile_auto_dispatch"]["requested_by"] == user.id
-
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._send_email",
             lambda recipient, campaign: (True, "sent", "smtp-auto-test"),
@@ -362,10 +357,8 @@ def test_in_process_campaign_worker_is_wired_into_wsgi_startup():
 
     service = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
     wsgi = Path("wsgi.py").read_text(encoding="utf-8")
-    route = Path("ai_agents.py").read_text(encoding="utf-8")
 
     assert "def start_campaign_dispatch_worker" in service
-    assert "stockarmobile_auto_dispatch" in service
+    assert "dispatch_due_campaigns(" in service
+    assert "Campaign.status == \"EN_PREPARACION\"" in service
     assert "start_campaign_dispatch_worker(app)" in wsgi
-    assert "mark_campaign_for_auto_dispatch" in route
-    assert "automáticamente" in route
