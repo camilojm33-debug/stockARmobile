@@ -1195,14 +1195,28 @@ def generate_pdf_ticket(sale_id):
     context = ReceiptService.ticket_context(company=company, sale=sale)
     ticket_text = ReceiptService.ticket_text(sale, context["ticket_name"])
 
+    printer_settings = context.get("printer_settings") or {}
+    paper_size = str(printer_settings.get("paper_size") or "A4").strip()
+    if paper_size == "Ticket80":
+        line_count = max(1, len(ticket_text.splitlines()))
+        page_height = max(110, min(900, 24 + line_count * 5))
+        page_size = (80 * mm, page_height * mm)
+        page_margin = 4 * mm
+    elif paper_size == "Carta":
+        page_size = letter
+        page_margin = 12 * mm
+    else:
+        page_size = A4
+        page_margin = 12 * mm
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=letter,
-        rightMargin=42,
-        leftMargin=42,
-        topMargin=42,
-        bottomMargin=42,
+        pagesize=page_size,
+        rightMargin=page_margin,
+        leftMargin=page_margin,
+        topMargin=page_margin,
+        bottomMargin=page_margin,
     )
     style = ParagraphStyle(
         "StockArTicket",
@@ -1211,7 +1225,22 @@ def generate_pdf_ticket(sale_id):
         leading=11,
         spaceAfter=0,
     )
-    doc.build([Preformatted(ticket_text, style)])
+    story = []
+    logo_payload = ReceiptService.ticket_logo_bytes(company=company, context=context)
+    if logo_payload:
+        logo_buffer = BytesIO(logo_payload)
+        logo_width = 30 * mm if paper_size == "Ticket80" else 42 * mm
+        logo_height = 18 * mm if paper_size == "Ticket80" else 24 * mm
+        logo = PdfImage(
+            logo_buffer,
+            width=logo_width,
+            height=logo_height,
+            kind="proportional",
+        )
+        logo.hAlign = "CENTER"
+        story.extend([logo, Spacer(1, 3 * mm)])
+    story.append(Preformatted(ticket_text, style))
+    doc.build(story)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=False, download_name=f"ticket_{sale.id}.pdf")
 
