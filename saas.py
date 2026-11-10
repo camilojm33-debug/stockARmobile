@@ -2049,7 +2049,7 @@ def crm_inbox_message_delete():
 @superadmin_required
 def crm_panel():
     from app import Company, SaaSAlert, SaaSLead, SaaSTask, User, db, record_audit
-    from services.saas_commercial_service import normalize_email
+    from services.saas_commercial_service import normalize_email, normalize_phone
 
     _require_superadmin()
     now = utcnow()
@@ -2067,13 +2067,26 @@ def crm_panel():
 
             raw_email = (request.form.get("email") or "").strip()
             normalized_email = normalize_email(raw_email)
+            raw_phone = (request.form.get("phone") or "").strip()
+            normalized_phone = normalize_phone(raw_phone)
+            raw_whatsapp = (request.form.get("whatsapp") or "").strip()
+            normalized_whatsapp = normalize_phone(raw_whatsapp)
+            phone_is_valid = bool(normalized_phone and 8 <= len(normalized_phone) <= 15)
+            whatsapp_is_valid = bool(normalized_whatsapp and 8 <= len(normalized_whatsapp) <= 15)
 
             lead = SaaSLead(
                 company_name=company_name[:160],
                 contact_name=contact_name[:160],
                 email=normalized_email[:160] if normalized_email else None,
                 email_status="valid" if normalized_email else ("invalid" if raw_email else "unknown"),
-                phone=(request.form.get("phone") or "").strip()[:40] or None,
+                phone=(normalized_phone if phone_is_valid else raw_phone)[:40] or None,
+                phone_status="valid" if phone_is_valid else ("invalid" if raw_phone else "unknown"),
+                whatsapp=(normalized_whatsapp if whatsapp_is_valid else raw_whatsapp)[:40] or None,
+                industry=(request.form.get("industry") or "").strip()[:100] or None,
+                province=(request.form.get("province") or "").strip()[:100] or None,
+                locality=(request.form.get("locality") or "").strip()[:120] or None,
+                website=(request.form.get("website") or "").strip()[:255] or None,
+                instagram=(request.form.get("instagram") or "").strip()[:255] or None,
                 source=(request.form.get("source") or "manual").strip().lower()[:80] or "manual",
                 status=_normalize_crm_value(request.form.get("status"), CRM_LEAD_STATUSES, "nuevo"),
                 priority=_normalize_crm_value(request.form.get("priority"), CRM_PRIORITIES, "media"),
@@ -2189,6 +2202,7 @@ def crm_panel():
                 SaaSLead.contact_name.ilike(like),
                 SaaSLead.email.ilike(like),
                 SaaSLead.phone.ilike(like),
+                SaaSLead.whatsapp.ilike(like),
                 SaaSLead.notes.ilike(like),
             )
         )
@@ -2227,8 +2241,9 @@ def crm_panel():
     task_counts = {status: SaaSTask.query.filter(SaaSTask.status == status).count() for status in CRM_TASK_STATUSES}
     alert_counts = {status: SaaSAlert.query.filter(SaaSAlert.status == status).count() for status in CRM_ALERT_STATUSES}
 
+    from services.saas_commercial_whatsapp import commercial_whatsapp_summary, get_commercial_company
+    commercial_whatsapp = commercial_whatsapp_summary()
     try:
-        from services.saas_commercial_whatsapp import get_commercial_company
         commercial_company = get_commercial_company()
         inbox_rows = _crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=200)
         recent_conversations = inbox_rows[:8]
@@ -2254,6 +2269,7 @@ def crm_panel():
         alert_counts=alert_counts,
         recent_conversations=recent_conversations,
         inbox_counts=inbox_counts,
+        commercial_whatsapp=commercial_whatsapp,
         CRM_LEAD_STATUSES=sorted(CRM_LEAD_STATUSES),
         CRM_TASK_STATUSES=sorted(CRM_TASK_STATUSES),
         CRM_ALERT_STATUSES=sorted(CRM_ALERT_STATUSES),
@@ -2430,12 +2446,15 @@ def crm_campaigns():
     summary["INCIDENCIAS"] = summary["ENVIADA_PARCIAL"] + summary["FALLIDA"]
     marketing_send_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     smtp_configured = bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER"))
+    from services.saas_commercial_whatsapp import commercial_whatsapp_summary
+    commercial_whatsapp = commercial_whatsapp_summary()
     return render_template(
         "saas/crm_campaigns.html",
         campaigns=campaigns,
         summary=summary,
         marketing_send_enabled=marketing_send_enabled,
         smtp_configured=smtp_configured,
+        commercial_whatsapp=commercial_whatsapp,
     )
 
 
@@ -2544,6 +2563,7 @@ def crm_campaign_detail(campaign_id):
     from app import SaaSCampaign, db
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
     from services.saas_campaign_preflight import campaign_preflight
+    from services.saas_commercial_whatsapp import commercial_whatsapp_summary
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
@@ -2593,6 +2613,7 @@ def crm_campaign_detail(campaign_id):
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
         preflight=campaign_preflight(db.session, campaign),
         consent_candidates=consent_candidates,
+        commercial_whatsapp=commercial_whatsapp_summary(),
     )
 
 
