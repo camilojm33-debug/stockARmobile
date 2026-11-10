@@ -1,6 +1,6 @@
 """Add idempotent transfer batches and WhatsApp phone ownership registry.
 
-Revision ID: 20261109_02_multibranch_integrity
+Revision ID: 20261109_02_mb_integrity
 Revises: 20261109_01_branch_receipts
 Create Date: 2026-11-09
 """
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20261109_02_multibranch_integrity"
+revision = "20261109_02_mb_integrity"
 down_revision = "20261109_01_branch_receipts"
 branch_labels = None
 depends_on = None
