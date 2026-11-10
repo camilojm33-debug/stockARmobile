@@ -596,10 +596,11 @@ def _ai_order_conversation(company_id: int, quote_id: int, payment=None):
     conversation_id = _ai_order_conversation_id(payment)
     if conversation_id is None:
         return None
-    return Conversation.query.filter_by(
+    conversation_query = Conversation.query.filter_by(
         id=conversation_id,
         company_id=int(company_id),
-    ).first()
+    )
+    return _scope_ai_branch(conversation_query, Conversation, company_id).first()
 
 
 def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
@@ -611,9 +612,12 @@ def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
         # through the original public webchat flow.
         return "webchat"
 
-    conversation = Conversation.query.filter_by(
+    conversation_query = Conversation.query.filter_by(
         id=conversation_id,
         company_id=int(company_id),
+    )
+    conversation = _scope_ai_branch(
+        conversation_query, Conversation, company_id
     ).first()
     if conversation is None:
         # An explicit but unresolved conversation must not be silently labeled
