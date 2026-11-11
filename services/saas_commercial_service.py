@@ -1242,6 +1242,11 @@ _CRM_CAMPAIGN_WORKER_LOCK = threading.Lock()
 _CRM_CAMPAIGN_WORKER_STARTED = False
 
 
+def crm_campaign_dispatch_worker_started() -> bool:
+    """Report whether this process has initialized the in-process CRM dispatcher."""
+    return bool(_CRM_CAMPAIGN_WORKER_STARTED)
+
+
 def start_crm_campaign_dispatch_worker(flask_app, *, poll_interval: int = 15) -> bool:
     """Start the SuperAdmin CRM campaign dispatcher without an external cron."""
     if flask_app.testing or "pytest" in sys.modules:
