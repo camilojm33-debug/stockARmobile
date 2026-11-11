@@ -1003,3 +1003,41 @@ def test_crm_campaign_worker_is_not_started_during_tests(app):
 
     with app.app_context():
         assert start_crm_campaign_dispatch_worker(app) is False
+
+
+def test_crm_campaign_preflight_uses_in_process_worker_not_legacy_worker_url(app, monkeypatch):
+    from services.saas_campaign_preflight import campaign_preflight
+
+    class Campaign:
+        name = "Campaña de prueba"
+        subject = "StockARmobile"
+        body_html = "<p>Hola</p>"
+        body_text = "Hola"
+        channel = "email"
+        target_count = 1
+        segment_json = "{}"
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        app.config["SMTP_HOST"] = "smtp.example.com"
+        app.config["SMTP_USER"] = "user@example.com"
+        app.config["SMTP_PASSWORD"] = "test-password"
+        app.config["SAAS_CAMPAIGN_WORKER_TOKEN"] = ""
+        app.config["SAAS_CAMPAIGN_WORKER_URL"] = ""
+        monkeypatch.setattr(
+            "services.saas_commercial_service.campaign_audience_metrics",
+            lambda db_session, campaign: {"eligible_email": 1},
+        )
+        monkeypatch.setattr(
+            "services.saas_commercial_service.crm_campaign_dispatch_worker_started",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "services.saas_campaign_preflight._smtp_probe",
+            lambda: (True, "SMTP verificado."),
+        )
+
+        result = campaign_preflight(None, Campaign())
+        worker_check = next(check for check in result["checks"] if check["code"] == "worker")
+        assert worker_check["ok"] is True
+        assert worker_check["detail"] == "Dispatcher interno iniciado."
