@@ -797,7 +797,7 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i><span class="nav-text">QR y etiquetas</span></a>
       {% endif %}
       <div class="nav-section-label">Comercial</div>
-      {% if ai_feature_crm_allowed and (current_user.role == 'admin' or current_user_has_permission('crm')) %}
+      {% if ai_feature_crm_allowed %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('crm.') %}active{% endif %}" href="{{ url_for('crm.index') }}"><i class="bi bi-kanban"></i><span class="nav-text">CRM</span></a>
       {% endif %}
       <div class="nav-section-label">Resumen</div>
