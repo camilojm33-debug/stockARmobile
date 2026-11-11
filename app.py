@@ -2636,7 +2636,7 @@ class Campaign(db.Model):
     system_data_json = db.Column(db.Text, nullable=False, default="{}")
     audience_segment = db.Column(db.String(120))
     audience_count = db.Column(db.Integer, nullable=False, default=0)
-    channel = db.Column(db.String(20), nullable=False, default="email")
+    channel = db.Column(db.String(20), nullable=False, default="whatsapp")
     scheduled_at = db.Column(db.DateTime, nullable=True, index=True)
     target_count = db.Column(db.Integer, nullable=False, default=0)
     sent_count = db.Column(db.Integer, nullable=False, default=0)
