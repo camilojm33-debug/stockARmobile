@@ -469,10 +469,14 @@ def test_tenant_crm_is_whatsapp_only_and_superadmin_crm_keeps_email():
     prospect_form = Path("templates/crm/prospect_form.html").read_text(encoding="utf-8")
     client_360 = Path("templates/crm/client_360.html").read_text(encoding="utf-8")
     campaigns = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
+    sidebar = Path("templates/base_master.html").read_text(encoding="utf-8")
     tenant_delivery = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
     superadmin_delivery = Path("services/saas_commercial_service.py").read_text(encoding="utf-8")
 
     assert 'name="email"' not in prospect_form
+    crm_nav_gate = sidebar.split("{% if ai_feature_crm_allowed", 1)[1].split("%}", 1)[0]
+    assert "current_user.role" not in crm_nav_gate
+    assert "current_user_has_permission" not in crm_nav_gate
     assert "mailto:" not in client_360
     assert "channel='email'" not in client_360
     assert 'name="channel"' not in campaigns
