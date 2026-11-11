@@ -201,3 +201,29 @@ def test_shared_campaign_reply_attribution_is_fail_closed_across_tenants():
     assert "tenant_ids = {int(row.company_id) for row in candidates}" in resolver
     assert "if len(tenant_ids) != 1:" in resolver
     assert "return None" in resolver
+
+
+
+def test_tenant_and_superadmin_template_controls_validate_meta_approval():
+    tenant_source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
+    superadmin_source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    tenant_ui = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+    superadmin_ui = (ROOT / "templates/saas/whatsapp_commercial.html").read_text(encoding="utf-8")
+
+    tenant_start = tenant_source.index('@bp.get("/vendedor/whatsapp/plantillas")')
+    tenant_end = tenant_source.index('@bp.get("/public/vendedor/<token>")', tenant_start)
+    tenant_routes = tenant_source[tenant_start:tenant_end]
+    assert "@tenant_required" in tenant_routes
+    assert "@company_admin_required" in tenant_routes
+    assert 'item["status"] == "APPROVED"' in tenant_routes
+    assert 'match["name"]' in tenant_routes
+    assert 'match["language"]' in tenant_routes
+
+    assert '@bp.get("/whatsapp-comercial/plantillas")' in superadmin_source
+    assert '@bp.post("/whatsapp-comercial/plantillas")' in superadmin_source
+    assert "@superadmin_required" in superadmin_source
+    assert "environment_override" in superadmin_source
+    assert "La plantilla seleccionada no figura aprobada" in superadmin_source
+    assert "wa-template-refresh" in tenant_ui
+    assert "commercial-template-refresh" in superadmin_ui
+    assert "Los CRM de los comercios" in superadmin_ui or "CRM de los comercios" in superadmin_ui
