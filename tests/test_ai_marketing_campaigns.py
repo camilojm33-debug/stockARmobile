@@ -42,6 +42,7 @@ def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch
             content="Hola {{cliente}}", system_data={"channel": "email"}, audience_segment="clientes activos", audience_count=1,
         )
         assert campaign.channel == "whatsapp"
+        assert '"channel": "whatsapp"' in campaign.system_data_json
         db.session.commit()
         CampaignService.transition(company_id=company_a.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user_a.id)
         CampaignService.transition(company_id=company_a.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user_a.id)
@@ -692,6 +693,7 @@ def test_legacy_queued_tenant_email_recipient_is_skipped_never_sent(app, monkeyp
         db.session.add(company)
         db.session.flush()
         user = User(username="legacy-email-admin", email="legacy-email@example.com", role="admin", active=True, company_id=company.id)
+        user.set_password("password123")
         db.session.add(user)
         db.session.flush()
         client = Client(name="Legacy recipient", email="legacy@example.com", company_id=company.id, active=True)
