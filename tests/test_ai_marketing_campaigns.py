@@ -287,3 +287,136 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
 
         with pytest.raises(ValueError, match="WhatsApp no está conectado"):
             prepare_recipients(campaign.id, company_id=company.id)
+
+
+
+
+def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
+    from app import Campaign, Client, Company, User, db
+
+    with app.app_context():
+        app.config["AI_MARKETING_SEND_ENABLED"] = True
+        company = Company(name="Auto Dispatch Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(username="auto-dispatch", email="auto-dispatch@example.com", role="admin", active=True, company_id=company.id)
+        user.set_password("password123")
+        client = Client(
+            name="Cliente con permiso",
+            email="consent@example.com",
+            company_id=company.id,
+            email_marketing_consent="opted_in",
+            whatsapp_marketing_consent="unknown",
+            active=True,
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        campaigns = []
+        for title in ("Campaña que se envía", "Campaña que queda pendiente"):
+            campaign = CampaignService.create_draft(
+                company_id=company.id,
+                user_id=user.id,
+                title=title,
+                objective="Prueba automática",
+                campaign_type="general",
+                content="Hola {{cliente}}",
+                system_data={"channel": "email"},
+                audience_segment="clientes activos",
+                audience_count=1,
+            )
+            db.session.commit()
+            CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user.id)
+            CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user.id)
+            prepare_recipients(campaign.id, company_id=company.id)
+            CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=user.id)
+            campaigns.append(campaign)
+
+        db.session.commit()
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._send_email",
+            lambda recipient, campaign: (True, "sent", "smtp-auto-test"),
+        )
+        result = dispatch_due_campaigns(
+            db.session,
+            company_id=company.id,
+            campaign_id=campaigns[0].id,
+            limit=1,
+            per_campaign=50,
+        )
+
+        assert result["sent"] == 1
+        db.session.expire_all()
+        assert db.session.get(Campaign, campaigns[0].id).status == "ENVIADA"
+        assert db.session.get(Campaign, campaigns[1].id).status == "EN_PREPARACION"
+        assert TenantCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id, status="pending").count() == 1
+
+
+def test_in_process_campaign_worker_is_wired_into_wsgi_startup():
+    from pathlib import Path
+
+    service = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
+    wsgi = Path("wsgi.py").read_text(encoding="utf-8")
+
+    assert "def start_campaign_dispatch_worker" in service
+    assert "dispatch_due_campaigns(" in service
+    assert "Campaign.status == \"EN_PREPARACION\"" in service
+    assert "start_campaign_dispatch_worker(app)" in wsgi
+
+
+
+def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
+    from app import Campaign, Client, Company, User, db
+
+    with app.app_context():
+        company = Company(name="WhatsApp Argentina", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(username="wa-argentina", email="wa-argentina@example.com", role="admin", active=True, company_id=company.id)
+        user.set_password("password123")
+        client = Client(
+            name="Contacto local",
+            phone="3624228396",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="WhatsApp local",
+            objective="Validar destino",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.commit()
+        CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user.id)
+        CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user.id)
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {
+                "enabled": True,
+                "phone_number_id": "test-phone-id",
+                "access_token": "test-token",
+                "template_name": "approved_campaign",
+            },
+        )
+
+        prepared = prepare_recipients(campaign.id, company_id=company.id)
+        recipient = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, channel="whatsapp").one()
+        assert prepared["added"] == 1
+        assert recipient.destination == "5493624228396"
+
+
+
+def test_campaign_dispatch_worker_does_not_start_during_tests(app):
+    from services.ai_agent.tenant_campaign_service import start_campaign_dispatch_worker
+
+    assert app.testing is True
+    assert start_campaign_dispatch_worker(app) is False

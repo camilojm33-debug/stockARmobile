@@ -350,4 +350,8 @@ def products_pricing_shortcut():
 
 
 
+from services.ai_agent.tenant_campaign_service import start_campaign_dispatch_worker
+
+start_campaign_dispatch_worker(app)
+
 application = app

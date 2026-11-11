@@ -1280,6 +1280,9 @@
       }
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function(event) {
+          // Forms targeting another tab must not cover the still-open CRM page
+          // with the global loading overlay while WhatsApp/mail opens externally.
+          if ((form.target || '').toLowerCase() === '_blank') return;
           const submitter = event.submitter;
           const paymentMethodField = form.querySelector('input[name="payment_method"]');
           const submittedMethodIsAutomatic = Boolean(

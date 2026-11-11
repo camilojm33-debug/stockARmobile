@@ -10,6 +10,9 @@ import json
 import re
 import secrets
 import smtplib
+import sys
+import threading
+import time
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from urllib.parse import quote
@@ -24,6 +27,8 @@ SENDABLE_STATUSES = {"EN_PREPARACION"}
 MAX_RECIPIENTS_PER_CYCLE = 50
 DELIVERY_RETRY_DELAY = timedelta(minutes=15)
 ATTRIBUTION_DAYS = 30
+_AUTO_DISPATCH_WORKER_LOCK = threading.Lock()
+_AUTO_DISPATCH_WORKER_STARTED = False
 
 
 def _now():
@@ -54,7 +59,9 @@ def _json(campaign):
 
 
 def _client_phone(client):
-    return str(getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
+    raw_phone = str(getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
+    from services.whatsapp_share_service import normalize_whatsapp_number
+    return normalize_whatsapp_number(raw_phone)
 
 
 def _eligible_clients(company_id, channel):
@@ -307,7 +314,7 @@ def refresh_attribution(company_id=None):
                     ))
 
 
-def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaign=MAX_RECIPIENTS_PER_CYCLE):
+def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, limit=10, per_campaign=MAX_RECIPIENTS_PER_CYCLE):
     from flask import current_app
     from app import Campaign
     from sqlalchemy import and_, or_
@@ -322,6 +329,8 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
     )
     if company_id is not None:
         query = query.filter(Campaign.company_id == int(company_id))
+    if campaign_id is not None:
+        query = query.filter(Campaign.id == int(campaign_id))
     campaigns = query.order_by(Campaign.id.asc()).limit(limit).all()
     summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "retry_scheduled": 0, "attributed_sales": 0}
     for campaign in campaigns:
@@ -399,6 +408,77 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
     refresh_attribution(company_id=company_id)
     db_session.commit()
     return summary
+
+
+def start_campaign_dispatch_worker(flask_app, *, poll_interval: int = 5) -> bool:
+    """Start a lightweight in-process queue worker; no external cron is required."""
+    if flask_app.testing or "pytest" in sys.modules:
+        return False
+
+    global _AUTO_DISPATCH_WORKER_STARTED
+    with _AUTO_DISPATCH_WORKER_LOCK:
+        if _AUTO_DISPATCH_WORKER_STARTED:
+            return False
+        _AUTO_DISPATCH_WORKER_STARTED = True
+
+    def _run():
+        while True:
+            try:
+                if not flask_app.config.get("AI_MARKETING_SEND_ENABLED", False):
+                    time.sleep(poll_interval)
+                    continue
+
+                with flask_app.app_context():
+                    from app import Campaign, db
+                    from sqlalchemy import or_
+
+                    now = _now()
+                    due_campaigns = (
+                        Campaign.query.filter(
+                            Campaign.status == "EN_PREPARACION",
+                            or_(Campaign.scheduled_at.is_(None), Campaign.scheduled_at <= now),
+                        )
+                        .order_by(Campaign.id.asc())
+                        .all()
+                    )
+                    for campaign in due_campaigns:
+                        result = dispatch_due_campaigns(
+                            db.session,
+                            company_id=campaign.company_id,
+                            campaign_id=campaign.id,
+                            limit=1,
+                            per_campaign=MAX_RECIPIENTS_PER_CYCLE,
+                        )
+                        if result.get("sent") or result.get("failed") or result.get("skipped"):
+                            flask_app.logger.info(
+                                "Marketing IA auto-dispatch campaign=%s company=%s sent=%s failed=%s skipped=%s",
+                                campaign.id,
+                                campaign.company_id,
+                                result.get("sent", 0),
+                                result.get("failed", 0),
+                                result.get("skipped", 0),
+                            )
+                        db.session.expire_all()
+                    db.session.remove()
+            except Exception:
+                flask_app.logger.exception("Marketing IA in-process dispatch worker cycle failed")
+                try:
+                    with flask_app.app_context():
+                        from app import db
+                        db.session.rollback()
+                        db.session.remove()
+                except Exception:
+                    flask_app.logger.exception("Marketing IA worker could not clean up its database session")
+            time.sleep(poll_interval)
+
+    thread = threading.Thread(
+        target=_run,
+        name="stockarmobile-marketing-dispatch",
+        daemon=True,
+    )
+    thread.start()
+    flask_app.logger.info("Marketing IA in-process dispatch worker started (poll=%ss)", poll_interval)
+    return True
 
 
 def campaign_metrics(company_id: int, campaign_id: int) -> dict:

@@ -1177,7 +1177,7 @@ def campaign_transition(campaign_id):
             prepare_recipients(campaign.id, company_id=current_user.company_id)
             CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
             db.session.commit()
-            flash("Campaña aprobada y puesta en cola de envío. El cron la enviará respetando consentimiento.", "success")
+            flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano desde el canal configurado para tu empresa, respetando los consentimientos.", "success")
         else:
             db.session.commit()
             flash("Estado de campaña actualizado.", "success")
