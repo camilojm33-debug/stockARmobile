@@ -62,29 +62,36 @@ def _run_once(flask_app) -> None:
                 delivered.get("uncertain", 0),
             )
 
-    try:
-        with db.engine.connect() as connection:
-            acquired = bool(
-                connection.execute(
-                    text("SELECT pg_try_advisory_lock(:key)"), {"key": _LOCK_KEY}
-                ).scalar()
-            )
-            if not acquired:
-                return
+    # Flask-SQLAlchemy resolves db.engine through the active Flask app.
+    # Keep connection acquisition, advisory locking, and ORM work inside the
+    # same app context so the background thread never touches an unbound proxy.
+    with flask_app.app_context():
+        try:
+            with db.engine.connect() as connection:
+                acquired = bool(
+                    connection.execute(
+                        text("SELECT pg_try_advisory_lock(:key)"), {"key": _LOCK_KEY}
+                    ).scalar()
+                )
+                if not acquired:
+                    return
+                try:
+                    work_once()
+                finally:
+                    connection.execute(
+                        text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY}
+                    )
+                    connection.commit()
+        except Exception:
+            # SQLite/dev does not support PostgreSQL advisory locks. Production
+            # Render/Postgres uses the cross-worker lock above. Retry the work
+            # without the PostgreSQL lock, still inside the app context.
+            db.session.rollback()
             try:
                 work_once()
-            finally:
-                connection.execute(
-                    text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY}
-                )
-                connection.commit()
-    except Exception:
-        # SQLite/dev does not support PostgreSQL advisory locks. Production
-        # Render/Postgres uses the cross-worker lock above.
-        try:
-            work_once()
-        except Exception:
-            logger.exception("AI follow-up worker cycle failed")
+            except Exception:
+                db.session.rollback()
+                logger.exception("AI follow-up worker cycle failed")
 
 
 def _worker(flask_app) -> None:
