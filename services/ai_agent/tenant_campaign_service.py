@@ -9,20 +9,17 @@ from __future__ import annotations
 import json
 import re
 import secrets
-import smtplib
 import sys
 import threading
 import time
 from datetime import datetime, timedelta
-from email.message import EmailMessage
-from urllib.parse import quote
 
 from sqlalchemy import func
 
 from stockarmobile.extensions import db
 from stockarmobile.helpers.dates import utcnow_naive
 
-CHANNELS = {"email", "whatsapp", "both"}
+CHANNELS = {"whatsapp"}
 SENDABLE_STATUSES = {"EN_PREPARACION"}
 MAX_RECIPIENTS_PER_CYCLE = 50
 DELIVERY_RETRY_DELAY = timedelta(minutes=15)
@@ -124,18 +121,16 @@ def _client_phone(client):
     return normalize_whatsapp_number(raw_phone)
 
 
-def _eligible_clients(company_id, channel):
+def _eligible_clients(company_id, channel="whatsapp"):
     from app import Client
     query = Client.query.filter(Client.company_id == int(company_id), Client.active.is_(True))
-    if channel == "email":
-        query = query.filter(Client.email.isnot(None), Client.email != "", Client.email_marketing_consent == "opted_in")
-    else:
-        query = query.filter(
-            func.coalesce(Client.whatsapp, Client.phone).isnot(None),
-            func.coalesce(Client.whatsapp, Client.phone) != "",
-            Client.whatsapp_marketing_consent == "opted_in",
-        )
-    return query.order_by(Client.id.asc())
+    if str(channel or "").strip().lower() != "whatsapp":
+        return query.filter(db.false())
+    return query.filter(
+        func.coalesce(Client.whatsapp, Client.phone).isnot(None),
+        func.coalesce(Client.whatsapp, Client.phone) != "",
+        Client.whatsapp_marketing_consent == "opted_in",
+    ).order_by(Client.id.asc())
 
 
 def _audience_query(campaign):
@@ -172,66 +167,72 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         raise ValueError("Campaña no encontrada para esta empresa.")
     if campaign.status not in {"APROBADA", "EN_PREPARACION"}:
         raise ValueError("Solo se puede preparar una campaña aprobada.")
-    if campaign.channel not in CHANNELS:
-        raise ValueError("Canal de campaña inválido.")
 
-    channels = ("email", "whatsapp") if campaign.channel == "both" else (campaign.channel,)
+    # Tenant CRM is WhatsApp-only. Normalize legacy drafts instead of allowing
+    # their previous email/both channel value to re-enable SMTP delivery.
+    campaign.channel = "whatsapp"
+    campaign_data = _json(campaign)
+    campaign_data["channel"] = "whatsapp"
+    campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
-    if campaign.channel in {"whatsapp", "both"}:
-        _sender_company, connection = _shared_campaign_whatsapp()
-        if (
-            _sender_company is None
-            or not connection.get("enabled")
-            or not connection.get("phone_number_id")
-            or not connection.get("access_token")
-        ):
-            raise ValueError(
-                "El número oficial de Vendedor 24/7 de StockARmobile no está conectado. "
-                "Contactá al administrador de StockARmobile o elegí Email como canal."
-            )
-        # The approved template belongs to the shared StockARmobile WhatsApp
-        # Business Account, not to each tenant's independent WhatsApp setup.
-        template_name = str(connection.get("template_name") or "").strip()
-        if not template_name:
-            raise ValueError(
-                "Falta configurar la plantilla aprobada del número Vendedor 24/7 de StockARmobile. "
-                "Contactá al administrador o elegí Email como canal."
-            )
+    sender_company, connection = _shared_campaign_whatsapp()
+    if (
+        sender_company is None
+        or not connection.get("enabled")
+        or not connection.get("phone_number_id")
+        or not connection.get("access_token")
+    ):
+        raise ValueError(
+            "El número oficial de Vendedor 24/7 de StockARmobile no está conectado. "
+            "Contactá al administrador de StockARmobile para habilitar WhatsApp."
+        )
+    template_name = str(connection.get("template_name") or "").strip()
+    if not template_name:
+        raise ValueError(
+            "Falta configurar la plantilla aprobada del número Vendedor 24/7 de StockARmobile. "
+            "Contactá al administrador para sincronizar una plantilla aprobada."
+        )
 
-    existing = {(r.client_id, r.channel) for r in campaign.recipients}
+    # Legacy unsent email rows are retained for audit but permanently skipped.
+    for recipient in campaign.recipients:
+        if recipient.channel != "whatsapp" and recipient.status in {"pending", "retry_wait"}:
+            recipient.status = "skipped"
+            recipient.error_reason = "El CRM del comercio opera únicamente por WhatsApp; los envíos por email quedaron deshabilitados."
+            recipient.updated_at = _now()
+
+    existing = {
+        (r.client_id, r.channel)
+        for r in campaign.recipients
+        if r.channel == "whatsapp"
+    }
     added = 0
     eligible = 0
-    for channel in channels:
-        clients = _audience_query(campaign).filter(
-            Client.email_marketing_consent == "opted_in" if channel == "email"
-            else Client.whatsapp_marketing_consent == "opted_in"
-        ).all()
-        for client in clients:
-            destination = str(client.email or "").strip() if channel == "email" else _client_phone(client)
-            if not destination or (client.id, channel) in existing:
-                continue
-            eligible += 1
-            token = client.marketing_unsubscribe_token or _token()
-            client.marketing_unsubscribe_token = token
-            db.session.add(
-                TenantCampaignRecipient(
-                    campaign_id=campaign.id,
-                    company_id=campaign.company_id,
-                    client_id=client.id,
-                    channel=channel,
-                    destination=destination[:255],
-                    unsubscribe_token=token,
-                    status="pending",
-                    created_at=_now(),
-                    updated_at=_now(),
-                )
+    clients = _audience_query(campaign).filter(
+        Client.whatsapp_marketing_consent == "opted_in"
+    ).all()
+    for client in clients:
+        destination = _client_phone(client)
+        if not destination or (client.id, "whatsapp") in existing:
+            continue
+        eligible += 1
+        token = client.marketing_unsubscribe_token or _token()
+        client.marketing_unsubscribe_token = token
+        db.session.add(
+            TenantCampaignRecipient(
+                campaign_id=campaign.id,
+                company_id=campaign.company_id,
+                client_id=client.id,
+                channel="whatsapp",
+                destination=destination[:255],
+                unsubscribe_token=token,
+                status="pending",
+                created_at=_now(),
+                updated_at=_now(),
             )
-            existing.add((client.id, channel))
-            added += 1
+        )
+        existing.add((client.id, "whatsapp"))
+        added += 1
     campaign.target_count = len(existing)
-    # audience_count represents the business segment detected by the AI;
-    # target_count represents channel-eligible recipients. Never overwrite
-    # the analytical audience with channel consent filtering.
     db.session.flush()
     return {"eligible": eligible, "added": added, "target_count": campaign.target_count}
 
@@ -240,7 +241,6 @@ def _render_content(campaign, client):
     replacements = {
         "{{cliente}}": str(client.name or ""),
         "{{nombre}}": str(client.name or ""),
-        "{{email}}": str(client.email or ""),
         "{{telefono}}": _client_phone(client),
         "{{producto}}": str(campaign.product.name if campaign.product else ""),
         "{{precio}}": str(campaign.product.price if campaign.product else ""),
@@ -249,34 +249,6 @@ def _render_content(campaign, client):
     for key, value in replacements.items():
         content = content.replace(key, value)
     return content
-
-
-def _send_email(recipient, campaign) -> tuple[bool, str, str]:
-    from flask import current_app
-    host = str(current_app.config.get("SMTP_HOST") or "").strip()
-    user = str(current_app.config.get("SMTP_USER") or "").strip()
-    password = current_app.config.get("SMTP_PASSWORD") or ""
-    if not host or not user:
-        return False, "SMTP no configurado.", ""
-    client = recipient.client
-    content = _render_content(campaign, client)
-    unsub = str(current_app.config.get("APP_URL") or "").rstrip("/") + "/agentes-ia/campanas/unsubscribe/" + quote(recipient.unsubscribe_token)
-    msg = EmailMessage()
-    msg["Subject"] = str(campaign.title or "Novedad")[:255]
-    msg["From"] = str(current_app.config.get("SMTP_FROM_EMAIL") or user)
-    msg["To"] = recipient.destination
-    msg["List-Unsubscribe"] = f"<{unsub}>"
-    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-    msg.set_content(content)
-    try:
-        with smtplib.SMTP(host, int(current_app.config.get("SMTP_PORT") or 587), timeout=30) as server:
-            if bool(current_app.config.get("SMTP_USE_TLS", True)):
-                server.starttls()
-            server.login(user, password)
-            server.send_message(msg)
-        return True, "sent", ""
-    except Exception as exc:
-        return False, str(exc)[:2000], ""
 
 
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
@@ -403,22 +375,28 @@ def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, lim
                 ),
             ),
         ).order_by(TenantCampaignRecipient.id.asc()).limit(per_campaign).with_for_update(skip_locked=True).all()
+        campaign.channel = "whatsapp"
+        campaign_data = _json(campaign)
+        campaign_data["channel"] = "whatsapp"
+        campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         for recipient in recipients:
             retry_attempt = recipient.status == "retry_wait"
-            consent = (
-                recipient.client.email_marketing_consent if recipient.channel == "email"
-                else recipient.client.whatsapp_marketing_consent
-            )
+            if recipient.channel != "whatsapp":
+                recipient.status = "skipped"
+                recipient.error_reason = "El CRM del comercio opera únicamente por WhatsApp; no se realizan envíos por email."
+                recipient.updated_at = _now()
+                campaign.skipped_count += 1
+                summary["skipped"] += 1
+                db_session.flush()
+                continue
+            consent = recipient.client.whatsapp_marketing_consent
             if consent != "opted_in" or not recipient.client.active:
                 recipient.status = "skipped"
-                recipient.error_reason = "Consentimiento no vigente o cliente inactivo."
+                recipient.error_reason = "Consentimiento de WhatsApp no vigente o cliente inactivo."
                 campaign.skipped_count += 1
                 summary["skipped"] += 1
                 continue
-            if recipient.channel == "email":
-                ok, detail, provider_id = _send_email(recipient, campaign)
-            else:
-                ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+            ok, detail, provider_id = _send_whatsapp(recipient, campaign)
             if ok:
                 recipient.status = "sent"
                 recipient.provider_message_id = provider_id or None
