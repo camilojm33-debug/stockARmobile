@@ -510,16 +510,21 @@ def _whatsapp_token_lifecycle(data: dict) -> dict:
     data_access_expires_at = str(data.get("data_access_expires_at") or "").strip()
     health = "unknown"
     days_remaining = None
-    if expires_at:
+    expirations = []
+    for raw_expiry in (expires_at, data_access_expires_at):
+        if not raw_expiry:
+            continue
         try:
-            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
             if expiry.tzinfo is None:
                 expiry = expiry.replace(tzinfo=timezone.utc)
-            seconds = (expiry - datetime.now(timezone.utc)).total_seconds()
-            days_remaining = int(max(0, seconds) // 86400)
-            health = "expired" if seconds <= 0 else ("expiring" if seconds <= 14 * 86400 else "active")
+            expirations.append(expiry)
         except (TypeError, ValueError, OverflowError):
-            health = "unknown"
+            continue
+    if expirations:
+        seconds = (min(expirations) - datetime.now(timezone.utc)).total_seconds()
+        days_remaining = int(max(0, seconds) // 86400)
+        health = "expired" if seconds <= 0 else ("expiring" if seconds <= 14 * 86400 else "active")
     return {
         "access_token_obtained_at": obtained_at,
         "access_token_expires_at": expires_at,
