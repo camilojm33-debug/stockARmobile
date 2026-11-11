@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
@@ -502,6 +503,32 @@ def is_commercial_company(company) -> bool:
     return str(prefs.get("internal_channel") or "").strip().lower() == COMMERCIAL_COMPANY_MARKER
 
 
+def _whatsapp_token_lifecycle(data: dict) -> dict:
+    """Return non-secret token health fields for UI and delivery preflight."""
+    obtained_at = str(data.get("access_token_obtained_at") or "").strip()
+    expires_at = str(data.get("access_token_expires_at") or "").strip()
+    data_access_expires_at = str(data.get("data_access_expires_at") or "").strip()
+    health = "unknown"
+    days_remaining = None
+    if expires_at:
+        try:
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            seconds = (expiry - datetime.now(timezone.utc)).total_seconds()
+            days_remaining = int(max(0, seconds) // 86400)
+            health = "expired" if seconds <= 0 else ("expiring" if seconds <= 14 * 86400 else "active")
+        except (TypeError, ValueError, OverflowError):
+            health = "unknown"
+    return {
+        "access_token_obtained_at": obtained_at,
+        "access_token_expires_at": expires_at,
+        "data_access_expires_at": data_access_expires_at,
+        "token_health": health,
+        "token_days_remaining": days_remaining,
+    }
+
+
 def get_whatsapp_connection(company, branch_id: int | None = None):
     data = get_ai_preferences(company)["whatsapp"]
     if branch_id is not None:
@@ -535,6 +562,7 @@ def get_whatsapp_connection(company, branch_id: int | None = None):
                 "access_token": str(os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN") or "").strip(),
                 "template_name": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip(),
                 "template_language": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_LANGUAGE") or "es_AR").strip(),
+                **_whatsapp_token_lifecycle({"access_token_expires_at": os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN_EXPIRES_AT", "")}),
             }
     return {
         "enabled": bool(data.get("enabled", False)),
@@ -544,6 +572,7 @@ def get_whatsapp_connection(company, branch_id: int | None = None):
         "access_token": decrypt_secret(data.get("access_token_encrypted")),
         "template_name": str(data.get("template_name") or "").strip(),
         "template_language": str(data.get("template_language") or "es_AR").strip(),
+        **_whatsapp_token_lifecycle(data),
     }
 
 
