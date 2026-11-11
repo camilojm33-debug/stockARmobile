@@ -414,7 +414,7 @@ class PrepararCampanaTool(AgentTool):
             "success": True,
             "campaign_context": {
                 "campaign_type": campaign_type,
-                "channel": channel if channel in {"email", "whatsapp", "both"} else "email",
+                "channel": "whatsapp",
                 "audience_segment": audience_segment,
                 "audience_count": audience_count,
                 "product": product_payload,
