@@ -50,19 +50,44 @@ def _verify_signature(raw_body: bytes) -> bool:
 
 
 def _extract_messages(payload):
+    """Normalize supported WhatsApp inbound message types without dropping attachments."""
     for entry in payload.get("entry") or []:
         for change in entry.get("changes") or []:
             value = change.get("value") or {}
             metadata = value.get("metadata") or {}
             phone_number_id = str(metadata.get("phone_number_id") or "").strip()
             for message in value.get("messages") or []:
-                if message.get("type") != "text":
-                    continue
-                text = ((message.get("text") or {}).get("body") or "").strip()
+                message_type = str(message.get("type") or "unknown").strip().lower()
+                context = message.get("context") if isinstance(message.get("context"), dict) else {}
+                context_message_id = str(context.get("id") or "").strip()
+                body = ""
+                if message_type == "text":
+                    body = str((message.get("text") or {}).get("body") or "").strip()
+                elif message_type == "button":
+                    button = message.get("button") or {}
+                    body = str(button.get("text") or button.get("payload") or "").strip()
+                elif message_type == "interactive":
+                    interactive = message.get("interactive") or {}
+                    reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
+                    body = str(reply.get("title") or reply.get("id") or "").strip()
+                elif message_type in {"image", "document", "video"}:
+                    attachment = message.get(message_type) or {}
+                    body = str(attachment.get("caption") or f"El cliente envió un {message_type} por WhatsApp.").strip()
+                elif message_type == "audio":
+                    body = "El cliente envió un audio por WhatsApp. Solicitá que lo transcriba o derivá la conversación a un operador."
+                elif message_type == "location":
+                    location = message.get("location") or {}
+                    body = "El cliente compartió una ubicación por WhatsApp: " + ", ".join(
+                        str(location.get(key) or "") for key in ("latitude", "longitude")
+                    )
+                elif message_type == "contacts":
+                    body = "El cliente compartió un contacto por WhatsApp."
+                elif message_type == "sticker":
+                    body = "El cliente envió un sticker por WhatsApp."
                 sender = str(message.get("from") or "").strip()
                 external_id = str(message.get("id") or "").strip()
-                if phone_number_id and sender and text and external_id:
-                    yield phone_number_id, sender, external_id, text
+                if phone_number_id and sender and body and external_id:
+                    yield phone_number_id, sender, external_id, body, context_message_id, message_type
 
 
 def _extract_statuses(payload):
@@ -469,7 +494,7 @@ def _assistant_for_inbound(conversation, incoming):
     return query.order_by(ConversationMessage.id.desc()).first()
 
 
-def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
+def _send_persisted_reply(company, *, sender: str, assistant, sender_connection=None) -> bool:
     if assistant is None:
         raise RuntimeError("La respuesta de WhatsApp no está persistida.")
     assistant = db.session.query(ConversationMessage).filter_by(
@@ -505,12 +530,19 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
         db.session.commit()
         return False
 
-    result = WhatsAppService.send_text(
-        company,
-        to=sender,
-        body=str(assistant.content or ""),
-        branch_id=conversation.branch_id,
-    )
+    if sender_connection is not None:
+        result = WhatsAppService.send_text_with_connection(
+            sender_connection,
+            to=sender,
+            body=str(assistant.content or ""),
+        )
+    else:
+        result = WhatsAppService.send_text(
+            company,
+            to=sender,
+            body=str(assistant.content or ""),
+            branch_id=conversation.branch_id,
+        )
     messages = result.get("messages") if isinstance(result, dict) else None
     provider_message_id = ""
     if isinstance(messages, list) and messages and isinstance(messages[0], dict):
@@ -524,6 +556,184 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
     assistant.metadata_json = updated_metadata
     db.session.commit()
     return True
+
+def _process_shared_tenant_campaign_reply(
+    *, phone_number_id: str, sender: str, external_id: str, text: str,
+    context_message_id: str = "", message_type: str = "text",
+) -> bool:
+    """Route shared-number campaign replies into exactly one originating tenant CRM."""
+    from app import Branch, Company
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignAttribution,
+        resolve_shared_campaign_reply,
+    )
+    from services.saas_commercial_whatsapp import get_commercial_company
+    from services.ai_agent.config_service import get_whatsapp_connection
+
+    recipient = resolve_shared_campaign_reply(
+        phone_number_id=phone_number_id,
+        sender=sender,
+        context_message_id=context_message_id,
+    )
+    if recipient is None:
+        return False
+
+    company = Company.query.filter_by(id=int(recipient.company_id), active=True).first()
+    if company is None:
+        return False
+    branch_id = get_default_branch_id(company.id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
+    if branch is None:
+        current_app.logger.warning(
+            "Shared WhatsApp campaign reply has no active tenant branch; company_id=%s recipient_id=%s",
+            company.id, recipient.id,
+        )
+        return False
+
+    platform_company = get_commercial_company()
+    platform_connection = get_whatsapp_connection(platform_company) if platform_company is not None else {}
+    if (
+        not platform_connection.get("enabled")
+        or not platform_connection.get("access_token")
+        or str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip()
+    ):
+        return False
+
+    conversation = _get_or_create_conversation(company.id, sender, branch_id=branch.id)
+    conversation_metadata = dict(conversation.metadata_json or {})
+    conversation_metadata["shared_campaign_origin"] = {
+        "campaign_id": int(recipient.campaign_id),
+        "recipient_id": int(recipient.id),
+        "platform_phone_number_id": str(phone_number_id),
+    }
+    conversation.metadata_json = conversation_metadata
+
+    recipient.replied_at = recipient.replied_at or utcnow_naive()
+    existing_attribution = TenantCampaignAttribution.query.filter_by(
+        campaign_id=recipient.campaign_id,
+        conversation_id=conversation.id,
+    ).first()
+    if existing_attribution is None:
+        db.session.add(TenantCampaignAttribution(
+            campaign_id=recipient.campaign_id,
+            company_id=recipient.company_id,
+            client_id=recipient.client_id,
+            recipient_id=recipient.id,
+            conversation_id=conversation.id,
+            revenue=0,
+            attribution_type="conversation",
+            created_at=utcnow_naive(),
+        ))
+    db.session.commit()
+
+    duplicate = db.session.query(ConversationMessage).filter(
+        ConversationMessage.company_id == company.id,
+        ConversationMessage.conversation_id == conversation.id,
+        ConversationMessage.external_message_id == external_id,
+        ConversationMessage.role == "user",
+    ).first()
+    if duplicate is not None:
+        assistant = _assistant_for_inbound(conversation, duplicate)
+        if assistant is not None:
+            _send_persisted_reply(
+                company, sender=sender, assistant=assistant,
+                sender_connection=platform_connection,
+            )
+        return True
+
+    attention = attention_for(conversation)
+    if attention["status"] == "human":
+        persist_human_inbound(
+            conversation,
+            external_id=external_id,
+            sender=sender,
+            text=text,
+        )
+        db.session.commit()
+        return True
+
+    if len(text) > MAX_AGENT_MESSAGE_CHARS:
+        text = text[:MAX_AGENT_MESSAGE_CHARS]
+
+    # Replies are always recorded in the tenant's CRM. AI response is optional
+    # and depends on that tenant's own Vendedor entitlement/settings.
+    from services.ai_agent.config_service import is_ai_enabled
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    from services.ai_agent.usage_service import can_use_ai
+
+    access = can_use_ai(company, "vendedor")
+    branch_access = branch_vendor_access(company, branch)
+    if not is_ai_enabled(company) or not access.allowed or not branch_access.get("allowed"):
+        db.session.add(ConversationMessage(
+            conversation_id=conversation.id,
+            company_id=company.id,
+            sender_type="user",
+            role="user",
+            content=text,
+            content_type=message_type[:40] or "text",
+            external_message_id=external_id,
+            idempotency_key=f"whatsapp:{external_id}",
+            metadata_json={
+                "channel": "whatsapp",
+                "platform_shared_sender": True,
+                "campaign_id": int(recipient.campaign_id),
+                "message_type": message_type,
+                "context_message_id": context_message_id,
+                "ai_unavailable": True,
+            },
+        ))
+        db.session.commit()
+        return True
+
+    try:
+        result = AgentRuntime.process(
+            company_id=company.id,
+            conversation_id=conversation.id,
+            message=text,
+            channel="whatsapp",
+            external_message_id=external_id,
+            idempotency_key=f"whatsapp:{external_id}",
+            metadata={
+                "phone_number_id": phone_number_id,
+                "from": sender,
+                "channel": "whatsapp",
+                "platform_shared_sender": True,
+                "campaign_id": int(recipient.campaign_id),
+                "message_type": message_type,
+                "context_message_id": context_message_id,
+            },
+        )
+    except IntegrityError as exc:
+        db.session.rollback()
+        if "uq_convmsg_company_idempotency" in str(exc.orig) or "uq_convmsg_external_company_conv" in str(exc.orig):
+            return True
+        raise
+
+    if result.get("status") == "disabled":
+        return True
+    assistant_id = result.get("assistant_message_id")
+    assistant = db.session.query(ConversationMessage).filter_by(
+        id=assistant_id,
+        company_id=company.id,
+        conversation_id=conversation.id,
+        role="assistant",
+    ).first() if assistant_id else None
+    if assistant is None:
+        inbound = ConversationMessage.query.filter_by(
+            company_id=company.id,
+            conversation_id=conversation.id,
+            external_message_id=external_id,
+            role="user",
+        ).first()
+        assistant = _assistant_for_inbound(conversation, inbound)
+    if assistant is not None:
+        _send_persisted_reply(
+            company, sender=sender, assistant=assistant,
+            sender_connection=platform_connection,
+        )
+    return True
+
 
 def _persist_deterministic_turn(conversation, *, external_id: str, text: str, response: str):
     """Persist a retryable WhatsApp command turn without duplicating messages."""
@@ -1373,10 +1583,20 @@ def webhook():
         errors.append({"error": "commercial_campaign_status_internal_error"})
         retryable_errors = True
 
-    for phone_number_id, sender, external_id, text in _extract_messages(payload):
+    for phone_number_id, sender, external_id, text, context_message_id, message_type in _extract_messages(payload):
         try:
             if is_commercial_phone_number_id(phone_number_id):
                 try:
+                    if _process_shared_tenant_campaign_reply(
+                        phone_number_id=phone_number_id,
+                        sender=sender,
+                        external_id=external_id,
+                        text=text,
+                        context_message_id=context_message_id,
+                        message_type=message_type,
+                    ):
+                        processed += 1
+                        continue
                     commercial_result = process_commercial_message(
                         phone_number_id=phone_number_id,
                         sender=sender,
@@ -1504,7 +1724,7 @@ def webhook():
                     channel="whatsapp",
                     external_message_id=external_id,
                     idempotency_key=idempotency_key,
-                    metadata={"phone_number_id": phone_number_id, "from": sender, "channel": "whatsapp"},
+                    metadata={"phone_number_id": phone_number_id, "from": sender, "channel": "whatsapp", "message_type": message_type, "context_message_id": context_message_id},
                 )
             except IntegrityError as exc:
                 db.session.rollback()
