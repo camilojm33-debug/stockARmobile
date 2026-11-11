@@ -1919,7 +1919,7 @@ class AgentRuntime:
                     fallback_result = cls._execute_tool(
                         "preparar_campana",
                         company_id=company_id,
-                        arguments={"campaign_type": fallback_tool_type, "channel": "email"},
+                        arguments={"campaign_type": fallback_tool_type, "channel": "whatsapp"},
                         context=context,
                         allowed_tool_names=allowed_tool_names,
                     )
