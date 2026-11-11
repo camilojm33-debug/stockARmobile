@@ -608,6 +608,38 @@ def _current_active_company():
         abort(403)
     return company
 
+def _load_whatsapp_templates(connection: dict) -> list[dict]:
+    waba_id = str(connection.get("business_account_id") or "").strip()
+    access_token = str(connection.get("access_token") or "").strip()
+    if not waba_id or not access_token:
+        raise ValueError("La cuenta de WhatsApp no tiene WABA o autorización disponible.")
+    response = requests.get(
+        _meta_graph_url(f"{waba_id}/message_templates"),
+        params={"fields": "name,status,category,language", "limit": 100},
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    if not response.ok:
+        current_app.logger.warning("WhatsApp template sync failed: %s", _meta_error(response))
+        raise ValueError("Meta no permitió consultar las plantillas. Revisá los permisos de administración de WhatsApp.")
+    payload = response.json() or {}
+    templates = []
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        language = str(item.get("language") or "").strip()
+        status = str(item.get("status") or "").upper()
+        if name and language:
+            templates.append({
+                "name": name[:120],
+                "language": language[:20],
+                "status": status[:30],
+                "category": str(item.get("category") or "")[:40],
+            })
+    return templates
+
+
 @bp.get("/vendedor/conectar-whatsapp")
 @tenant_required
 @company_admin_required
@@ -657,6 +689,10 @@ def vendor_whatsapp_connect():
         token_expires_at=whatsapp.get("access_token_expires_at", ""),
         token_days_remaining=whatsapp.get("token_days_remaining"),
         force_reconnect=force_reconnect,
+        selected_template=whatsapp.get("template_name", ""),
+        selected_template_language=whatsapp.get("template_language", "es_AR"),
+        templates_url=url_for("ai_agents.vendor_whatsapp_templates", branch_id=branch.id),
+        template_save_url=url_for("ai_agents.vendor_whatsapp_template_save", branch_id=branch.id),
         branch=branch,
         complete_url=url_for("ai_agents.vendor_whatsapp_complete", branch_id=branch.id),
         vendor_url=url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id),
@@ -889,6 +925,91 @@ def vendor_whatsapp_complete():
         db.session.rollback()
         current_app.logger.exception("WhatsApp Embedded Signup unexpected failure")
         return jsonify({"success": False, "error": "No pudimos completar la conexión de WhatsApp. Intentá nuevamente."}), 500
+
+
+@bp.get("/vendedor/whatsapp/plantillas")
+@tenant_required
+@company_admin_required
+def vendor_whatsapp_templates():
+    company = _current_active_company()
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+
+    branch_id = request.args.get("branch_id", type=int) or get_default_branch_id(company.id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
+    if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+        return jsonify({"success": False, "error": "La sucursal no tiene habilitado el Vendedor IA."}), 403
+    connection = get_whatsapp_connection(company, branch_id=branch.id)
+    if not connection.get("enabled") or not connection.get("access_token"):
+        return jsonify({"success": False, "error": "Conectá primero el WhatsApp de esta sucursal."}), 409
+    try:
+        templates = _load_whatsapp_templates(connection)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 502
+    approved = [item for item in templates if item["status"] == "APPROVED"]
+    return jsonify({
+        "success": True,
+        "templates": approved,
+        "selected": {
+            "name": str(connection.get("template_name") or ""),
+            "language": str(connection.get("template_language") or "es_AR"),
+        },
+    })
+
+
+@bp.post("/vendedor/whatsapp/plantillas")
+@tenant_required
+@company_admin_required
+def vendor_whatsapp_template_save():
+    company = _current_active_company()
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    language = str(payload.get("language") or "").strip()
+    if not name or not language:
+        return jsonify({"success": False, "error": "Seleccioná una plantilla aprobada y su idioma."}), 400
+
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+
+    branch_id = request.args.get("branch_id", type=int) or get_default_branch_id(company.id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
+    if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+        return jsonify({"success": False, "error": "La sucursal no tiene habilitado el Vendedor IA."}), 403
+    connection = get_whatsapp_connection(company, branch_id=branch.id)
+    if not connection.get("enabled") or not connection.get("access_token"):
+        return jsonify({"success": False, "error": "Conectá primero el WhatsApp de esta sucursal."}), 409
+
+    try:
+        approved = _load_whatsapp_templates(connection)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 502
+    match = next((
+        item for item in approved
+        if item["status"] == "APPROVED" and item["name"] == name and item["language"] == language
+    ), None)
+    if match is None:
+        return jsonify({"success": False, "error": "La plantilla ya no figura aprobada en Meta. Actualizá el listado."}), 409
+
+    try:
+        configure_whatsapp_connection(
+            company,
+            phone_number_id=connection.get("phone_number_id"),
+            access_token=None,
+            business_account_id=connection.get("business_account_id"),
+            display_phone_number=connection.get("display_phone_number"),
+            enabled=True,
+            template_name=match["name"],
+            template_language=match["language"],
+            branch_id=branch.id if not branch.is_default else None,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("WhatsApp template selection failed company_id=%s branch_id=%s", company.id, branch.id)
+        return jsonify({"success": False, "error": "No pudimos guardar la plantilla seleccionada."}), 500
+    return jsonify({"success": True, "selected": {"name": match["name"], "language": match["language"]}})
 
 
 @bp.get("/public/vendedor/<token>")
