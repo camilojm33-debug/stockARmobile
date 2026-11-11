@@ -36,9 +36,8 @@ class CampaignService:
         if creator is None:
             raise ValueError("No hay un usuario activo para crear la campaña.")
         context = system_data if isinstance(system_data, dict) else {}
-        channel = str(context.get("channel") or "email").strip().lower()
-        if channel not in {"email", "whatsapp", "both"}:
-            channel = "email"
+        channel = "whatsapp"
+        context = {**context, "channel": "whatsapp"}
         scheduled_at = None
         raw_schedule = str(context.get("scheduled_at") or "").strip()
         if raw_schedule:
@@ -88,6 +87,7 @@ class CampaignService:
         transitions = {"BORRADOR": {"PENDIENTE_APROBACION", "CANCELADA"}, "PENDIENTE_APROBACION": {"APROBADA", "BORRADOR", "CANCELADA"}, "APROBADA": {"EN_PREPARACION", "CANCELADA"}, "EN_PREPARACION": {"CANCELADA"}, "ENVIADA": set(), "ENVIADA_PARCIAL": set(), "FALLIDA": set(), "SIN_ENVIO": set(), "CANCELADA": set()}
         if target_status not in transitions.get(campaign.status, set()):
             raise ValueError(f"Transición no permitida: {campaign.status} → {target_status}.")
+        campaign.channel = "whatsapp"
         campaign.status = target_status
         if target_status == "APROBADA":
             campaign.approved_by_user_id = user_id
