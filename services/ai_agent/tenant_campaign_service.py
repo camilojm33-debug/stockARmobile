@@ -74,6 +74,50 @@ def _shared_campaign_whatsapp():
     return sender_company, get_whatsapp_connection(sender_company)
 
 
+def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
+    """Resolve a platform-sender inbound reply to one tenant campaign, without cross-tenant guessing.
+
+    A quoted/replied-to provider message ID is authoritative. Without it, the
+    fallback is allowed only when the customer has recent WhatsApp campaign
+    history in exactly one tenant. Ambiguous cross-tenant contacts stay in the
+    SuperAdmin inbox instead of leaking a conversation to the wrong business.
+    """
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    platform_company = get_commercial_company()
+    if platform_company is None:
+        return None
+    platform_connection = get_whatsapp_connection(platform_company)
+    if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
+        return None
+
+    query = TenantCampaignRecipient.query.filter(
+        TenantCampaignRecipient.channel == "whatsapp",
+        TenantCampaignRecipient.status == "sent",
+        TenantCampaignRecipient.provider_message_id.isnot(None),
+    )
+    referenced_id = str(context_message_id or "").strip()
+    if referenced_id:
+        matches = query.filter(TenantCampaignRecipient.provider_message_id == referenced_id).limit(2).all()
+        return matches[0] if len(matches) == 1 else None
+
+    from services.whatsapp_share_service import normalize_whatsapp_number
+    normalized_sender = normalize_whatsapp_number(sender)
+    if not normalized_sender:
+        return None
+    cutoff = _now() - timedelta(days=30)
+    candidates = query.filter(
+        TenantCampaignRecipient.destination == normalized_sender,
+        TenantCampaignRecipient.sent_at.isnot(None),
+        TenantCampaignRecipient.sent_at >= cutoff,
+    ).order_by(TenantCampaignRecipient.sent_at.desc(), TenantCampaignRecipient.id.desc()).limit(100).all()
+    tenant_ids = {int(row.company_id) for row in candidates}
+    if len(tenant_ids) != 1:
+        return None
+    return candidates[0] if candidates else None
+
+
 def _client_phone(client):
     raw_phone = str(getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
     from services.whatsapp_share_service import normalize_whatsapp_number

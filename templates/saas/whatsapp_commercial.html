@@ -126,6 +126,27 @@
                 <input class="form-control" name="template_language" value="{{ connection.template_language or 'es_AR' }}" placeholder="es_AR">
               </div>
               <div class="col-12">
+                <div class="wa-muted-box">
+                  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                    <div><strong>Plantillas aprobadas en Meta</strong><div class="small text-muted">Sincronizá la WABA comercial y seleccioná la plantilla que utilizarán los CRM de los comercios.</div></div>
+                    <button type="button" id="commercial-template-refresh" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button>
+                  </div>
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-8">
+                      <label class="form-label small fw-semibold" for="commercial-template-select">Plantilla aprobada</label>
+                      <select id="commercial-template-select" class="form-select" disabled><option value="">Presioná Sincronizar para consultar Meta</option></select>
+                    </div>
+                    <div class="col-md-4">
+                      <button type="button" id="commercial-template-save" class="btn btn-outline-primary w-100" disabled>Guardar plantilla</button>
+                    </div>
+                  </div>
+                  <div id="commercial-template-status" class="small text-muted mt-2" role="status" aria-live="polite"></div>
+                  {% if commercial_template_env_locked %}
+                    <div class="alert alert-info small mt-2 mb-0">Render tiene una plantilla configurada por variable de entorno. Esa variable tiene prioridad sobre la selección guardada aquí.</div>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="col-12">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" name="enabled" value="1" id="commercialWaEnabled" {% if connection.enabled %}checked{% endif %}>
                   <label class="form-check-label fw-semibold" for="commercialWaEnabled">Habilitar WhatsApp Comercial</label>
@@ -200,4 +221,97 @@
     </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const listUrl = {{ commercial_templates_url|tojson }};
+  const saveUrl = {{ commercial_template_save_url|tojson }};
+  const refresh = document.getElementById('commercial-template-refresh');
+  const select = document.getElementById('commercial-template-select');
+  const save = document.getElementById('commercial-template-save');
+  const status = document.getElementById('commercial-template-status');
+  const templateInput = document.querySelector('input[name="template_name"]');
+  const languageInput = document.querySelector('input[name="template_language"]');
+  if (!refresh || !select || !save || !status) return;
+  let templates = [];
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  function setStatus(message, error) {
+    status.textContent = String(message || '');
+    status.style.color = error ? '#b91c1c' : '';
+  }
+
+  async function syncTemplates() {
+    refresh.disabled = true;
+    select.disabled = true;
+    save.disabled = true;
+    select.innerHTML = '<option value="">Consultando Meta...</option>';
+    setStatus('Consultando las plantillas aprobadas de la WABA comercial...');
+    try {
+      const response = await fetch(listUrl, {credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudieron consultar las plantillas.');
+      templates = Array.isArray(data.templates) ? data.templates : [];
+      select.innerHTML = '';
+      if (!templates.length) {
+        select.innerHTML = '<option value="">No hay plantillas aprobadas</option>';
+        setStatus('Meta no devolvió plantillas aprobadas para la cuenta comercial.');
+        return;
+      }
+      templates.forEach(function (item) {
+        const option = document.createElement('option');
+        option.value = item.name + '|' + item.language;
+        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category;
+        select.appendChild(option);
+      });
+      const selected = data.selected || {};
+      const key = String(selected.name || '') + '|' + String(selected.language || '');
+      if (selected.name && templates.some(item => item.name + '|' + item.language === key)) {
+        select.value = key;
+      }
+      select.disabled = false;
+      save.disabled = false;
+      setStatus(templates.length + ' plantilla(s) aprobada(s) disponible(s).');
+    } catch (error) {
+      select.innerHTML = '<option value="">No se pudo sincronizar</option>';
+      setStatus(error.message || 'Error al sincronizar con Meta.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  }
+
+  async function saveTemplate() {
+    const parts = String(select.value || '').split('|');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      setStatus('Seleccioná una plantilla aprobada.', true);
+      return;
+    }
+    save.disabled = true;
+    setStatus('Verificando aprobación y guardando la plantilla...');
+    try {
+      const response = await fetch(saveUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+        body: JSON.stringify({name: parts[0], language: parts[1]})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo guardar la plantilla.');
+      if (templateInput) templateInput.value = parts[0];
+      if (languageInput) languageInput.value = parts[1];
+      setStatus('Plantilla aprobada guardada. Los nuevos preflight de campañas usarán esta selección.');
+    } catch (error) {
+      setStatus(error.message || 'Error al guardar la plantilla.', true);
+    } finally {
+      save.disabled = false;
+    }
+  }
+
+  refresh.addEventListener('click', syncTemplates);
+  save.addEventListener('click', saveTemplate);
+  syncTemplates();
+})();
+</script>
 {% endblock %}

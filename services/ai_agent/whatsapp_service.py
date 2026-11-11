@@ -21,8 +21,11 @@ class WhatsAppService:
     ).strip()
 
     @classmethod
-    def _post_message(cls, company, *, to: str, payload: Dict[str, Any], branch_id: int | None = None) -> Dict[str, Any]:
-        connection = get_whatsapp_connection(company, branch_id=branch_id)
+    def _post_message(
+        cls, company, *, to: str, payload: Dict[str, Any],
+        branch_id: int | None = None, connection: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        connection = connection or get_whatsapp_connection(company, branch_id=branch_id)
         phone_number_id = connection["phone_number_id"]
         access_token = connection["access_token"]
         if not phone_number_id or not access_token:
@@ -48,6 +51,24 @@ class WhatsAppService:
         except ValueError as exc:
             raise RuntimeError("WhatsApp API devolvió JSON inválido.") from exc
         return data
+
+    @classmethod
+    def send_text_with_connection(
+        cls, connection: Dict[str, Any], *, to: str, body: str,
+    ) -> Dict[str, Any]:
+        """Send through a trusted platform-owned connection, independent of tenant credentials."""
+        body_text = str(body or "")[:4096]
+        is_mercado_pago_link = "mercadopago.com" in body_text.lower()
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": "".join(ch for ch in str(to or "") if ch.isdigit()),
+            "type": "text",
+            "text": {"preview_url": not is_mercado_pago_link, "body": body_text},
+        }
+        return cls._post_message(
+            None, to=to, payload=payload, connection=connection,
+        )
 
     @classmethod
     def send_text(cls, company, *, to: str, body: str, branch_id: int | None = None) -> Dict[str, Any]:

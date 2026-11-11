@@ -24,6 +24,13 @@
   .wa-next-icon { flex:0 0 36px; width:36px; height:36px; display:grid; place-items:center; border-radius:11px; background:#eef4ff; color:#2563eb; font-size:1.1rem; }
   .wa-preflight { display:flex; gap:.75rem; align-items:flex-start; margin:1rem 0; padding:1rem; border:1px solid #dbeafe; border-radius:14px; background:#f8fbff; color:#334155; font-size:.86rem; }
   .wa-preflight > i { color:#2563eb; font-size:1.2rem; margin-top:.1rem; }
+  .wa-token-health { display:flex; gap:.75rem; align-items:flex-start; padding:1rem; border-radius:14px; margin:1rem 0; border:1px solid var(--app-line); background:var(--app-panel-soft); }
+  .wa-token-health.warning { border-color:#fcd34d; background:#fffbeb; color:#92400e; }
+  .wa-token-health.ok { border-color:#bbf7d0; background:#f0fdf4; color:#166534; }
+  .wa-token-health i { font-size:1.15rem; margin-top:.1rem; }
+  .wa-template-panel { margin:1rem 0; padding:1.1rem; border:1px solid var(--app-line); border-radius:16px; background:var(--app-panel-soft); }
+  .wa-template-panel .form-select { min-height:46px; border-radius:12px; }
+  .wa-template-status { min-height:1.3rem; font-size:.82rem; color:var(--app-muted); }
   @media (max-width: 600px) { .wa-head,.wa-body { padding:1.25rem; } .wa-connected-state { flex-direction:column; } .wa-number-row { align-items:flex-start; flex-direction:column; } }
 </style>
 {% endblock %}
@@ -47,12 +54,38 @@
           <div class="wa-connected-mark"><i class="bi bi-check-lg"></i></div>
           <div class="flex-grow-1">
             <div class="wa-connected-eyebrow mb-1">Conexión completada</div>
-            <h2 class="h4 fw-bold mb-2">WhatsApp vinculado correctamente</h2>
+            <h2 class="h4 fw-bold mb-2">{% if force_reconnect %}Actualizar conexión de WhatsApp{% else %}WhatsApp vinculado correctamente{% endif %}</h2>
             <p class="text-muted mb-0">El número quedó vinculado a tu comercio. Desde el panel podés revisar los canales y probar el Vendedor IA.</p>
             <div class="wa-number-row">
               <div><div class="small text-muted mb-1">WhatsApp del comercio</div><div class="wa-number-value">{{ whatsapp.display_phone_number or 'Número conectado' }}</div></div>
               <span class="badge text-bg-success"><i class="bi bi-check-circle-fill me-1"></i>Conectado</span>
             </div>
+            {% if token_health in ['expired', 'expiring'] %}
+              <div class="wa-token-health warning" role="status">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <div><strong>{% if token_health == 'expired' %}La autorización necesita renovarse{% else %}La autorización está próxima a vencer{% endif %}</strong>
+                  <div class="small mt-1">{% if token_health == 'expired' %}Volvé a conectar Meta para evitar interrupciones en la atención.{% else %}Quedan aproximadamente {{ token_days_remaining }} días. Reautorizá antes del vencimiento.{% endif %}</div>
+                </div>
+              </div>
+            {% elif token_health == 'active' %}
+              <div class="wa-token-health ok" role="status"><i class="bi bi-shield-check"></i><div><strong>Credenciales vigentes</strong><div class="small mt-1">La autorización está dentro de su período de validez.</div></div></div>
+            {% else %}
+              <div class="wa-token-health" role="status"><i class="bi bi-info-circle"></i><div><strong>Vigencia administrada por Meta</strong><div class="small mt-1">Meta no informó una fecha de vencimiento para esta credencial. StockARmobile controlará los errores de autorización y te permitirá reconectar cuando sea necesario.</div></div></div>
+            {% endif %}
+            <section class="wa-template-panel" aria-labelledby="wa-template-heading">
+              <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
+                <div><h3 id="wa-template-heading" class="h6 fw-bold mb-1">Plantillas aprobadas de tu WhatsApp</h3><p class="small text-muted mb-3">Sincronizá con Meta y elegí una plantilla disponible para este canal.</p></div>
+                <button type="button" id="wa-template-refresh" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Actualizar</button>
+              </div>
+              <label for="wa-template-select" class="form-label small fw-semibold">Plantilla aprobada</label>
+              <select id="wa-template-select" class="form-select" disabled><option value="">Consultando Meta...</option></select>
+              <div class="d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
+                <span id="wa-template-status" class="wa-template-status" role="status" aria-live="polite">Consultando las plantillas aprobadas.</span>
+                <button type="button" id="wa-template-save" class="btn btn-primary btn-sm" disabled><i class="bi bi-check2 me-1"></i>Guardar selección</button>
+              </div>
+            </section>
+            <div class="wa-note mt-3"><strong>CRM de campañas</strong><div class="small mt-1">Las campañas originadas por el CRM de tu comercio utilizan el número comercial oficial de StockARmobile y sus propias plantillas aprobadas. Las plantillas seleccionadas aquí pertenecen al WhatsApp de tu comercio y no reemplazan las del emisor compartido. Las respuestas vinculadas a un envío se registran en tu CRM; las coincidencias ambiguas quedan protegidas para evitar cruces entre comercios.</div></div>
+            <a class="btn btn-outline-primary w-100 mt-3" href="{{ url_for('ai_agents.vendor_whatsapp_connect', branch_id=branch.id, force=1) }}"><i class="bi bi-arrow-repeat me-2"></i>Actualizar conexión de Meta</a>
           </div>
         </section>
         <div class="wa-next-step">
@@ -293,6 +326,94 @@
   });
 
   loadMetaSdk();
+})();
+</script>
+{% endif %}
+{% if connected %}
+<script>
+(function () {
+  const listUrl = {{ templates_url|tojson }};
+  const saveUrl = {{ template_save_url|tojson }};
+  const select = document.getElementById('wa-template-select');
+  const refresh = document.getElementById('wa-template-refresh');
+  const save = document.getElementById('wa-template-save');
+  const status = document.getElementById('wa-template-status');
+  if (!select || !refresh || !save || !status) return;
+  let templates = [];
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  function setStatus(message, error) {
+    status.textContent = String(message || '');
+    status.style.color = error ? '#b91c1c' : '';
+  }
+
+  async function loadTemplates() {
+    refresh.disabled = true;
+    save.disabled = true;
+    select.disabled = true;
+    select.innerHTML = '<option value="">Consultando Meta...</option>';
+    setStatus('Sincronizando plantillas aprobadas...');
+    try {
+      const response = await fetch(listUrl, {credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos consultar las plantillas.');
+      templates = Array.isArray(data.templates) ? data.templates : [];
+      select.innerHTML = '';
+      if (!templates.length) {
+        select.innerHTML = '<option value="">No hay plantillas aprobadas</option>';
+        setStatus('Meta no devolvió plantillas aprobadas para este número.');
+        return;
+      }
+      templates.forEach(function (item) {
+        const option = document.createElement('option');
+        option.value = item.name + '|' + item.language;
+        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category;
+        select.appendChild(option);
+      });
+      const selected = data.selected || {};
+      const selectedValue = String(selected.name || '') + '|' + String(selected.language || '');
+      if (selected.name && templates.some(item => item.name + '|' + item.language === selectedValue)) {
+        select.value = selectedValue;
+      }
+      select.disabled = false;
+      save.disabled = false;
+      setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles.');
+    } catch (error) {
+      select.innerHTML = '<option value="">No se pudo sincronizar</option>';
+      setStatus(error.message || 'Error al consultar Meta.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  }
+
+  async function saveTemplate() {
+    const parts = String(select.value || '').split('|');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      setStatus('Seleccioná una plantilla aprobada.', true);
+      return;
+    }
+    save.disabled = true;
+    setStatus('Verificando y guardando la selección...');
+    try {
+      const response = await fetch(saveUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+        body: JSON.stringify({name: parts[0], language: parts[1]})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos guardar la plantilla.');
+      setStatus('Plantilla guardada y verificada con Meta.');
+    } catch (error) {
+      setStatus(error.message || 'Error al guardar la plantilla.', true);
+    } finally {
+      save.disabled = false;
+    }
+  }
+
+  refresh.addEventListener('click', loadTemplates);
+  save.addEventListener('click', saveTemplate);
+  loadTemplates();
 })();
 </script>
 {% endif %}

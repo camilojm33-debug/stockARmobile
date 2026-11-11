@@ -158,3 +158,72 @@ def test_whatsapp_onboarding_explains_meta_wait_and_has_recoverable_sdk_states()
     assert "statusBox.innerHTML" not in template
     assert "extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}" in template
 
+
+
+
+def test_whatsapp_token_lifecycle_is_tracked_without_exposing_credentials():
+    source = (ROOT / "services/ai_agent/config_service.py").read_text(encoding="utf-8")
+    onboarding = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
+    template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+
+    assert "def _whatsapp_token_lifecycle(data: dict)" in source
+    assert '"token_health": health' in source
+    assert '"token_days_remaining": days_remaining' in source
+    assert '"access_token_expires_at": token_expires_at' in onboarding
+    assert "def _exchange_long_lived_whatsapp_token" in onboarding
+    assert "def _meta_expiration_iso" in onboarding
+    assert "Actualizar conexión de Meta" in template
+    assert "token_health in ['expired', 'expiring']" in template
+    assert "access_token" not in template
+
+
+def test_webhook_preserves_context_and_supports_common_interactive_and_media_types():
+    source = (ROOT / "whatsapp_agent.py").read_text(encoding="utf-8")
+    extractor = source[source.index("def _extract_messages(payload):"):source.index("def _extract_statuses(payload):")]
+
+    assert 'context_message_id = str(context.get("id") or "").strip()' in extractor
+    assert 'message_type == "interactive"' in extractor
+    assert 'message_type in {"image", "document", "video"}' in extractor
+    assert 'message_type == "audio"' in extractor
+    assert "yield phone_number_id, sender, external_id, body, context_message_id, message_type" in extractor
+    assert "resolve_shared_campaign_reply" in source
+    assert "sender_connection=platform_connection" in source
+
+
+def test_shared_campaign_reply_attribution_is_fail_closed_across_tenants():
+    source = (ROOT / "services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
+    start = source.index("def resolve_shared_campaign_reply(")
+    end = source.index("def _client_phone(", start)
+    resolver = source[start:end]
+
+    assert "context_message_id" in resolver
+    assert "provider_message_id == referenced_id" in resolver
+    assert "tenant_ids = {int(row.company_id) for row in candidates}" in resolver
+    assert "if len(tenant_ids) != 1:" in resolver
+    assert "return None" in resolver
+
+
+
+def test_tenant_and_superadmin_template_controls_validate_meta_approval():
+    tenant_source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
+    superadmin_source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    tenant_ui = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+    superadmin_ui = (ROOT / "templates/saas/whatsapp_commercial.html").read_text(encoding="utf-8")
+
+    tenant_start = tenant_source.index('@bp.get("/vendedor/whatsapp/plantillas")')
+    tenant_end = tenant_source.index('@bp.get("/public/vendedor/<token>")', tenant_start)
+    tenant_routes = tenant_source[tenant_start:tenant_end]
+    assert "@tenant_required" in tenant_routes
+    assert "@company_admin_required" in tenant_routes
+    assert 'item["status"] == "APPROVED"' in tenant_routes
+    assert 'match["name"]' in tenant_routes
+    assert 'match["language"]' in tenant_routes
+
+    assert '@bp.get("/whatsapp-comercial/plantillas")' in superadmin_source
+    assert '@bp.post("/whatsapp-comercial/plantillas")' in superadmin_source
+    assert "@superadmin_required" in superadmin_source
+    assert "environment_override" in superadmin_source
+    assert "La plantilla seleccionada no figura aprobada" in superadmin_source
+    assert "wa-template-refresh" in tenant_ui
+    assert "commercial-template-refresh" in superadmin_ui
+    assert "Los CRM de los comercios" in superadmin_ui or "CRM de los comercios" in superadmin_ui

@@ -1,0 +1,42 @@
+name: WhatsApp Embedded Signup regression suite
+
+on:
+  push:
+    branches:
+      - feature/whatsapp-embedded-signup-completion
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  whatsapp-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile changed Python modules
+        run: |
+          python -m compileall -q ai_agents.py saas.py whatsapp_agent.py services/ai_agent
+      - name: Run WhatsApp and CRM regression tests
+        env:
+          SECRET_KEY: test-only-secret
+          DATABASE_URL: sqlite:///:memory:
+          WHATSAPP_VENDOR_UI_ENABLED: "1"
+        run: |
+          pytest -q \
+            tests/test_whatsapp_embedded_signup_hardening.py \
+            tests/test_ai_marketing_campaigns.py \
+            tests/test_whatsapp_commercial.py

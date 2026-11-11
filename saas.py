@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import requests
 import secrets
 import hmac
 import string
@@ -6718,6 +6719,125 @@ def global_settings():
     return render_template("saas/settings.html", settings_snapshot=settings_snapshot)
 
 
+def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
+    waba_id = str(connection.get("business_account_id") or "").strip()
+    access_token = str(connection.get("access_token") or "").strip()
+    if not waba_id or not access_token:
+        raise ValueError("Configurá primero la WABA y el token del número comercial.")
+    version = (os.getenv("META_GRAPH_API_VERSION") or os.getenv("WHATSAPP_GRAPH_API_VERSION") or "v26.0").strip()
+    response = requests.get(
+        f"https://graph.facebook.com/{version}/{waba_id}/message_templates",
+        params={"fields": "name,status,category,language", "limit": 100},
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    if not response.ok:
+        current_app.logger.warning("Commercial WhatsApp template sync failed: HTTP %s", response.status_code)
+        raise ValueError("Meta no permitió consultar las plantillas. Verificá los permisos de administración de WhatsApp.")
+    payload = response.json() or {}
+    templates = []
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        language = str(item.get("language") or "").strip()
+        status = str(item.get("status") or "").upper()
+        if name and language and status == "APPROVED":
+            templates.append({
+                "name": name[:120],
+                "language": language[:20],
+                "category": str(item.get("category") or "")[:40],
+                "status": status,
+            })
+    return templates
+
+
+@bp.get("/whatsapp-comercial/plantillas")
+@superadmin_required
+def whatsapp_commercial_templates():
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    if company is None:
+        return jsonify({"success": False, "error": "No está inicializada la empresa interna comercial."}), 409
+    connection = get_whatsapp_connection(company)
+    try:
+        templates = _fetch_commercial_whatsapp_templates(connection)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 502
+    return jsonify({
+        "success": True,
+        "templates": templates,
+        "selected": {
+            "name": str(connection.get("template_name") or ""),
+            "language": str(connection.get("template_language") or "es_AR"),
+        },
+        "environment_override": bool(str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip()),
+    })
+
+
+@bp.post("/whatsapp-comercial/plantillas")
+@superadmin_required
+def whatsapp_commercial_template_save():
+    from app import db, record_audit
+    from services.ai_agent.config_service import configure_whatsapp_connection, get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    if company is None:
+        return jsonify({"success": False, "error": "No está inicializada la empresa interna comercial."}), 409
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    language = str(payload.get("language") or "").strip()
+    if not name or not language:
+        return jsonify({"success": False, "error": "Seleccioná una plantilla aprobada y su idioma."}), 400
+
+    connection = get_whatsapp_connection(company)
+    try:
+        templates = _fetch_commercial_whatsapp_templates(connection)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 502
+    match = next((item for item in templates if item["name"] == name and item["language"] == language), None)
+    if match is None:
+        return jsonify({"success": False, "error": "La plantilla seleccionada no figura aprobada en la WABA comercial."}), 409
+
+    env_template = str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip()
+    if env_template and env_template != name:
+        return jsonify({
+            "success": False,
+            "error": "Render tiene una plantilla configurada por variable de entorno. Actualizá WHATSAPP_COMMERCIAL_TEMPLATE_NAME para cambiar el emisor activo.",
+        }), 409
+
+    try:
+        configure_whatsapp_connection(
+            company,
+            phone_number_id=connection.get("phone_number_id"),
+            access_token=None,
+            business_account_id=connection.get("business_account_id"),
+            display_phone_number=connection.get("display_phone_number"),
+            enabled=bool(connection.get("enabled")),
+            template_name=match["name"],
+            template_language=match["language"],
+        )
+        record_audit(
+            action="superadmin_whatsapp_commercial_template_selected",
+            entity="whatsapp_commercial",
+            entity_id=company.id,
+            company_id=company.id,
+            detail=f"Plantilla comercial aprobada seleccionada: {match['name']} ({match['language']}).",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Commercial WhatsApp template save failed.")
+        return jsonify({"success": False, "error": "No pudimos guardar la plantilla."}), 500
+    return jsonify({"success": True, "selected": {"name": match["name"], "language": match["language"]}})
+
+
 @bp.route("/whatsapp-comercial", methods=["GET", "POST"])
 @superadmin_required
 def whatsapp_commercial_settings():
@@ -6805,6 +6925,9 @@ def whatsapp_commercial_settings():
         env_waba=env_waba,
         token_configured=token_configured,
         webhook_url=url_for("whatsapp_agent.webhook", _external=True),
+        commercial_templates_url=url_for("saas.whatsapp_commercial_templates"),
+        commercial_template_save_url=url_for("saas.whatsapp_commercial_template_save"),
+        commercial_template_env_locked=bool(str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip()),
     )
 
 
