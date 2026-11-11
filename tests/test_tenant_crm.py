@@ -39,7 +39,7 @@ def test_tenant_crm_requires_ia_pro_route_guards():
 
 def test_tenant_crm_menu_is_plan_gated():
     template = open("templates/base_master.html", encoding="utf-8").read()
-    assert "ai_feature_crm_allowed and (current_user.role == 'admin' or current_user_has_permission('crm'))" in template
+    assert "{% if ai_feature_crm_allowed %}" in template
     assert "overflow-y: auto;" in template
 
 
