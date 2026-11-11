@@ -565,7 +565,7 @@ def get_whatsapp_connection(company, branch_id: int | None = None):
                 "business_account_id": str(os.getenv("WHATSAPP_COMMERCIAL_WABA_ID") or "").strip(),
                 "display_phone_number": str(os.getenv("WHATSAPP_COMMERCIAL_DISPLAY_PHONE_NUMBER") or "").strip(),
                 "access_token": str(os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN") or "").strip(),
-                "template_name": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip(),
+                "template_name": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or data.get("template_name") or "").strip(),
                 "template_language": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_LANGUAGE") or "es_AR").strip(),
                 **_whatsapp_token_lifecycle({"access_token_expires_at": os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN_EXPIRES_AT", "")}),
             }
