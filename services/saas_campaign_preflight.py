@@ -1,6 +1,5 @@
 """Preflight safety gates for SuperAdmin commercial campaigns."""
 from __future__ import annotations
-import os
 import re
 import smtplib
 from flask import current_app
@@ -133,9 +132,17 @@ def campaign_preflight(db_session, campaign) -> dict:
             detail = f"No se pudo validar WhatsApp: {str(exc)[:250]}"
     add("whatsapp_config", "WhatsApp", whatsapp_ok, detail)
 
-    worker_token = str(current_app.config.get("SAAS_CAMPAIGN_WORKER_TOKEN") or os.getenv("SAAS_CAMPAIGN_WORKER_TOKEN") or "").strip()
-    worker_url = str(current_app.config.get("SAAS_CAMPAIGN_WORKER_URL") or os.getenv("SAAS_CAMPAIGN_WORKER_URL") or "").strip()
-    add("worker", "Worker comercial", bool(worker_token and worker_url), "Configurado." if worker_token and worker_url else "Falta configuración del worker.")
+    try:
+        from services.saas_commercial_service import crm_campaign_dispatch_worker_started
+        worker_started = crm_campaign_dispatch_worker_started()
+    except Exception:
+        worker_started = False
+    add(
+        "worker",
+        "Worker comercial",
+        worker_started,
+        "Dispatcher interno iniciado." if worker_started else "El dispatcher interno de campañas no está iniciado en este proceso.",
+    )
 
     return {
         "ready": not issues,
