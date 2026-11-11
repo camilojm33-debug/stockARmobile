@@ -1,8 +1,8 @@
 """Tenant-scoped Marketing IA delivery engine.
 
 This module is deliberately separate from the SuperAdmin acquisition CRM.
-It reuses the existing SMTP configuration and WhatsApp Cloud transport while
-keeping every query, recipient and attribution strictly tenant scoped.
+Tenant campaigns are delivered only through the shared WhatsApp Cloud sender,
+while every query, recipient and attribution remains strictly tenant scoped.
 """
 from __future__ import annotations
 
@@ -37,10 +37,9 @@ def _is_retryable_delivery_error(detail: str) -> bool:
     status_match = re.search(r"http\s+(\d{3})", message)
     if status_match:
         return int(status_match.group(1)) == 429
-    # Retry only explicit SMTP temporary rejection responses. Network timeouts
-    # are ambiguous: the provider may have accepted the message before the
-    # connection failed, so retrying could create a duplicate delivery.
-    return re.search(r"\b(?:421|450|451|452)\b", message) is not None
+    # WhatsApp network timeouts are ambiguous: the provider may have accepted
+    # the message before the connection failed, so do not retry uncertain sends.
+    return False
 
 
 def _token():
@@ -125,7 +124,7 @@ def _eligible_clients(company_id, channel="whatsapp"):
     from app import Client
     query = Client.query.filter(Client.company_id == int(company_id), Client.active.is_(True))
     if str(channel or "").strip().lower() != "whatsapp":
-        return query.filter(db.false())
+        return query.filter(Client.id == -1)
     return query.filter(
         func.coalesce(Client.whatsapp, Client.phone).isnot(None),
         func.coalesce(Client.whatsapp, Client.phone) != "",
