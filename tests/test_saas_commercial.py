@@ -996,3 +996,10 @@ def test_smtp_probe_uses_ssl_for_port_465(app, monkeypatch):
         ok, detail = _smtp_probe()
         assert ok is True
         assert "465" in detail
+
+
+def test_crm_campaign_worker_is_not_started_during_tests(app):
+    from services.saas_commercial_service import start_crm_campaign_dispatch_worker
+
+    with app.app_context():
+        assert start_crm_campaign_dispatch_worker(app) is False

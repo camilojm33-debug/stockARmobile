@@ -7,6 +7,9 @@ import os
 import re
 import secrets
 import smtplib
+import sys
+import threading
+import time
 import socket
 import unicodedata
 from datetime import datetime, timezone, timedelta
@@ -1230,6 +1233,66 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
             summary.setdefault("final_statuses", {})[terminal_status] = summary.setdefault("final_statuses", {}).get(terminal_status, 0) + 1
 
     return summary
+
+
+# The SuperAdmin acquisition CRM has its own campaign engine, separate from
+# tenant Marketing IA. Run it in the web process so it does not depend on the
+# legacy Render cron. Delivery remains fail-closed behind SAAS_MARKETING_SEND_ENABLED.
+_CRM_CAMPAIGN_WORKER_LOCK = threading.Lock()
+_CRM_CAMPAIGN_WORKER_STARTED = False
+
+
+def start_crm_campaign_dispatch_worker(flask_app, *, poll_interval: int = 15) -> bool:
+    """Start the SuperAdmin CRM campaign dispatcher without an external cron."""
+    if flask_app.testing or "pytest" in sys.modules:
+        return False
+
+    global _CRM_CAMPAIGN_WORKER_STARTED
+    with _CRM_CAMPAIGN_WORKER_LOCK:
+        if _CRM_CAMPAIGN_WORKER_STARTED:
+            return False
+        _CRM_CAMPAIGN_WORKER_STARTED = True
+
+    def _run():
+        while True:
+            try:
+                if not flask_app.config.get("SAAS_MARKETING_SEND_ENABLED", False):
+                    time.sleep(poll_interval)
+                    continue
+
+                with flask_app.app_context():
+                    from app import db
+                    result = dispatch_due_campaigns(db.session, limit=20, per_campaign=50)
+                    if any(result.get(key) for key in ("sent", "failed", "skipped", "claimed")):
+                        flask_app.logger.info(
+                            "CRM auto-dispatch campaigns=%s sent=%s failed=%s skipped=%s claimed=%s",
+                            result.get("campaigns", 0),
+                            result.get("sent", 0),
+                            result.get("failed", 0),
+                            result.get("skipped", 0),
+                            result.get("claimed", 0),
+                        )
+                    db.session.remove()
+            except Exception:
+                flask_app.logger.exception("CRM in-process campaign dispatch worker cycle failed")
+                try:
+                    with flask_app.app_context():
+                        from app import db
+                        db.session.rollback()
+                        db.session.remove()
+                except Exception:
+                    flask_app.logger.exception("CRM campaign worker could not clean up its database session")
+            time.sleep(poll_interval)
+
+    thread = threading.Thread(
+        target=_run,
+        name="stockarmobile-crm-campaign-dispatch",
+        daemon=True,
+    )
+    thread.start()
+    flask_app.logger.info("CRM in-process campaign dispatch worker started (poll=%ss)", poll_interval)
+    return True
+
 
 def campaign_metrics(db_session, campaign_id: int) -> dict:
     from app import SaaSCampaignRecipient
