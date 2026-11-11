@@ -559,15 +559,21 @@ def get_whatsapp_connection(company, branch_id: int | None = None):
         commercial_enabled = _coerce_bool(os.getenv("WHATSAPP_COMMERCIAL_ENABLED"), False)
         commercial_phone = str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
         if commercial_enabled and commercial_phone:
+            lifecycle_data = dict(data or {})
+            lifecycle_data["access_token_expires_at"] = (
+                os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN_EXPIRES_AT")
+                or lifecycle_data.get("access_token_expires_at")
+                or ""
+            )
             return {
                 "enabled": True,
                 "phone_number_id": commercial_phone,
-                "business_account_id": str(os.getenv("WHATSAPP_COMMERCIAL_WABA_ID") or "").strip(),
-                "display_phone_number": str(os.getenv("WHATSAPP_COMMERCIAL_DISPLAY_PHONE_NUMBER") or "").strip(),
-                "access_token": str(os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN") or "").strip(),
+                "business_account_id": str(os.getenv("WHATSAPP_COMMERCIAL_WABA_ID") or data.get("business_account_id") or "").strip(),
+                "display_phone_number": str(os.getenv("WHATSAPP_COMMERCIAL_DISPLAY_PHONE_NUMBER") or data.get("display_phone_number") or "").strip(),
+                "access_token": str(os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN") or decrypt_secret(data.get("access_token_encrypted")) or "").strip(),
                 "template_name": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or data.get("template_name") or "").strip(),
-                "template_language": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_LANGUAGE") or "es_AR").strip(),
-                **_whatsapp_token_lifecycle({"access_token_expires_at": os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN_EXPIRES_AT", "")}),
+                "template_language": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_LANGUAGE") or data.get("template_language") or "es_AR").strip(),
+                **_whatsapp_token_lifecycle(lifecycle_data),
             }
     return {
         "enabled": bool(data.get("enabled", False)),
