@@ -451,7 +451,7 @@ def test_marketing_proposal_chat_uses_prompt_and_persists_draft(qa_ai_database):
                     "tool_call": {
                         "id": "proposal-1",
                         "name": "preparar_campana",
-                        "arguments": {"campaign_type": "general", "channel": "email"},
+                        "arguments": {"campaign_type": "general", "channel": "whatsapp"},
                     },
                 }
             return {"content": "Te preparé una propuesta para tu negocio.", "tool_call": None}
