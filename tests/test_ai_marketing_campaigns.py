@@ -374,7 +374,12 @@ def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
 
     with app.app_context():
         company = Company(name="WhatsApp Argentina", active=True)
-        db.session.add(company)
+        sender = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        db.session.add_all([company, sender])
         db.session.flush()
         user = User(username="wa-argentina", email="wa-argentina@example.com", role="admin", active=True, company_id=company.id)
         user.set_password("password123")
@@ -402,6 +407,10 @@ def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
         db.session.commit()
         CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user.id)
         CampaignService.transition(company_id=company.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user.id)
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: sender,
+        )
         monkeypatch.setattr(
             "services.ai_agent.config_service.get_whatsapp_connection",
             lambda _company: {
