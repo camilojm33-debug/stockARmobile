@@ -285,7 +285,7 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
             user_id=user.id,
         )
 
-        with pytest.raises(ValueError, match="WhatsApp no está conectado"):
+        with pytest.raises(ValueError, match="número oficial de Vendedor 24/7 de StockARmobile no está conectado"):
             prepare_recipients(campaign.id, company_id=company.id)
 
 
@@ -420,3 +420,122 @@ def test_campaign_dispatch_worker_does_not_start_during_tests(app):
 
     assert app.testing is True
     assert start_campaign_dispatch_worker(app) is False
+
+
+
+def test_tenant_crm_whatsapp_campaigns_use_shared_stockarmobile_vendedor_number(app, monkeypatch):
+    from app import Campaign, Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import _send_whatsapp
+
+    with app.app_context():
+        tenant = Company(name="Comercio con CRM", active=True)
+        sender = Company(
+            name="StockArMobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        db.session.add_all([tenant, sender])
+        db.session.flush()
+        user = User(
+            username="shared-sender-admin",
+            email="shared-sender@example.com",
+            role="admin",
+            active=True,
+            company_id=tenant.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente autorizado",
+            phone="3624228396",
+            company_id=tenant.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=tenant.id,
+            user_id=user.id,
+            title="Campaña del comercio",
+            objective="Informar una promoción",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={
+                "channel": "whatsapp",
+                # A legacy tenant template must not override the shared WABA template.
+                "whatsapp_template_name": "tenant_only_template",
+            },
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.commit()
+        CampaignService.transition(
+            company_id=tenant.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=tenant.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
+
+        requested_company_ids = []
+
+        def shared_connection(company):
+            requested_company_ids.append(company.id)
+            assert company.id == sender.id
+            return {
+                "enabled": True,
+                "phone_number_id": "stockarmobile-vendedor-24-7",
+                "access_token": "test-only-token",
+                "display_phone_number": "+54 9 362 000 0000",
+                "template_name": "stockarmobile_campaign_approved",
+                "template_language": "es_AR",
+            }
+
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: sender,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            shared_connection,
+        )
+
+        prepared = prepare_recipients(campaign.id, company_id=tenant.id)
+        recipient = TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            channel="whatsapp",
+        ).one()
+        assert prepared["added"] == 1
+        assert recipient.company_id == tenant.id
+        assert recipient.destination == "5493624228396"
+        assert requested_company_ids == [sender.id]
+
+        sent = {}
+
+        def fake_send_template(company, **kwargs):
+            sent["company_id"] = company.id
+            sent.update(kwargs)
+            return {"messages": [{"id": "wamid.shared-sender-test"}]}
+
+        monkeypatch.setattr(
+            "services.ai_agent.whatsapp_service.WhatsAppService.send_template",
+            fake_send_template,
+        )
+        ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+
+        assert ok is True
+        assert detail == "sent"
+        assert provider_id == "wamid.shared-sender-test"
+        assert sent["company_id"] == sender.id
+        assert sent["template_name"] == "stockarmobile_campaign_approved"
+        assert sent["template_name"] != "tenant_only_template"
+        assert requested_company_ids == [sender.id, sender.id]
+        # Campaign and recipient data remain scoped to the originating tenant.
+        assert Campaign.query.filter_by(id=campaign.id, company_id=tenant.id).count() == 1
+        assert TenantCampaignRecipient.query.filter_by(company_id=tenant.id).count() == 1

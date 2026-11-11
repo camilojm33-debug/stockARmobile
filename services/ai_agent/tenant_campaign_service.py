@@ -58,6 +58,22 @@ def _json(campaign):
         return {}
 
 
+def _shared_campaign_whatsapp():
+    """Resolve the single StockARmobile Vendedor 24/7 number used by tenant CRM campaigns.
+
+    Tenant client lists and campaign records remain isolated by company_id. Only
+    the outbound WhatsApp sender is shared; a tenant's own connected WhatsApp
+    number is deliberately not used for these CRM campaigns.
+    """
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    sender_company = get_commercial_company()
+    if sender_company is None:
+        return None, {}
+    return sender_company, get_whatsapp_connection(sender_company)
+
+
 def _client_phone(client):
     raw_phone = str(getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
     from services.whatsapp_share_service import normalize_whatsapp_number
@@ -118,29 +134,24 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     channels = ("email", "whatsapp") if campaign.channel == "both" else (campaign.channel,)
 
     if campaign.channel in {"whatsapp", "both"}:
-        from services.ai_agent.config_service import get_whatsapp_connection
-        from app import Company
-
-        company = Company.query.filter_by(id=campaign.company_id, active=True).first()
-        connection = get_whatsapp_connection(company)
+        _sender_company, connection = _shared_campaign_whatsapp()
         if (
-            not connection.get("enabled")
+            _sender_company is None
+            or not connection.get("enabled")
             or not connection.get("phone_number_id")
             or not connection.get("access_token")
         ):
             raise ValueError(
-                "WhatsApp no está conectado para esta empresa. "
-                "Configurá el número de WhatsApp en Agentes IA o elegí Email como canal."
+                "El número oficial de Vendedor 24/7 de StockARmobile no está conectado. "
+                "Contactá al administrador de StockARmobile o elegí Email como canal."
             )
-        template_name = str(
-            _json(campaign).get("whatsapp_template_name")
-            or connection.get("template_name")
-            or ""
-        ).strip()
+        # The approved template belongs to the shared StockARmobile WhatsApp
+        # Business Account, not to each tenant's independent WhatsApp setup.
+        template_name = str(connection.get("template_name") or "").strip()
         if not template_name:
             raise ValueError(
-                "WhatsApp está conectado, pero falta una plantilla aprobada. "
-                "Configurá la plantilla o elegí Email como canal."
+                "Falta configurar la plantilla aprobada del número Vendedor 24/7 de StockARmobile. "
+                "Contactá al administrador o elegí Email como canal."
             )
 
     existing = {(r.client_id, r.channel) for r in campaign.recipients}
@@ -225,26 +236,29 @@ def _send_email(recipient, campaign) -> tuple[bool, str, str]:
 
 
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
-    from flask import current_app
     from services.ai_agent.whatsapp_service import WhatsAppService
-    from services.ai_agent.config_service import get_whatsapp_connection
-    from app import Company
 
-    company = Company.query.filter_by(id=campaign.company_id, active=True).first()
-    if company is None:
-        return False, "Empresa no disponible.", ""
-    connection = get_whatsapp_connection(company)
-    if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
-        return False, "WhatsApp no está conectado para esta empresa.", ""
-    template_name = str(_json(campaign).get("whatsapp_template_name") or connection.get("template_name") or "").strip()
-    language = str(_json(campaign).get("whatsapp_template_language") or connection.get("template_language") or "es_AR").strip()
+    sender_company, connection = _shared_campaign_whatsapp()
+    if (
+        sender_company is None
+        or not connection.get("enabled")
+        or not connection.get("phone_number_id")
+        or not connection.get("access_token")
+    ):
+        return False, "El número oficial de Vendedor 24/7 de StockARmobile no está conectado.", ""
+
+    # Resolve the template from the shared sender's WABA. A tenant-specific
+    # template or WhatsApp connection must never override the platform sender.
+    template_name = str(connection.get("template_name") or "").strip()
+    language = str(connection.get("template_language") or "es_AR").strip()
     if not template_name:
-        return False, "No hay plantilla WhatsApp aprobada configurada.", ""
+        return False, "No hay plantilla aprobada configurada para el número Vendedor 24/7 de StockARmobile.", ""
+
     client = recipient.client
     params = [str(client.name or "Cliente"), str(campaign.product.name if campaign.product else "")]
     try:
         result = WhatsAppService.send_template(
-            company,
+            sender_company,
             to=recipient.destination,
             template_name=template_name,
             template_language=language,
