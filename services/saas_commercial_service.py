@@ -1261,30 +1261,17 @@ def start_crm_campaign_dispatch_worker(flask_app, *, poll_interval: int = 15) ->
                     continue
 
                 with flask_app.app_context():
-                    from app import SaaSCampaign, db
-                    now = datetime.now(timezone.utc).replace(tzinfo=None)
-                    due = (
-                        SaaSCampaign.query.filter(
-                            SaaSCampaign.status.in_({"APROBADA", "ENVIANDO"}),
-                            SaaSCampaign.scheduled_at.is_(None) | (SaaSCampaign.scheduled_at <= now),
+                    from app import db
+                    result = dispatch_due_campaigns(db.session, limit=20, per_campaign=50)
+                    if any(result.get(key) for key in ("sent", "failed", "skipped", "claimed")):
+                        flask_app.logger.info(
+                            "CRM auto-dispatch campaigns=%s sent=%s failed=%s skipped=%s claimed=%s",
+                            result.get("campaigns", 0),
+                            result.get("sent", 0),
+                            result.get("failed", 0),
+                            result.get("skipped", 0),
+                            result.get("claimed", 0),
                         )
-                        .order_by(SaaSCampaign.id.asc())
-                        .limit(20)
-                        .all()
-                    )
-                    for campaign in due:
-                        campaign_id = campaign.id
-                        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50)
-                        if any(result.get(key) for key in ("sent", "failed", "skipped", "claimed")):
-                            flask_app.logger.info(
-                                "CRM campaign auto-dispatch campaign=%s sent=%s failed=%s skipped=%s claimed=%s",
-                                campaign_id,
-                                result.get("sent", 0),
-                                result.get("failed", 0),
-                                result.get("skipped", 0),
-                                result.get("claimed", 0),
-                            )
-                        db.session.expire_all()
                     db.session.remove()
             except Exception:
                 flask_app.logger.exception("CRM in-process campaign dispatch worker cycle failed")
