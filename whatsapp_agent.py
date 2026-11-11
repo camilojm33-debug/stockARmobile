@@ -593,12 +593,11 @@ def _process_shared_tenant_campaign_reply(
 
     platform_company = get_commercial_company()
     platform_connection = get_whatsapp_connection(platform_company) if platform_company is not None else {}
-    if (
-        not platform_connection.get("enabled")
-        or not platform_connection.get("access_token")
-        or str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip()
-    ):
+    if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
         return False
+    platform_sender_ready = bool(
+        platform_connection.get("enabled") and platform_connection.get("access_token")
+    )
 
     conversation = _get_or_create_conversation(company.id, sender, branch_id=branch.id)
     conversation_metadata = dict(conversation.metadata_json or {})
@@ -664,7 +663,7 @@ def _process_shared_tenant_campaign_reply(
 
     access = can_use_ai(company, "vendedor")
     branch_access = branch_vendor_access(company, branch)
-    if not is_ai_enabled(company) or not access.allowed or not branch_access.get("allowed"):
+    if not platform_sender_ready or not is_ai_enabled(company) or not access.allowed or not branch_access.get("allowed"):
         db.session.add(ConversationMessage(
             conversation_id=conversation.id,
             company_id=company.id,
@@ -681,6 +680,7 @@ def _process_shared_tenant_campaign_reply(
                 "message_type": message_type,
                 "context_message_id": context_message_id,
                 "ai_unavailable": True,
+                "delivery_blocked_reason": "platform_sender_not_ready" if not platform_sender_ready else "tenant_vendedor_unavailable",
             },
         ))
         db.session.commit()
