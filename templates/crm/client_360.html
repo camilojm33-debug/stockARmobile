@@ -4,15 +4,12 @@
 {% include 'crm/_nav.html' %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-person-vcard"></i> Cliente 360°</span><h1 class="h3 fw-bold mb-1">{{ client.name }}</h1><p class="text-muted mb-0">{{ client.whatsapp or client.phone or client.email or 'Sin datos de contacto' }}</p></div>
+    <div><span class="page-kicker"><i class="bi bi-person-vcard"></i> Cliente 360°</span><h1 class="h3 fw-bold mb-1">{{ client.name }}</h1><p class="text-muted mb-0">{{ client.whatsapp or client.phone or 'Sin WhatsApp registrado' }}</p></div>
     <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Nueva oportunidad</a><a class="btn btn-primary" href="{{ url_for('crm.activities', client_id=client.id) }}">Nuevo seguimiento</a></div>
   </div>
   <div class="card app-card mb-3"><div class="card-body d-flex flex-wrap gap-2 align-items-center">
     {% if client.whatsapp or client.phone %}
       <form method="post" target="_blank" action="{{ url_for('crm.client_contact', client_id=client.id, channel='whatsapp') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp Web + seguimiento</button></form>
-    {% endif %}
-    {% if client.email %}
-      <form method="post" action="{{ url_for('crm.client_contact', client_id=client.id, channel='email') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-envelope me-1"></i>Preparar email + seguimiento</button></form>
     {% endif %}
     <a class="btn btn-outline-secondary" href="{{ url_for('crm.clients') }}">Volver a clientes</a>
   </div></div>
@@ -35,12 +32,10 @@
     <div class="col-xl-5">
       <div class="card app-card mb-4"><div class="card-body">
         <h2 class="h6 fw-bold">Datos de contacto</h2>
-        <div class="small text-muted mb-1">Email</div><div class="mb-2">{{ client.email or '—' }}</div>
         <div class="small text-muted mb-1">WhatsApp</div><div class="mb-2">{{ client.whatsapp or client.phone or '—' }}</div>
         <div class="small text-muted mb-1">Dirección</div><div class="mb-2">{{ client.address or '—' }}</div>
         <div class="small text-muted mb-1">Ciudad / provincia</div><div class="mb-2">{{ client.city or '—' }}{% if client.province %}, {{ client.province }}{% endif %}</div>
-        <div class="small text-muted mb-1">Consentimiento email</div><div class="mb-2">{{ client.email_marketing_consent or 'unknown' }}</div>
-        <div class="small text-muted mb-1">Consentimiento WhatsApp</div><div>{{ client.whatsapp_marketing_consent or 'unknown' }}</div>
+        <div class="small text-muted mb-1">Canal comercial</div><div>WhatsApp</div>
       </div></div>
       <div class="card app-card mb-4"><div class="card-body"><div class="d-flex justify-content-between gap-2 align-items-center mb-3"><h2 class="h6 fw-bold mb-0">Oportunidades</h2><a class="small" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Crear</a></div>
         {% for item in opportunities %}

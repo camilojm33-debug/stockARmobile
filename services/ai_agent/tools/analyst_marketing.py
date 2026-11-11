@@ -221,7 +221,6 @@ class ClientesInactivosTool(AgentTool):
             items.append({
                 "id": client.id,
                 "name": client.name,
-                "email": client.email,
                 "phone": client.phone,
                 "last_purchase_at": last_purchase.isoformat() if last_purchase else None,
                 "days_since_last_purchase": (now - last_purchase).days if last_purchase else None,
@@ -321,12 +320,11 @@ class PrepararCampanaTool(AgentTool):
             "campaign_type": {"type": "string", "enum": ["promocion_producto", "recuperacion_clientes_inactivos", "productos_sin_ventas", "general"]},
             "product_query": {"type": "string"},
             "days": {"type": "integer", "minimum": 1, "maximum": 365},
-            "channel": {"type": "string", "enum": ["email", "whatsapp", "both"]},
         },
         "required": ["campaign_type"],
     }
 
-    def execute(self, *, campaign_type="general", product_query="", days=90, channel="email", **kwargs: Any) -> Dict[str, Any]:
+    def execute(self, *, campaign_type="general", product_query="", days=90, channel="whatsapp", **kwargs: Any) -> Dict[str, Any]:
         days = _days(days, 90)
         cutoff = datetime.utcnow() - timedelta(days=days)
         product = None
@@ -381,7 +379,7 @@ class PrepararCampanaTool(AgentTool):
                 "success": True,
                 "campaign_context": {
                     "campaign_type": campaign_type,
-                    "channel": channel if channel in {"email", "whatsapp", "both"} else "email",
+                    "channel": "whatsapp",
                     "audience_segment": audience_segment,
                     "audience_count": audience_count,
                     "products": [
@@ -416,7 +414,7 @@ class PrepararCampanaTool(AgentTool):
             "success": True,
             "campaign_context": {
                 "campaign_type": campaign_type,
-                "channel": channel if channel in {"email", "whatsapp", "both"} else "email",
+                "channel": "whatsapp",
                 "audience_segment": audience_segment,
                 "audience_count": audience_count,
                 "product": product_payload,

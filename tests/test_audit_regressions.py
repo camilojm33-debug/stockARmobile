@@ -117,9 +117,11 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
         client = Client(
             name="Cliente Campaña",
             email="delivery-qa-client@example.com",
+            phone="5491122334455",
+            whatsapp="5491122334455",
             company_id=company.id,
-            email_marketing_consent="opted_in",
-            whatsapp_marketing_consent="unknown",
+            email_marketing_consent="unknown",
+            whatsapp_marketing_consent="opted_in",
             active=True,
         )
         db.session.add_all([user, client])
@@ -149,13 +151,17 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
             target_status="APROBADA",
             user_id=user.id,
         )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+        )
         prepare_recipients(campaign.id, company_id=company.id)
         campaign.status = "EN_PREPARACION"
         db.session.commit()
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._send_email",
-            lambda recipient, campaign: (False, "smtp-failure", ""),
+            "services.ai_agent.tenant_campaign_service._send_whatsapp",
+            lambda recipient, campaign: (False, "HTTP 400 template-error", ""),
         )
 
         result = dispatch_due_campaigns(db.session, company_id=company.id, per_campaign=50)

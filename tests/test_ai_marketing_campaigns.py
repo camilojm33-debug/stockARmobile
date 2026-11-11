@@ -11,7 +11,7 @@ from services.ai_agent.tenant_campaign_service import (
 )
 
 
-def test_tenant_campaign_requires_channel_consent_and_isolated(app):
+def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch):
     from app import Campaign, Client, Company, User, db
 
     with app.app_context():
@@ -27,23 +27,29 @@ def test_tenant_campaign_requires_channel_consent_and_isolated(app):
         db.session.add_all([user_a, user_b])
         db.session.flush()
 
-        opted = Client(name="Optado", email="optado@example.com", company_id=company_a.id, email_marketing_consent="opted_in", whatsapp_marketing_consent="unknown", active=True)
-        blocked = Client(name="Bloqueado", email="blocked@example.com", company_id=company_a.id, email_marketing_consent="unknown", whatsapp_marketing_consent="unknown", active=True)
-        other = Client(name="Otra empresa", email="other@example.com", company_id=company_b.id, email_marketing_consent="opted_in", whatsapp_marketing_consent="unknown", active=True)
+        opted = Client(name="Optado", email="optado@example.com", whatsapp="5491122334455", company_id=company_a.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True)
+        blocked = Client(name="Bloqueado", email="blocked@example.com", company_id=company_a.id, email_marketing_consent="opted_in", whatsapp_marketing_consent="unknown", active=True)
+        other = Client(name="Otra empresa", email="other@example.com", whatsapp="5491133445566", company_id=company_b.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True)
         db.session.add_all([opted, blocked, other])
         db.session.flush()
 
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+        )
         campaign = CampaignService.create_draft(
             company_id=company_a.id, user_id=user_a.id, title="Recuperación", objective="Recuperar", campaign_type="general",
             content="Hola {{cliente}}", system_data={"channel": "email"}, audience_segment="clientes activos", audience_count=1,
         )
+        assert campaign.channel == "whatsapp"
+        assert '"channel": "whatsapp"' in campaign.system_data_json
         db.session.commit()
         CampaignService.transition(company_id=company_a.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user_a.id)
         CampaignService.transition(company_id=company_a.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user_a.id)
         prepare_recipients(campaign.id, company_id=company_a.id)
 
         rows = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
-        assert {(row.client_id, row.channel) for row in rows} == {(opted.id, "email")}
+        assert {(row.client_id, row.channel) for row in rows} == {(opted.id, "whatsapp")}
         assert TenantCampaignRecipient.query.filter_by(company_id=company_b.id).count() == 0
 
 
@@ -59,10 +65,14 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
         user.set_password("password123")
         db.session.add(user)
         db.session.flush()
-        client = Client(name="Cliente Venta", email="sale@example.com", company_id=company.id, email_marketing_consent="opted_in", whatsapp_marketing_consent="unknown", active=True)
+        client = Client(name="Cliente Venta", email="sale@example.com", whatsapp="5491122334455", company_id=company.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True)
         db.session.add(client)
         db.session.flush()
 
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+        )
         campaign = CampaignService.create_draft(
             company_id=company.id, user_id=user.id, title="Promo", objective="Venta", campaign_type="general",
             content="Hola {{cliente}}", system_data={"channel": "email"}, audience_segment="clientes activos", audience_count=1,
@@ -74,7 +84,7 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
         campaign.status = "EN_PREPARACION"
         db.session.commit()
 
-        monkeypatch.setattr("services.ai_agent.tenant_campaign_service._send_email", lambda recipient, campaign: (True, "sent", "smtp-test"))
+        monkeypatch.setattr("services.ai_agent.tenant_campaign_service._send_whatsapp", lambda recipient, campaign: (True, "sent", "wamid-test"))
         result = dispatch_due_campaigns(db.session, company_id=company.id, per_campaign=50)
         assert result["sent"] == 1
         db.session.expire_all()
@@ -169,7 +179,7 @@ def test_campaign_detail_has_cancel_button_for_queued_state():
     assert "Cancelar campaña" in template
 
 
-def test_inactive_audience_is_distinct_from_channel_eligible_targets(app):
+def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monkeypatch):
     from datetime import datetime, timedelta
     from app import Client, Company, Sale, User, db
     from services.ai_agent.tools.analyst_marketing import ClientesInactivosTool
@@ -210,6 +220,12 @@ def test_inactive_audience_is_distinct_from_channel_eligible_targets(app):
         detected = ClientesInactivosTool(company_id=company.id).execute(days=60, limit=20)
         assert detected["count"] == 1
         assert detected["items"][0]["name"] == "Roberto Mora"
+        assert "email" not in detected["items"][0]
+
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+        )
 
         campaign = CampaignService.create_draft(
             company_id=company.id,
@@ -304,14 +320,24 @@ def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
         client = Client(
             name="Cliente con permiso",
             email="consent@example.com",
+            phone="5491122334455",
+            whatsapp="5491122334455",
             company_id=company.id,
-            email_marketing_consent="opted_in",
-            whatsapp_marketing_consent="unknown",
+            email_marketing_consent="unknown",
+            whatsapp_marketing_consent="opted_in",
             active=True,
         )
         db.session.add_all([user, client])
         db.session.flush()
 
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._send_whatsapp",
+            lambda recipient, campaign: (True, "sent", "wamid-auto-test"),
+        )
         campaigns = []
         for title in ("Campaña que se envía", "Campaña que queda pendiente"):
             campaign = CampaignService.create_draft(
@@ -333,10 +359,6 @@ def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
             campaigns.append(campaign)
 
         db.session.commit()
-        monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._send_email",
-            lambda recipient, campaign: (True, "sent", "smtp-auto-test"),
-        )
         result = dispatch_due_campaigns(
             db.session,
             company_id=company.id,
@@ -659,3 +681,61 @@ def test_shared_campaign_reply_resolution_fails_closed_when_contact_has_multiple
             phone_number_id="stockarmobile-shared-phone",
             sender="5493624000000",
         ) is None
+
+
+
+def test_legacy_queued_tenant_email_recipient_is_skipped_never_sent(app, monkeypatch):
+    from app import Campaign, Client, Company, User, db
+
+    with app.app_context():
+        app.config["AI_MARKETING_SEND_ENABLED"] = True
+        company = Company(name="Legacy Email Block", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(username="legacy-email-admin", email="legacy-email@example.com", role="admin", active=True, company_id=company.id)
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+        client = Client(name="Legacy recipient", email="legacy@example.com", company_id=company.id, active=True)
+        db.session.add(client)
+        db.session.flush()
+        campaign = Campaign(
+            company_id=company.id,
+            title="Legacy email campaign",
+            objective="Old queued campaign",
+            campaign_type="general",
+            status="EN_PREPARACION",
+            content="No debe salir por correo",
+            system_data_json='{"channel":"email"}',
+            audience_segment="clientes activos",
+            audience_count=1,
+            channel="email",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.flush()
+        db.session.add(TenantCampaignRecipient(
+            campaign_id=campaign.id,
+            company_id=company.id,
+            client_id=client.id,
+            channel="email",
+            destination="legacy@example.com",
+            unsubscribe_token="legacy-token",
+            status="pending",
+        ))
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._send_whatsapp",
+            lambda *_args: (_ for _ in ()).throw(AssertionError("No WhatsApp row was expected")),
+        )
+        result = dispatch_due_campaigns(db.session, company_id=company.id, per_campaign=50)
+        db.session.refresh(campaign)
+        row = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id).one()
+
+        assert result["sent"] == 0
+        assert result["skipped"] == 1
+        assert row.status == "skipped"
+        assert "únicamente por WhatsApp" in row.error_reason
+        assert campaign.channel == "whatsapp"
+        assert campaign.status == "SIN_ENVIO"

@@ -39,7 +39,7 @@ def test_tenant_crm_requires_ia_pro_route_guards():
 
 def test_tenant_crm_menu_is_plan_gated():
     template = open("templates/base_master.html", encoding="utf-8").read()
-    assert "ai_feature_crm_allowed and (current_user.role == 'admin' or current_user_has_permission('crm'))" in template
+    assert "{% if ai_feature_crm_allowed %}" in template
     assert "overflow-y: auto;" in template
 
 
@@ -253,11 +253,17 @@ def test_prospect_capture_deduplicates_client_and_creates_first_followup(app):
 
     test_client = app.test_client()
     _login_crm_user(test_client, user)
+    missing_whatsapp = test_client.post(
+        "/crm/prospects/new",
+        data={"name": "Prospecto sin WhatsApp"},
+    )
+    assert missing_whatsapp.status_code == 400
+    assert Client.query.filter_by(company_id=company.id).count() == 0
+
     response = test_client.post(
         "/crm/prospects/new",
         data={
             "name": "Comercio Prospecto",
-            "email": "VENTAS@PROSPECTO.TEST",
             "phone": "+54 9 11 2233-4455",
             "whatsapp": "5491122334455",
             "opportunity_title": "Primera demostración",
@@ -272,7 +278,7 @@ def test_prospect_capture_deduplicates_client_and_creates_first_followup(app):
     prospect = Client.query.filter_by(company_id=company.id).one()
     first_opportunity = CRMOpportunity.query.filter_by(company_id=company.id).one()
     first_activity = CRMActivity.query.filter_by(company_id=company.id).one()
-    assert prospect.email == "ventas@prospecto.test"
+    assert not prospect.email
     assert first_opportunity.client_id == prospect.id
     assert first_opportunity.stage == "nuevo"
     assert first_opportunity.status == "open"
@@ -286,8 +292,9 @@ def test_prospect_capture_deduplicates_client_and_creates_first_followup(app):
         data={
             "name": "Nombre alternativo no debe sobrescribir al cliente existente",
             "email": "ventas@prospecto.test",
+            "whatsapp": "5491122334455",
             "opportunity_title": "Segunda necesidad",
-            "source": "Email",
+            "source": "WhatsApp",
             "value": "200000",
             "probability": "15",
         },
@@ -393,6 +400,10 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     assert activity.status == "pending"
     assert "no puede confirmar" in activity.description
 
+    rejected_email = test_client.post(f"/crm/clients/{client_record.id}/contact/email")
+    assert rejected_email.status_code == 400
+    assert CRMActivity.query.filter_by(company_id=company.id).count() == 1
+
 
 
 def test_lost_crm_opportunity_requires_reason_and_persists_it(app):
@@ -447,3 +458,28 @@ def test_lost_crm_opportunity_requires_reason_and_persists_it(app):
     assert opportunity.status == "closed"
     assert float(opportunity.probability) == 0
     assert opportunity.loss_reason == "Eligió otra solución"
+
+
+
+def test_tenant_crm_is_whatsapp_only_and_superadmin_crm_keeps_email():
+    from pathlib import Path
+    from crm import ACTIVITY_TYPES
+
+    assert all(value != "email" for value, _label in ACTIVITY_TYPES)
+    prospect_form = Path("templates/crm/prospect_form.html").read_text(encoding="utf-8")
+    client_360 = Path("templates/crm/client_360.html").read_text(encoding="utf-8")
+    campaigns = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
+    sidebar = Path("templates/base_master.html").read_text(encoding="utf-8")
+    tenant_delivery = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
+    superadmin_delivery = Path("services/saas_commercial_service.py").read_text(encoding="utf-8")
+
+    assert 'name="email"' not in prospect_form
+    crm_nav_gate = sidebar.split("{% if ai_feature_crm_allowed", 1)[1].split("%}", 1)[0]
+    assert "current_user.role" not in crm_nav_gate
+    assert "current_user_has_permission" not in crm_nav_gate
+    assert "mailto:" not in client_360
+    assert "channel='email'" not in client_360
+    assert 'name="channel"' not in campaigns
+    assert 'CHANNELS = {"whatsapp"}' in tenant_delivery
+    assert "def _send_email(" not in tenant_delivery
+    assert "def _send_email(" in superadmin_delivery

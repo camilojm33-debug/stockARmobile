@@ -3,7 +3,6 @@
 IMPORTANTE: no contiene ni reutiliza entidades del CRM de SuperAdmin.
 """
 from datetime import datetime, timedelta
-from urllib.parse import urlencode
 import re
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
@@ -29,7 +28,6 @@ STAGE_LABELS = dict(STAGES)
 ACTIVITY_TYPES = (
     ("llamada", "Llamada"),
     ("whatsapp", "WhatsApp"),
-    ("email", "Email"),
     ("reunion", "Reunión"),
     ("tarea", "Tarea"),
     ("nota", "Nota"),
@@ -280,23 +278,21 @@ def prospect_new():
 
     if request.method == "POST":
         name = (request.form.get("name") or "").strip()[:200]
-        email = (request.form.get("email") or "").strip().lower() or None
         phone = (request.form.get("phone") or "").strip() or None
         whatsapp = (request.form.get("whatsapp") or "").strip() or None
         if not name:
             flash("El nombre del prospecto es obligatorio.", "danger")
             return render_template("crm/prospect_form.html"), 400
-        if email and (len(email) > 120 or email.count("@") != 1):
-            flash("El email no tiene un formato válido o supera el máximo permitido.", "danger")
-            return render_template("crm/prospect_form.html"), 400
         if phone and (len(phone) > 20 or len(re.sub(r"\D+", "", phone)) < 6):
             flash("El teléfono debe contener al menos seis dígitos y no superar los 20 caracteres.", "danger")
             return render_template("crm/prospect_form.html"), 400
-        if whatsapp and (len(whatsapp) > 30 or len(re.sub(r"\D+", "", whatsapp)) < 6):
-            flash("El WhatsApp debe contener al menos seis dígitos y no superar los 30 caracteres.", "danger")
+        if not whatsapp or len(whatsapp) > 30 or len(re.sub(r"\D+", "", whatsapp)) < 6:
+            flash("Ingresá un número de WhatsApp válido para registrar y gestionar este prospecto.", "danger")
             return render_template("crm/prospect_form.html"), 400
-        if not any((email, phone, whatsapp)):
-            flash("Ingresá al menos un email, teléfono o WhatsApp para poder dar seguimiento.", "danger")
+        from services.whatsapp_share_service import normalize_whatsapp_number
+        whatsapp = normalize_whatsapp_number(whatsapp)
+        if not whatsapp or len(re.sub(r"\D+", "", whatsapp)) < 10:
+            flash("El número de WhatsApp no es válido para iniciar una conversación.", "danger")
             return render_template("crm/prospect_form.html"), 400
         try:
             value = round(float(request.form.get("value") or 0), 2)
@@ -318,23 +314,16 @@ def prospect_new():
         phone_digits_inputs = {phone_digits(value) for value in (phone, whatsapp) if value}
         candidate_query = scope_query_to_company(Client.query, Client)
         match_conditions = []
-        if email:
-            match_conditions.append(func.lower(Client.email) == email)
         for digits in phone_digits_inputs:
             if len(digits) >= 4:
                 tail = digits[-4:]
                 match_conditions.extend((Client.phone.ilike(f"%{tail}%"), Client.whatsapp.ilike(f"%{tail}%")))
-        if match_conditions:
-            candidates = candidate_query.filter(or_(*match_conditions)).limit(100).all()
-        else:
-            candidates = []
+        candidates = candidate_query.filter(or_(*match_conditions)).limit(100).all() if match_conditions else []
         exact_matches = {}
         for existing in candidates:
-            same_email = bool(email and (existing.email or "").strip().lower() == email)
             input_phones = {phone_digits(v) for v in (phone, whatsapp) if v}
             existing_phones = {phone_digits(v) for v in (existing.phone, existing.whatsapp) if v}
-            same_phone = bool(input_phones.intersection(existing_phones))
-            if same_email or same_phone:
+            if input_phones.intersection(existing_phones):
                 exact_matches[existing.id] = existing
         if len(exact_matches) > 1:
             flash("Los datos coinciden con más de un cliente. Revisá la ficha existente antes de crear otra oportunidad.", "danger")
@@ -347,7 +336,6 @@ def prospect_new():
             client = Client(
                 company_id=_company_id(),
                 name=name,
-                email=email,
                 phone=phone,
                 whatsapp=whatsapp,
                 address=(request.form.get("address") or "").strip() or None,
@@ -364,7 +352,6 @@ def prospect_new():
                 client.active = True
             # Enrichment fills blanks only; never silently overwrites existing contact data.
             for field, value_in in (
-                ("email", email),
                 ("phone", phone),
                 ("whatsapp", whatsapp),
                 ("address", (request.form.get("address") or "").strip() or None),
@@ -724,15 +711,6 @@ def client_contact(client_id, channel):
         destination = f"https://wa.me/{phone}"
         activity_type = "whatsapp"
         subject = f"Contactar por WhatsApp: {client.name}"
-    elif channel == "email":
-        email = str(client.email or "").strip()
-        if not email or "@" not in email:
-            flash("El cliente no tiene un email válido.", "warning")
-            return redirect(url_for("crm.client_360", client_id=client.id))
-        email_subject = urlencode({"subject": f"Seguimiento comercial - {client.name}"})
-        destination = f"mailto:{email}?{email_subject}"
-        activity_type = "email"
-        subject = f"Contactar por email: {client.name}"
     else:
         abort(400)
 
@@ -787,7 +765,7 @@ def client_360(client_id):
         timeline.append({
             "date": occurred_at,
             "title": item.subject,
-            "subtitle": f"{dict(ACTIVITY_TYPES).get(item.type, item.type)} · {'Completada' if item.status == 'completed' else 'Pendiente'}",
+            "subtitle": f"{dict(ACTIVITY_TYPES).get(item.type, 'Actividad histórica' if item.type == 'email' else item.type)} · {'Completada' if item.status == 'completed' else 'Pendiente'}",
             "description": item.description,
             "color": "primary",
             "url": url_for("crm.opportunity_detail", opportunity_id=item.opportunity_id) if item.opportunity_id else None,
@@ -838,6 +816,6 @@ def clients():
     query = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client)
     if search:
         like = f"%{search}%"
-        query = query.filter(or_(Client.name.ilike(like), Client.email.ilike(like), Client.phone.ilike(like), Client.whatsapp.ilike(like)))
+        query = query.filter(or_(Client.name.ilike(like), Client.phone.ilike(like), Client.whatsapp.ilike(like)))
     clients = query.order_by(Client.name).all()
     return render_template("crm/clients.html", clients=clients, search=search)
