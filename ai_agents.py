@@ -1335,9 +1335,10 @@ def campaign_edit(campaign_id):
     try:
         campaign = CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
         if campaign.status in {"BORRADOR", "PENDIENTE_APROBACION"}:
-            channel = str(request.form.get("channel") or campaign.channel or "email").strip().lower()
-            if channel in {"email", "whatsapp", "both"}:
-                campaign.channel = channel
+            campaign.channel = "whatsapp"
+            campaign_data = json.loads(campaign.system_data_json or "{}")
+            campaign_data["channel"] = "whatsapp"
+            campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
             raw_schedule = str(request.form.get("scheduled_at") or "").strip()
             if raw_schedule:
                 try:
@@ -1365,12 +1366,19 @@ def campaign_transition(campaign_id):
     try:
         if target_status.strip().upper() == "APROBADA" and not current_app.config.get("AI_MARKETING_SEND_ENABLED", False):
             raise ValueError("El worker de Marketing IA está deshabilitado; la campaña no puede aprobarse para envío.")
+        campaign = CampaignService._campaign(current_user.company_id, int(campaign_id))
+        if campaign is None:
+            raise ValueError("Campaña no encontrada para esta empresa.")
+        campaign.channel = "whatsapp"
+        campaign_data = json.loads(campaign.system_data_json or "{}")
+        campaign_data["channel"] = "whatsapp"
+        campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
         if target_status.upper() == "APROBADA":
             prepare_recipients(campaign.id, company_id=current_user.company_id)
             CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
             db.session.commit()
-            flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano desde el canal configurado para tu empresa, respetando los consentimientos.", "success")
+            flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano por WhatsApp desde el número oficial Vendedor 24/7 de StockARmobile, respetando el consentimiento.", "success")
         else:
             db.session.commit()
             flash("Estado de campaña actualizado.", "success")
