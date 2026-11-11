@@ -1337,7 +1337,12 @@ def campaign_edit(campaign_id):
         campaign = CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
         if campaign.status in {"BORRADOR", "PENDIENTE_APROBACION"}:
             campaign.channel = "whatsapp"
-            campaign_data = json.loads(campaign.system_data_json or "{}")
+            try:
+                campaign_data = json.loads(campaign.system_data_json or "{}")
+            except (TypeError, ValueError):
+                campaign_data = {}
+            if not isinstance(campaign_data, dict):
+                campaign_data = {}
             campaign_data["channel"] = "whatsapp"
             campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
             raw_schedule = str(request.form.get("scheduled_at") or "").strip()
@@ -1371,7 +1376,12 @@ def campaign_transition(campaign_id):
         if campaign is None:
             raise ValueError("Campaña no encontrada para esta empresa.")
         campaign.channel = "whatsapp"
-        campaign_data = json.loads(campaign.system_data_json or "{}")
+        try:
+            campaign_data = json.loads(campaign.system_data_json or "{}")
+        except (TypeError, ValueError):
+            campaign_data = {}
+        if not isinstance(campaign_data, dict):
+            campaign_data = {}
         campaign_data["channel"] = "whatsapp"
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
