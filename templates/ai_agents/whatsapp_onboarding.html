@@ -1,93 +1,5 @@
 {% extends "base_master.html" %}
-{% block title %}Conectar WhatsApp | Vendedor IA 24/7{% if connected %}
-<script>
-(function () {
-  const listUrl = {{ templates_url|tojson }};
-  const saveUrl = {{ template_save_url|tojson }};
-  const select = document.getElementById('wa-template-select');
-  const refresh = document.getElementById('wa-template-refresh');
-  const save = document.getElementById('wa-template-save');
-  const status = document.getElementById('wa-template-status');
-  if (!select || !refresh || !save || !status) return;
-  let templates = [];
-  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-
-  function setStatus(message, error) {
-    status.textContent = String(message || '');
-    status.style.color = error ? '#b91c1c' : '';
-  }
-
-  async function loadTemplates() {
-    refresh.disabled = true;
-    save.disabled = true;
-    select.disabled = true;
-    select.innerHTML = '<option value="">Consultando Meta...</option>';
-    setStatus('Sincronizando plantillas aprobadas...');
-    try {
-      const response = await fetch(listUrl, {credentials: 'same-origin'});
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos consultar las plantillas.');
-      templates = Array.isArray(data.templates) ? data.templates : [];
-      select.innerHTML = '';
-      if (!templates.length) {
-        select.innerHTML = '<option value="">No hay plantillas aprobadas</option>';
-        setStatus('Meta no devolvió plantillas aprobadas para este número.');
-        return;
-      }
-      templates.forEach(function (item) {
-        const option = document.createElement('option');
-        option.value = item.name + '|' + item.language;
-        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category;
-        select.appendChild(option);
-      });
-      const selected = data.selected || {};
-      const selectedValue = String(selected.name || '') + '|' + String(selected.language || '');
-      if (selected.name && templates.some(item => item.name + '|' + item.language === selectedValue)) {
-        select.value = selectedValue;
-      }
-      select.disabled = false;
-      save.disabled = false;
-      setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles.');
-    } catch (error) {
-      select.innerHTML = '<option value="">No se pudo sincronizar</option>';
-      setStatus(error.message || 'Error al consultar Meta.', true);
-    } finally {
-      refresh.disabled = false;
-    }
-  }
-
-  async function saveTemplate() {
-    const parts = String(select.value || '').split('|');
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
-      setStatus('Seleccioná una plantilla aprobada.', true);
-      return;
-    }
-    save.disabled = true;
-    setStatus('Verificando y guardando la selección...');
-    try {
-      const response = await fetch(saveUrl, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
-        body: JSON.stringify({name: parts[0], language: parts[1]})
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos guardar la plantilla.');
-      setStatus('Plantilla guardada y verificada con Meta.');
-    } catch (error) {
-      setStatus(error.message || 'Error al guardar la plantilla.', true);
-    } finally {
-      save.disabled = false;
-    }
-  }
-
-  refresh.addEventListener('click', loadTemplates);
-  save.addEventListener('click', saveTemplate);
-  loadTemplates();
-})();
-</script>
-{% endif %}
-{% endblock %}
+{% block title %}Conectar WhatsApp | Vendedor IA 24/7{% endblock %}
 {% block extra_css %}
 <style>
   .wa-onboard { max-width: 760px; margin: 0 auto; }
@@ -414,6 +326,94 @@
   });
 
   loadMetaSdk();
+})();
+</script>
+{% endif %}
+{% if connected %}
+<script>
+(function () {
+  const listUrl = {{ templates_url|tojson }};
+  const saveUrl = {{ template_save_url|tojson }};
+  const select = document.getElementById('wa-template-select');
+  const refresh = document.getElementById('wa-template-refresh');
+  const save = document.getElementById('wa-template-save');
+  const status = document.getElementById('wa-template-status');
+  if (!select || !refresh || !save || !status) return;
+  let templates = [];
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  function setStatus(message, error) {
+    status.textContent = String(message || '');
+    status.style.color = error ? '#b91c1c' : '';
+  }
+
+  async function loadTemplates() {
+    refresh.disabled = true;
+    save.disabled = true;
+    select.disabled = true;
+    select.innerHTML = '<option value="">Consultando Meta...</option>';
+    setStatus('Sincronizando plantillas aprobadas...');
+    try {
+      const response = await fetch(listUrl, {credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos consultar las plantillas.');
+      templates = Array.isArray(data.templates) ? data.templates : [];
+      select.innerHTML = '';
+      if (!templates.length) {
+        select.innerHTML = '<option value="">No hay plantillas aprobadas</option>';
+        setStatus('Meta no devolvió plantillas aprobadas para este número.');
+        return;
+      }
+      templates.forEach(function (item) {
+        const option = document.createElement('option');
+        option.value = item.name + '|' + item.language;
+        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category;
+        select.appendChild(option);
+      });
+      const selected = data.selected || {};
+      const selectedValue = String(selected.name || '') + '|' + String(selected.language || '');
+      if (selected.name && templates.some(item => item.name + '|' + item.language === selectedValue)) {
+        select.value = selectedValue;
+      }
+      select.disabled = false;
+      save.disabled = false;
+      setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles.');
+    } catch (error) {
+      select.innerHTML = '<option value="">No se pudo sincronizar</option>';
+      setStatus(error.message || 'Error al consultar Meta.', true);
+    } finally {
+      refresh.disabled = false;
+    }
+  }
+
+  async function saveTemplate() {
+    const parts = String(select.value || '').split('|');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      setStatus('Seleccioná una plantilla aprobada.', true);
+      return;
+    }
+    save.disabled = true;
+    setStatus('Verificando y guardando la selección...');
+    try {
+      const response = await fetch(saveUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+        body: JSON.stringify({name: parts[0], language: parts[1]})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos guardar la plantilla.');
+      setStatus('Plantilla guardada y verificada con Meta.');
+    } catch (error) {
+      setStatus(error.message || 'Error al guardar la plantilla.', true);
+    } finally {
+      save.disabled = false;
+    }
+  }
+
+  refresh.addEventListener('click', loadTemplates);
+  save.addEventListener('click', saveTemplate);
+  loadTemplates();
 })();
 </script>
 {% endif %}
