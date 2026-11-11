@@ -352,16 +352,20 @@ def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
         assert TenantCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id, status="pending").count() == 1
 
 
-def test_in_process_campaign_worker_is_wired_into_wsgi_startup():
+def test_in_process_campaign_workers_start_only_in_gunicorn_worker():
     from pathlib import Path
 
     service = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
     wsgi = Path("wsgi.py").read_text(encoding="utf-8")
+    gunicorn = Path("gunicorn.conf.py").read_text(encoding="utf-8")
 
     assert "def start_campaign_dispatch_worker" in service
     assert "dispatch_due_campaigns(" in service
     assert "Campaign.status == \"EN_PREPARACION\"" in service
-    assert "start_campaign_dispatch_worker(app)" in wsgi
+    assert "start_campaign_dispatch_worker(flask_app)" in gunicorn
+    assert "start_crm_campaign_dispatch_worker(flask_app)" in gunicorn
+    assert "start_campaign_dispatch_worker(app)" not in wsgi
+    assert "start_crm_campaign_dispatch_worker(app)" not in wsgi
 
 
 

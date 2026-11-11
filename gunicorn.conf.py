@@ -14,6 +14,9 @@ timeout = int(os.getenv("GUNICORN_TIMEOUT", "120"))
 workers = int(os.getenv("WEB_CONCURRENCY", "1"))
 threads = int(os.getenv("GUNICORN_THREADS", "2"))
 worker_class = os.getenv("GUNICORN_WORKER_CLASS", "gthread")
+# Bind the public Render port on all interfaces. The CLI start command also
+# passes --bind explicitly as a second, visible source of truth.
+bind = "0.0.0.0:" + os.getenv("PORT", "10000")
 
 logger = logging.getLogger("stockarmobile.ai_followups")
 _LOCK_KEY = 918273645
@@ -95,13 +98,22 @@ def _worker(flask_app) -> None:
 
 
 def post_worker_init(worker) -> None:
-    """Start the proactive follow-up scheduler once in each Gunicorn worker."""
-    if not _enabled():
-        return
-
+    """Start background dispatchers only after the Gunicorn worker is initialized."""
     from wsgi import application as flask_app
 
     if flask_app.config.get("TESTING") or flask_app.config.get("IS_PYTEST_CONTEXT"):
+        return
+
+    # Importing wsgi.py is also part of Flask's migration CLI startup. Starting
+    # workers there created unnecessary threads in the short-lived migration
+    # process and duplicated initialization. Keep all dispatchers in this hook.
+    from services.ai_agent.tenant_campaign_service import start_campaign_dispatch_worker
+    from services.saas_commercial_service import start_crm_campaign_dispatch_worker
+
+    start_campaign_dispatch_worker(flask_app)
+    start_crm_campaign_dispatch_worker(flask_app)
+
+    if not _enabled():
         return
 
     thread = threading.Thread(

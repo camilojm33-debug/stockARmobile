@@ -350,10 +350,6 @@ def products_pricing_shortcut():
 
 
 
-from services.ai_agent.tenant_campaign_service import start_campaign_dispatch_worker
-from services.saas_commercial_service import start_crm_campaign_dispatch_worker
-
-start_campaign_dispatch_worker(app)
-start_crm_campaign_dispatch_worker(app)
-
+# Keep module import side-effect free: Render imports Flask here for migrations,
+# and campaign workers must only start inside a serving Gunicorn worker.
 application = app
