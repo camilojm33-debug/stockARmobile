@@ -253,6 +253,13 @@ def test_prospect_capture_deduplicates_client_and_creates_first_followup(app):
 
     test_client = app.test_client()
     _login_crm_user(test_client, user)
+    missing_whatsapp = test_client.post(
+        "/crm/prospects/new",
+        data={"name": "Prospecto sin WhatsApp"},
+    )
+    assert missing_whatsapp.status_code == 400
+    assert Client.query.filter_by(company_id=company.id).count() == 0
+
     response = test_client.post(
         "/crm/prospects/new",
         data={
