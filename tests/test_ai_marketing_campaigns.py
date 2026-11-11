@@ -543,3 +543,110 @@ def test_tenant_crm_whatsapp_campaigns_use_shared_stockarmobile_vendedor_number(
         # Campaign and recipient data remain scoped to the originating tenant.
         assert Campaign.query.filter_by(id=campaign.id, company_id=tenant.id).count() == 1
         assert TenantCampaignRecipient.query.filter_by(company_id=tenant.id).count() == 1
+
+
+
+def test_shared_campaign_reply_resolution_fails_closed_when_contact_has_multiple_tenants(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Campaign, Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import resolve_shared_campaign_reply
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        tenant_a = Company(name="Comercio A", active=True)
+        tenant_b = Company(name="Comercio B", active=True)
+        db.session.add_all([platform, tenant_a, tenant_b])
+        db.session.flush()
+
+        users = []
+        clients = []
+        campaigns = []
+        for index, company in enumerate((tenant_a, tenant_b), start=1):
+            user = User(
+                username=f"shared-reply-{index}",
+                email=f"shared-reply-{index}@example.com",
+                role="admin",
+                active=True,
+                company_id=company.id,
+            )
+            user.set_password("password123")
+            client = Client(
+                name=f"Cliente {index}",
+                phone="5493624000000",
+                whatsapp="5493624000000",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="opted_in",
+            )
+            db.session.add_all([user, client])
+            db.session.flush()
+            campaign = CampaignService.create_draft(
+                company_id=company.id,
+                user_id=user.id,
+                title=f"Campaña {index}",
+                objective="Avisar una novedad",
+                campaign_type="general",
+                content="Hola {{cliente}}",
+                system_data={"channel": "whatsapp"},
+                audience_segment="clientes activos",
+                audience_count=1,
+            )
+            db.session.flush()
+            users.append(user)
+            clients.append(client)
+            campaigns.append(campaign)
+
+        first = TenantCampaignRecipient(
+            campaign_id=campaigns[0].id,
+            company_id=tenant_a.id,
+            client_id=clients[0].id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="reply-test-a",
+            status="sent",
+            provider_message_id="wamid.tenant-a",
+            sent_at=datetime.utcnow() - timedelta(minutes=5),
+        )
+        second = TenantCampaignRecipient(
+            campaign_id=campaigns[1].id,
+            company_id=tenant_b.id,
+            client_id=clients[1].id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="reply-test-b",
+            status="sent",
+            provider_message_id="wamid.tenant-b",
+            sent_at=datetime.utcnow() - timedelta(minutes=2),
+        )
+        db.session.add_all([first, second])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda company: {
+                "enabled": True,
+                "phone_number_id": "stockarmobile-shared-phone",
+                "access_token": "test-only",
+            } if company.id == platform.id else {},
+        )
+
+        # A quoted provider message ID uniquely identifies the originating tenant.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="stockarmobile-shared-phone",
+            sender="5493624000000",
+            context_message_id="wamid.tenant-a",
+        ).id == first.id
+
+        # Without a quoted message, a customer reached by two tenants is ambiguous.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="stockarmobile-shared-phone",
+            sender="5493624000000",
+        ) is None
