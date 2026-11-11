@@ -765,7 +765,7 @@ def client_360(client_id):
         timeline.append({
             "date": occurred_at,
             "title": item.subject,
-            "subtitle": f"{dict(ACTIVITY_TYPES).get(item.type, "Actividad histórica" if item.type == "email" else item.type)} · {'Completada' if item.status == 'completed' else 'Pendiente'}",
+            "subtitle": f"{dict(ACTIVITY_TYPES).get(item.type, 'Actividad histórica' if item.type == 'email' else item.type)} · {'Completada' if item.status == 'completed' else 'Pendiente'}",
             "description": item.description,
             "color": "primary",
             "url": url_for("crm.opportunity_detail", opportunity_id=item.opportunity_id) if item.opportunity_id else None,
