@@ -1066,7 +1066,7 @@ def test_tenant_campaign_sender_uses_merchant_vendedor_connection_not_platform(a
 
 
 def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app, monkeypatch):
-    from app import Client, Company, User, db
+    from app import Branch, Client, Company, User, db
     from services.ai_agent.campaign_service import CampaignService
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignRecipient,
@@ -1077,6 +1077,10 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
         company_a = Company(name="Reply merchant A", active=True)
         company_b = Company(name="Reply merchant B", active=True)
         db.session.add_all([company_a, company_b])
+        db.session.flush()
+        branch_a = Branch(company_id=company_a.id, name="Casa A", code="A", active=True, is_default=True)
+        branch_b = Branch(company_id=company_b.id, name="Casa B", code="B", active=True, is_default=True)
+        db.session.add_all([branch_a, branch_b])
         db.session.flush()
         user_a = User(username="reply-merchant-a", email="reply-a@example.com", role="admin", active=True, company_id=company_a.id)
         user_b = User(username="reply-merchant-b", email="reply-b@example.com", role="admin", active=True, company_id=company_b.id)
@@ -1089,12 +1093,12 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
 
         campaign_a = CampaignService.create_draft(
             company_id=company_a.id, user_id=user_a.id, title="A", objective="A",
-            campaign_type="general", content="Hola", system_data={},
+            campaign_type="general", content="Hola", system_data={"branch_id": branch_a.id},
             audience_segment="clientes activos", audience_count=1,
         )
         campaign_b = CampaignService.create_draft(
             company_id=company_b.id, user_id=user_b.id, title="B", objective="B",
-            campaign_type="general", content="Hola", system_data={},
+            campaign_type="general", content="Hola", system_data={"branch_id": branch_b.id},
             audience_segment="clientes activos", audience_count=1,
         )
         recipient_a = TenantCampaignRecipient(
@@ -1112,7 +1116,7 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
 
         monkeypatch.setattr(
             "services.ai_agent.config_service.company_branch_for_whatsapp_phone_id",
-            lambda phone_id: (company_a, None) if phone_id == "phone-a" else (company_b, None),
+            lambda phone_id: (company_a, branch_a) if phone_id == "phone-a" else (company_b, branch_b),
         )
         assert resolve_tenant_campaign_reply(
             phone_number_id="phone-a",
