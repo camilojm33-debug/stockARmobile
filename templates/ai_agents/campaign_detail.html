@@ -33,7 +33,7 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="form-label fw-semibold">Título</label><input class="form-control mb-3" name="title" maxlength="180" value="{{ campaign.title }}" required>
           <label class="form-label fw-semibold">Objetivo</label><input class="form-control mb-3" name="objective" maxlength="120" value="{{ campaign.objective }}" required>
-          <label class="form-label fw-semibold">Canal</label><div class="form-control mb-3 bg-light"><i class="bi bi-whatsapp text-success me-2"></i>Tu WhatsApp · Vendedor IA 24/7</div>
+          <label class="form-label fw-semibold">Canal</label><div class="form-control mb-3 bg-light"><i class="bi bi-whatsapp text-success me-2"></i>Tu WhatsApp · Vendedor IA 24/7{% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
           <label class="form-label fw-semibold">Programación local opcional</label><input class="form-control mb-1" type="datetime-local" name="scheduled_at" id="campaignScheduledLocal" value="{{ campaign_schedule_local }}">
           <input type="hidden" name="scheduled_at_utc" id="campaignScheduledUtc">          <div class="form-text mb-3">Zona horaria: {{ company.timezone if company and company.timezone else 'America/Argentina/Buenos_Aires' }}.</div>
           <label class="form-label fw-semibold">Mensaje editable</label><textarea class="form-control" name="content" rows="8" maxlength="900" required>{{ campaign.content }}</textarea>
