@@ -1457,6 +1457,17 @@ def campaign_wizard():
     except ValueError as exc:
         template_error = str(exc)
 
+    campaign_sender_phone = str(connection.get("display_phone_number") or "").strip()
+    template_admin_url = (
+        url_for("saas.whatsapp_commercial_settings")
+        if getattr(current_user, "role", None) == "superadmin"
+        else None
+    )
+    if sender_company is None:
+        template_error = template_error or (
+            "No está inicializada la empresa interna de WhatsApp Comercial de StockARmobile."
+        )
+
     products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
     if request.method == "POST":
         if template is None:
@@ -1469,6 +1480,9 @@ def campaign_wizard():
                 opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
                 audience_count=0,
                 schedule_local="",
+                campaign_sender_phone=campaign_sender_phone,
+                template_admin_url=template_admin_url,
+                template_auto_selected=False,
                 **_context(),
             ), 409
         title = str(request.form.get("title") or "").strip()
@@ -1550,6 +1564,9 @@ def campaign_wizard():
         "ai_agents/campaign_wizard.html",
         template=template,
         template_error=template_error,
+        campaign_sender_phone=campaign_sender_phone,
+        template_admin_url=template_admin_url,
+        template_auto_selected=bool(template and template.get("auto_selected")),
         products=products,
         opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
         audience_count=audience_count,
