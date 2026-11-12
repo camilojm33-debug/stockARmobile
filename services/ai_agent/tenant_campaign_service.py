@@ -412,7 +412,7 @@ def _fetch_campaign_template(
     selected_language: str | None = None,
     allow_single_auto_select: bool = True,
 ) -> dict:
-    """Resolve the approved campaign template from the shared StockARmobile WABA."""
+    """Resolve the approved campaign template from this merchant's connected WABA."""
     from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
 
     return get_campaign_template(
