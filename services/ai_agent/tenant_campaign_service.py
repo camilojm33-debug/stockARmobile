@@ -127,8 +127,8 @@ def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_
     from services.saas_commercial_whatsapp import get_commercial_company
     from services.whatsapp_share_service import normalize_whatsapp_number
 
-    company, _branch = company_branch_for_whatsapp_phone_id(phone_number_id)
-    if company is None:
+    company, branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+    if company is None or branch is None:
         return None
     platform_company = get_commercial_company()
     if platform_company is not None and int(platform_company.id) == int(company.id):
@@ -137,6 +137,16 @@ def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_
     normalized_sender = normalize_whatsapp_number(sender)
     if not normalized_sender:
         return None
+
+    def _same_branch(recipient) -> bool:
+        campaign = recipient.campaign
+        saved_branch_id = _campaign_branch_id(campaign) if campaign is not None else None
+        if saved_branch_id is not None:
+            return int(saved_branch_id) == int(branch.id)
+        # Older campaign drafts predate branch_id in system_data_json. They
+        # belong to the default branch only, never to another branch's sender.
+        return bool(branch.is_default)
+
     query = TenantCampaignRecipient.query.filter(
         TenantCampaignRecipient.company_id == int(company.id),
         TenantCampaignRecipient.channel == "whatsapp",
@@ -148,16 +158,17 @@ def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_
         matches = query.filter(
             TenantCampaignRecipient.provider_message_id == referenced_id
         ).limit(2).all()
-        return matches[0] if len(matches) == 1 else None
+        return matches[0] if len(matches) == 1 and _same_branch(matches[0]) else None
 
     cutoff = _now() - timedelta(days=30)
-    return query.filter(
+    candidates = query.filter(
         TenantCampaignRecipient.sent_at.isnot(None),
         TenantCampaignRecipient.sent_at >= cutoff,
     ).order_by(
         TenantCampaignRecipient.sent_at.desc(),
         TenantCampaignRecipient.id.desc(),
-    ).first()
+    ).limit(100).all()
+    return next((row for row in candidates if _same_branch(row)), None)
 
 
 def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
