@@ -977,8 +977,8 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
                 object(),
                 {
                     "enabled": True,
-                    "phone_number_id": "platform-phone",
-                    "access_token": "platform-token",
+                    "phone_number_id": "merchant-phone",
+                    "access_token": "merchant-token",
                     "template_name": "",
                     "template_language": "es_AR",
                 },
@@ -1080,7 +1080,8 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
         db.session.flush()
         branch_a = Branch(company_id=company_a.id, name="Casa A", code="A", active=True, is_default=True)
         branch_b = Branch(company_id=company_b.id, name="Casa B", code="B", active=True, is_default=True)
-        db.session.add_all([branch_a, branch_b])
+        branch_a_secondary = Branch(company_id=company_a.id, name="Sucursal A", code="A2", active=True, is_default=False)
+        db.session.add_all([branch_a, branch_b, branch_a_secondary])
         db.session.flush()
         user_a = User(username="reply-merchant-a", email="reply-a@example.com", role="admin", active=True, company_id=company_a.id)
         user_b = User(username="reply-merchant-b", email="reply-b@example.com", role="admin", active=True, company_id=company_b.id)
@@ -1101,6 +1102,11 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
             campaign_type="general", content="Hola", system_data={"branch_id": branch_b.id},
             audience_segment="clientes activos", audience_count=1,
         )
+        campaign_a_secondary = CampaignService.create_draft(
+            company_id=company_a.id, user_id=user_a.id, title="A2", objective="A2",
+            campaign_type="general", content="Hola", system_data={"branch_id": branch_a_secondary.id},
+            audience_segment="clientes activos", audience_count=1,
+        )
         recipient_a = TenantCampaignRecipient(
             campaign_id=campaign_a.id, company_id=company_a.id, client_id=client_a.id,
             channel="whatsapp", destination="5493624000000", unsubscribe_token="reply-a",
@@ -1111,12 +1117,21 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
             channel="whatsapp", destination="5493624000000", unsubscribe_token="reply-b",
             status="sent", provider_message_id="wamid.merchant-b",
         )
-        db.session.add_all([recipient_a, recipient_b])
+        recipient_a_secondary = TenantCampaignRecipient(
+            campaign_id=campaign_a_secondary.id, company_id=company_a.id, client_id=client_a.id,
+            channel="whatsapp", destination="5493624000000", unsubscribe_token="reply-a2",
+            status="sent", provider_message_id="wamid.merchant-a-secondary",
+        )
+        db.session.add_all([recipient_a, recipient_b, recipient_a_secondary])
         db.session.commit()
 
         monkeypatch.setattr(
             "services.ai_agent.config_service.company_branch_for_whatsapp_phone_id",
-            lambda phone_id: (company_a, branch_a) if phone_id == "phone-a" else (company_b, branch_b),
+            lambda phone_id: (
+                (company_a, branch_a) if phone_id == "phone-a"
+                else (company_a, branch_a_secondary) if phone_id == "phone-a-secondary"
+                else (company_b, branch_b)
+            ),
         )
         assert resolve_tenant_campaign_reply(
             phone_number_id="phone-a",
@@ -1133,6 +1148,13 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
             sender="5493624000000",
             context_message_id="wamid.merchant-b",
         ).id == recipient_b.id
+        # A reply on one merchant branch must not attach to another branch's
+        # campaign even when both branches sent to the same mobile number.
+        assert resolve_tenant_campaign_reply(
+            phone_number_id="phone-a",
+            sender="5493624000000",
+            context_message_id="wamid.merchant-a-secondary",
+        ) is None
 
 
 def test_tenant_campaign_send_uses_merchant_company_in_meta_request(app, monkeypatch):
