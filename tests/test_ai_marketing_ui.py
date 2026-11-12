@@ -13,3 +13,14 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
     assert "Envío automático tras aprobar" in template
     assert "sin depender de un cron" in template
     assert "campaign_detail" in template
+
+
+def test_campaign_wizard_explains_shared_whatsapp_readiness_before_showing_steps():
+    template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
+
+    assert "Canal oficial listo" in template
+    assert "WhatsApp compartido de StockARmobile" in template
+    assert "Marketing IA todavía no está listo" in template
+    assert "Asistente de campañas pausado" in template
+    assert "template_admin_url" in template
+    assert "{% if template %}" in template
