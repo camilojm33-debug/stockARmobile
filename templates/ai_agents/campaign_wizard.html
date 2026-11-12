@@ -23,26 +23,26 @@
     <div class="alert alert-success campaign-readiness" role="status">
       <div class="d-flex flex-wrap justify-content-between gap-3">
         <div>
-          <div class="readiness-label mb-1">Canal oficial listo</div>
-          <div class="fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp compartido de StockARmobile{% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
+          <div class="readiness-label mb-1">Canal del comercio listo</div>
+          <div class="fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp propio del comercio (Vendedor IA 24/7){% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
           <div class="small mt-1">Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }} · {{ template.category }}</div>
         </div>
         <span class="badge text-bg-success align-self-start"><i class="bi bi-check-circle me-1"></i>Listo para crear borrador</span>
       </div>
       {% if template_auto_selected %}
-        <div class="small mt-2">Detectamos una única plantilla compatible y la seleccionamos automáticamente. Un SuperAdmin puede guardarla como predeterminada desde WhatsApp Comercial para mantener una configuración explícita.</div>
+        <div class="small mt-2">Detectamos una única plantilla compatible y la seleccionamos automáticamente. La plantilla pertenece a la cuenta de WhatsApp conectada por este comercio.</div>
       {% endif %}
     </div>
   {% else %}
     <div class="alert alert-danger campaign-readiness" role="alert">
       <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Marketing IA todavía no está listo para enviar por WhatsApp</div>
-      <p class="mb-2">{{ template_error or "No se pudo validar el número oficial y su plantilla aprobada." }}</p>
-      {% if campaign_sender_phone %}<div class="small mb-2">Número emisor compartido detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
-      <div class="small">Las campañas de todos los comercios salen desde el número oficial de StockARmobile; no necesitás conectar un WhatsApp personal ni el número de tu comercio.</div>
+      <p class="mb-2">{{ template_error or "No se pudo validar el WhatsApp propio del comercio y su plantilla aprobada." }}</p>
+      {% if campaign_sender_phone %}<div class="small mb-2">Número emisor del comercio detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
+      <div class="small">Esta campaña saldrá desde el número de WhatsApp que este comercio tiene conectado en su propio Vendedor IA 24/7. Nunca se utilizará el número de StockARmobile ni el de otro comercio.</div>
       {% if template_admin_url %}
-        <a class="btn btn-sm btn-outline-danger mt-3" href="{{ template_admin_url }}"><i class="bi bi-gear me-1"></i>Configurar WhatsApp Comercial</a>
+        <a class="btn btn-sm btn-outline-danger mt-3" href="{{ template_admin_url }}"><i class="bi bi-gear me-1"></i>Configurar mi Vendedor IA</a>
       {% else %}
-        <div class="small mt-3"><strong>Próximo paso:</strong> el administrador de StockARmobile debe revisar la conexión, sincronizar las plantillas de Meta y seleccionar una plantilla aprobada compatible.</div>
+        <div class="small mt-3"><strong>Próximo paso:</strong> el administrador de este comercio debe conectar su propio WhatsApp en Agentes IA → Vendedor IA y disponer de una plantilla MARKETING aprobada en su propia cuenta de Meta.</div>
       {% endif %}
     </div>
   {% endif %}
@@ -107,7 +107,7 @@
       <div class="card-body p-4 text-center">
         <div class="mb-2 text-danger"><i class="bi bi-shield-lock fs-2"></i></div>
         <h2 class="h5 fw-bold">Asistente de campañas pausado</h2>
-        <p class="text-muted mb-0">Podés crear campañas cuando el número oficial y una plantilla MARKETING aprobada estén validados. No se enviará ningún mensaje mientras este control esté pendiente.</p>
+        <p class="text-muted mb-0">Podés crear campañas cuando el WhatsApp propio del comercio, conectado al Vendedor IA 24/7, y una plantilla MARKETING aprobada de su cuenta de Meta estén validados. No se enviará ningún mensaje mientras este control esté pendiente.</p>
       </div>
     </div>
   {% endif %}

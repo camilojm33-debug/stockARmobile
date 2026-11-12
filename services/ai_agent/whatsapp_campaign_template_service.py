@@ -1,4 +1,4 @@
-"""Validation and discovery for the shared StockARmobile WhatsApp campaign template."""
+"""Validation and discovery for a connected WhatsApp account's campaign template."""
 
 from __future__ import annotations
 
@@ -94,9 +94,9 @@ def list_approved_campaign_templates(connection: dict) -> list[dict]:
     waba_id = str(connection.get("business_account_id") or "").strip()
     access_token = str(connection.get("access_token") or "").strip()
     if not waba_id:
-        raise ValueError("Falta el WABA ID del número comercial de StockARmobile.")
+        raise ValueError("Falta el WABA ID de la cuenta de WhatsApp conectada.")
     if not access_token:
-        raise ValueError("Falta el token de acceso de Meta para el número comercial. Volvé a autorizar WhatsApp.")
+        raise ValueError("Falta el token de acceso de Meta para esta cuenta de WhatsApp. Volvé a autorizar la conexión.")
 
     version = (
         os.getenv("META_GRAPH_API_VERSION")
@@ -175,13 +175,13 @@ def get_campaign_template(
 ) -> dict:
     """Resolve the configured template, or safely use one unique compatible template."""
     if not connection.get("enabled"):
-        raise ValueError("El número oficial de WhatsApp de StockARmobile está deshabilitado.")
+        raise ValueError("El WhatsApp conectado a este comercio está deshabilitado.")
     if not str(connection.get("phone_number_id") or "").strip():
-        raise ValueError("Falta el Phone Number ID del número oficial de StockARmobile.")
+        raise ValueError("Falta el Phone Number ID del WhatsApp conectado a este comercio.")
     if not str(connection.get("business_account_id") or "").strip():
-        raise ValueError("Falta el WABA ID del número oficial de StockARmobile.")
+        raise ValueError("Falta el WABA ID del WhatsApp conectado a este comercio.")
     if not str(connection.get("access_token") or "").strip():
-        raise ValueError("Falta el token de acceso de Meta del número oficial. Un SuperAdmin debe renovar la conexión.")
+        raise ValueError("Falta el token de acceso de Meta. Volvé a conectar tu WhatsApp desde Vendedor IA.")
 
     name = str(selected_name or connection.get("template_name") or "").strip()
     language = str(selected_language or connection.get("template_language") or "es_AR").strip() or "es_AR"
@@ -197,8 +197,8 @@ def get_campaign_template(
         )
         if selected is None:
             raise ValueError(
-                f"La plantilla configurada «{name}» ({language}) no figura aprobada en la WABA comercial. "
-                "Sincronizá las plantillas desde SuperAdmin → WhatsApp Comercial y seleccioná otra aprobada."
+                f"La plantilla configurada «{name}» ({language}) no figura aprobada en la WABA conectada. "
+                "Sincronizá las plantillas desde Agentes IA → Vendedor IA y seleccioná otra aprobada."
             )
         if not selected["campaign_compatible"]:
             raise ValueError(
@@ -218,12 +218,12 @@ def get_campaign_template(
         )
         detail = f" Motivo: {rejected}" if rejected else ""
         raise ValueError(
-            "No hay una plantilla aprobada compatible en la WABA del número oficial de StockARmobile. "
-            "Un SuperAdmin debe aprobar una plantilla MARKETING con {{1}} cliente, {{2}} producto "
-            "y {{3}} mensaje editable desde Meta." + detail
+            "No hay una plantilla aprobada compatible en la WABA de este WhatsApp. "
+            "El administrador del comercio debe aprobar una plantilla MARKETING con {{1}} cliente, {{2}} producto "
+            "y {{3}} mensaje editable desde su cuenta de Meta." + detail
         )
 
     raise ValueError(
         f"Hay {len(compatible)} plantillas aprobadas compatibles y todavía no se eligió una predeterminada. "
-        "Un SuperAdmin debe seleccionarla en SuperAdmin → WhatsApp Comercial → Plantillas aprobadas."
+        "Seleccioná una de ellas en Agentes IA → Vendedor IA → Plantillas aprobadas del WhatsApp conectado."
     )

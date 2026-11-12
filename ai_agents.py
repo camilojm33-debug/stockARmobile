@@ -1324,7 +1324,16 @@ def campaign_detail(campaign_id):
         or campaign.audience_count
         or 0
     )
-    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        _campaign_branch_id,
+        _tenant_campaign_whatsapp,
+    )
+    _sender_company, sender_connection = _tenant_campaign_whatsapp(
+        current_user.company_id,
+        branch_id=_campaign_branch_id(campaign),
+    )
+    campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
     ).order_by(TenantCampaignRecipient.id.asc()).limit(100).all()
@@ -1337,6 +1346,7 @@ def campaign_detail(campaign_id):
         campaign_template_preview=template_preview,
         campaign_recipients=recipient_rows,
         campaign_schedule_local=_campaign_schedule_local(campaign),
+        campaign_sender_phone=campaign_sender_phone,
         ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
         **_context(),
     )
@@ -1429,12 +1439,13 @@ def _campaign_audience_preview(company_id, audience, *, client_segment="", days=
 @company_admin_required
 def campaign_wizard():
     from app import Product, db
+    from stockarmobile.branch_context import get_active_branch_id
     from services.ai_agent.campaign_service import CampaignService
     from services.ai_agent.tenant_campaign_service import (
         CAMPAIGN_OPT_OUT_TEXT,
         _fetch_campaign_template,
         _render_content,
-        _shared_campaign_whatsapp,
+        _tenant_campaign_whatsapp,
     )
 
     entitlement = can_use_ai_feature(_current_active_company(), "marketing")
@@ -1444,26 +1455,25 @@ def campaign_wizard():
 
     template = None
     template_error = None
-    sender_company, connection = _shared_campaign_whatsapp()
+    campaign_branch_id = get_active_branch_id()
+    sender_company, connection = _tenant_campaign_whatsapp(
+        current_user.company_id,
+        branch_id=campaign_branch_id,
+    )
     try:
         if sender_company is None:
+            raise ValueError("No se encontró el comercio propietario de esta campaña.")
+        if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
             raise ValueError(
-                "No está inicializada la empresa interna de WhatsApp Comercial de StockARmobile."
+                "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado o habilitado. "
+                "Conectá el número propio del comercio desde Agentes IA → Vendedor IA."
             )
         template = _fetch_campaign_template(connection)
     except ValueError as exc:
         template_error = str(exc)
 
     campaign_sender_phone = str(connection.get("display_phone_number") or "").strip()
-    template_admin_url = (
-        url_for("saas.whatsapp_commercial_settings")
-        if getattr(current_user, "role", None) == "superadmin"
-        else None
-    )
-    if sender_company is None:
-        template_error = template_error or (
-            "No está inicializada la empresa interna de WhatsApp Comercial de StockARmobile."
-        )
+    template_admin_url = url_for("ai_agents.agent", agent="vendedor")
 
     products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
     if request.method == "POST":
@@ -1533,6 +1543,7 @@ def campaign_wizard():
                     "channel": "whatsapp",
                     "client_segment": client_segment if audience_choice == "notes" else "",
                     "days": days,
+                    "branch_id": campaign_branch_id,
                     "scheduled_at": scheduled_at.isoformat() + "Z" if scheduled_at else "",
                     "whatsapp_template": template,
                 },

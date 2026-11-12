@@ -155,8 +155,8 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
             user_id=user.id,
         )
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
+            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
         )
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
