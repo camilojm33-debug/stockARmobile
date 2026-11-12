@@ -60,7 +60,7 @@ def test_campaign_template_auto_selects_only_one_compatible_approved_template(mo
     assert template["auto_selected"] is True
 
 
-def test_campaign_template_requires_superadmin_default_when_multiple_are_compatible(monkeypatch):
+def test_campaign_template_requires_merchant_selection_when_multiple_are_compatible(monkeypatch):
     from services.ai_agent import whatsapp_campaign_template_service as service
 
     monkeypatch.setattr(
@@ -74,8 +74,10 @@ def test_campaign_template_requires_superadmin_default_when_multiple_are_compati
         }),
     )
 
-    with pytest.raises(ValueError, match="2 plantillas aprobadas compatibles"):
+    with pytest.raises(ValueError, match="2 plantillas aprobadas compatibles") as exc_info:
         get_campaign_template(_connection())
+    assert "Agentes IA" in str(exc_info.value)
+    assert "StockARmobile" not in str(exc_info.value)
 
 
 def test_campaign_template_uses_explicitly_configured_name_and_language(monkeypatch):
