@@ -1,8 +1,7 @@
 """Tenant-scoped Marketing IA delivery engine.
 
-This module is deliberately separate from the SuperAdmin acquisition CRM.
-Tenant campaigns are delivered only through the shared WhatsApp Cloud sender,
-while every query, recipient and attribution remains strictly tenant scoped.
+Tenant campaigns use each merchant's own Vendedor IA WhatsApp Cloud connection.
+Campaigns, recipients, consent, conversations and attribution remain tenant scoped.
 """
 from __future__ import annotations
 
@@ -62,20 +61,103 @@ def _json(campaign):
         return {}
 
 
-def _shared_campaign_whatsapp():
-    """Resolve the single StockARmobile Vendedor 24/7 number used by tenant CRM campaigns.
+def _campaign_branch_id(campaign):
+    data = _json(campaign)
+    try:
+        value = int(data.get("branch_id"))
+    except (TypeError, ValueError):
+        value = None
+    return value if value and value > 0 else None
 
-    Tenant client lists and campaign records remain isolated by company_id. Only
-    the outbound WhatsApp sender is shared; a tenant's own connected WhatsApp
-    number is deliberately not used for these CRM campaigns.
+
+def _tenant_campaign_whatsapp(company_id: int, branch_id: int | None = None):
+    """Resolve only the merchant's own Vendedor IA WhatsApp connection.
+
+    The StockARmobile SuperAdmin/commercial sender is explicitly excluded. A
+    branch-bound campaign keeps using the exact branch number selected when the
+    draft was created; legacy drafts fall back to the merchant's default branch.
     """
+    from app import Branch, Company
     from services.ai_agent.config_service import get_whatsapp_connection
     from services.saas_commercial_whatsapp import get_commercial_company
+    from stockarmobile.branch_context import get_default_branch_id
 
-    sender_company = get_commercial_company()
-    if sender_company is None:
+    try:
+        tenant_id = int(company_id)
+    except (TypeError, ValueError):
         return None, {}
-    return sender_company, get_whatsapp_connection(sender_company)
+    company = Company.query.filter_by(id=tenant_id, active=True).first()
+    if company is None:
+        return None, {}
+
+    platform_company = get_commercial_company()
+    if platform_company is not None and int(platform_company.id) == int(company.id):
+        return None, {}
+
+    resolved_branch_id = int(branch_id) if branch_id else get_default_branch_id(company.id)
+    if resolved_branch_id:
+        branch = Branch.query.filter_by(
+            id=int(resolved_branch_id),
+            company_id=int(company.id),
+            active=True,
+        ).first()
+        if branch is None:
+            return company, {
+                "enabled": False,
+                "phone_number_id": "",
+                "business_account_id": "",
+                "display_phone_number": "",
+                "access_token": "",
+                "template_name": "",
+                "template_language": "es_AR",
+            }
+        return company, get_whatsapp_connection(company, branch_id=branch.id)
+
+    return company, get_whatsapp_connection(company)
+
+
+def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
+    """Resolve a reply arriving on a merchant's registered WhatsApp number.
+
+    The inbound Phone Number ID identifies one merchant/branch. We then require
+    the original campaign recipient to belong to that same merchant; message-ID
+    context is preferred, with a recent same-tenant destination fallback.
+    """
+    from services.ai_agent.config_service import company_branch_for_whatsapp_phone_id
+    from services.saas_commercial_whatsapp import get_commercial_company
+    from services.whatsapp_share_service import normalize_whatsapp_number
+
+    company, _branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+    if company is None:
+        return None
+    platform_company = get_commercial_company()
+    if platform_company is not None and int(platform_company.id) == int(company.id):
+        return None
+
+    normalized_sender = normalize_whatsapp_number(sender)
+    if not normalized_sender:
+        return None
+    query = TenantCampaignRecipient.query.filter(
+        TenantCampaignRecipient.company_id == int(company.id),
+        TenantCampaignRecipient.channel == "whatsapp",
+        TenantCampaignRecipient.status == "sent",
+        TenantCampaignRecipient.destination == normalized_sender,
+    )
+    referenced_id = str(context_message_id or "").strip()
+    if referenced_id:
+        matches = query.filter(
+            TenantCampaignRecipient.provider_message_id == referenced_id
+        ).limit(2).all()
+        return matches[0] if len(matches) == 1 else None
+
+    cutoff = _now() - timedelta(days=30)
+    return query.filter(
+        TenantCampaignRecipient.sent_at.isnot(None),
+        TenantCampaignRecipient.sent_at >= cutoff,
+    ).order_by(
+        TenantCampaignRecipient.sent_at.desc(),
+        TenantCampaignRecipient.id.desc(),
+    ).first()
 
 
 def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
@@ -193,7 +275,11 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     campaign_data["channel"] = "whatsapp"
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
-    sender_company, connection = _shared_campaign_whatsapp()
+    campaign_branch_id = _campaign_branch_id(campaign)
+    sender_company, connection = _tenant_campaign_whatsapp(
+        campaign.company_id,
+        branch_id=campaign_branch_id,
+    )
     if (
         sender_company is None
         or not connection.get("enabled")
@@ -201,8 +287,8 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         or not connection.get("access_token")
     ):
         raise ValueError(
-            "El número oficial de Vendedor 24/7 de StockARmobile no está conectado. "
-            "Contactá al administrador de StockARmobile para habilitar WhatsApp."
+            "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado o habilitado. "
+            "Conectá el número propio del comercio desde Agentes IA → Vendedor IA."
         )
     stored_template = campaign_data.get("whatsapp_template")
     if isinstance(stored_template, dict) and stored_template.get("name"):
@@ -329,17 +415,21 @@ def _fetch_campaign_template(
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     from services.ai_agent.whatsapp_service import WhatsAppService
 
-    sender_company, connection = _shared_campaign_whatsapp()
+    campaign_branch_id = _campaign_branch_id(campaign)
+    sender_company, connection = _tenant_campaign_whatsapp(
+        campaign.company_id,
+        branch_id=campaign_branch_id,
+    )
     if (
         sender_company is None
         or not connection.get("enabled")
         or not connection.get("phone_number_id")
         or not connection.get("access_token")
     ):
-        return False, "El número oficial de Vendedor 24/7 de StockARmobile no está conectado.", ""
+        return False, "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado.", ""
 
-    # Resolve the template from the shared sender's WABA. A tenant-specific
-    # template or WhatsApp connection must never override the platform sender.
+    # Resolve and send through this merchant's own WABA. Never fall back to
+    # StockARmobile's SuperAdmin/commercial WhatsApp number.
     template = _json(campaign).get("whatsapp_template") or {}
     template_name = str(template.get("name") or "").strip()
     language = str(template.get("language") or "").strip()
@@ -372,6 +462,7 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
             template_name=template_name,
             template_language=language,
             body_parameters=params,
+            branch_id=campaign_branch_id,
         )
     except requests.Timeout as exc:
         return False, f"Resultado incierto: Meta no respondió a tiempo ({exc}).", ""
