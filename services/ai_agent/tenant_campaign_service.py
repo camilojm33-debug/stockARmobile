@@ -204,7 +204,30 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
             "El número oficial de Vendedor 24/7 de StockARmobile no está conectado. "
             "Contactá al administrador de StockARmobile para habilitar WhatsApp."
         )
-    template = _fetch_campaign_template(connection)
+    stored_template = campaign_data.get("whatsapp_template")
+    if isinstance(stored_template, dict) and stored_template.get("name"):
+        configured_name = str(connection.get("template_name") or "").strip()
+        configured_language = str(connection.get("template_language") or "es_AR").strip()
+        if configured_name and (
+            configured_name != str(stored_template.get("name") or "").strip()
+            or configured_language != str(stored_template.get("language") or "").strip()
+        ):
+            raise ValueError(
+                "La plantilla oficial cambió desde que creaste el borrador. "
+                "Volvé a revisar la vista previa y guardá una nueva propuesta."
+            )
+        if configured_name:
+            template = _fetch_campaign_template(connection)
+        else:
+            template = _fetch_campaign_template(
+                connection,
+                selected_name=str(stored_template.get("name") or ""),
+                selected_language=str(stored_template.get("language") or "es_AR"),
+                allow_single_auto_select=False,
+            )
+            template["auto_selected"] = True
+    else:
+        template = _fetch_campaign_template(connection)
     if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
@@ -285,11 +308,22 @@ def _render_content(campaign, client):
     return content
 
 
-def _fetch_campaign_template(connection: dict) -> dict:
+def _fetch_campaign_template(
+    connection: dict,
+    *,
+    selected_name: str | None = None,
+    selected_language: str | None = None,
+    allow_single_auto_select: bool = True,
+) -> dict:
     """Resolve the approved campaign template from the shared StockARmobile WABA."""
     from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
 
-    return get_campaign_template(connection)
+    return get_campaign_template(
+        connection,
+        selected_name=selected_name,
+        selected_language=selected_language,
+        allow_single_auto_select=allow_single_auto_select,
+    )
 
 
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
