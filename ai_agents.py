@@ -1446,13 +1446,10 @@ def campaign_wizard():
     template_error = None
     sender_company, connection = _shared_campaign_whatsapp()
     try:
-        if (
-            sender_company is None
-            or not connection.get("enabled")
-            or not connection.get("phone_number_id")
-            or not connection.get("access_token")
-        ):
-            raise ValueError("El número oficial de WhatsApp no está conectado.")
+        if sender_company is None:
+            raise ValueError(
+                "No está inicializada la empresa interna de WhatsApp Comercial de StockARmobile."
+            )
         template = _fetch_campaign_template(connection)
     except ValueError as exc:
         template_error = str(exc)
@@ -1558,8 +1555,14 @@ def campaign_wizard():
         flash("Borrador creado. Revisá la audiencia y la vista previa antes de solicitar aprobación.", "success")
         return redirect(url_for("ai_agents.campaign_detail", campaign_id=draft.id))
 
-    audience_count = _campaign_audience_preview(current_user.company_id, "all")["eligible"]
-    inactive_audience_count = _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
+    audience_count = (
+        _campaign_audience_preview(current_user.company_id, "all")["eligible"]
+        if template else 0
+    )
+    inactive_audience_count = (
+        _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
+        if template else 0
+    )
     return render_template(
         "ai_agents/campaign_wizard.html",
         template=template,
