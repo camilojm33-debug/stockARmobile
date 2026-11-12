@@ -56,8 +56,8 @@ def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch
         db.session.flush()
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
+            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
         )
         campaign = CampaignService.create_draft(
             company_id=company_a.id, user_id=user_a.id, title="Recuperación", objective="Recuperar", campaign_type="general",
@@ -95,8 +95,8 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
         db.session.flush()
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
+            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
         )
         campaign = CampaignService.create_draft(
             company_id=company.id, user_id=user.id, title="Promo", objective="Venta", campaign_type="general",
@@ -248,8 +248,8 @@ def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monke
         assert "email" not in detected["items"][0]
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
+            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
         )
 
         campaign = CampaignService.create_draft(
@@ -357,8 +357,8 @@ def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
         db.session.flush()
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
+            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
         )
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._send_whatsapp",
@@ -972,8 +972,8 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
         )
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda: (
+            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
+            lambda *_args, **_kwargs: (
                 object(),
                 {
                     "enabled": True,
