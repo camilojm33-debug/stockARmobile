@@ -94,9 +94,9 @@ def list_approved_campaign_templates(connection: dict) -> list[dict]:
     waba_id = str(connection.get("business_account_id") or "").strip()
     access_token = str(connection.get("access_token") or "").strip()
     if not waba_id:
-        raise ValueError("Falta el WABA ID de la cuenta de WhatsApp conectada a este comercio.")
+        raise ValueError("Falta el WABA ID de la cuenta de WhatsApp conectada.")
     if not access_token:
-        raise ValueError("Falta el token de acceso de Meta para la cuenta de WhatsApp del comercio. Volvé a autorizar la conexión.")
+        raise ValueError("Falta el token de acceso de Meta para esta cuenta de WhatsApp. Volvé a autorizar la conexión.")
 
     version = (
         os.getenv("META_GRAPH_API_VERSION")
@@ -181,7 +181,7 @@ def get_campaign_template(
     if not str(connection.get("business_account_id") or "").strip():
         raise ValueError("Falta el WABA ID del WhatsApp conectado a este comercio.")
     if not str(connection.get("access_token") or "").strip():
-        raise ValueError("Falta el token de acceso de Meta del WhatsApp de este comercio. Volvé a conectar la cuenta desde Vendedor IA.")
+        raise ValueError("Falta el token de acceso de Meta. Volvé a conectar tu WhatsApp desde Vendedor IA.")
 
     name = str(selected_name or connection.get("template_name") or "").strip()
     language = str(selected_language or connection.get("template_language") or "es_AR").strip() or "es_AR"
@@ -197,8 +197,8 @@ def get_campaign_template(
         )
         if selected is None:
             raise ValueError(
-                f"La plantilla configurada «{name}» ({language}) no figura aprobada en la WABA comercial. "
-                "Sincronizá las plantillas desde SuperAdmin → WhatsApp Comercial y seleccioná otra aprobada."
+                f"La plantilla configurada «{name}» ({language}) no figura aprobada en la WABA conectada. "
+                "Sincronizá las plantillas desde Agentes IA → Vendedor IA y seleccioná otra aprobada."
             )
         if not selected["campaign_compatible"]:
             raise ValueError(
@@ -218,9 +218,9 @@ def get_campaign_template(
         )
         detail = f" Motivo: {rejected}" if rejected else ""
         raise ValueError(
-            "No hay una plantilla aprobada compatible en la WABA del número oficial de StockARmobile. "
-            "Un SuperAdmin debe aprobar una plantilla MARKETING con {{1}} cliente, {{2}} producto "
-            "y {{3}} mensaje editable desde Meta." + detail
+            "No hay una plantilla aprobada compatible en la WABA de este WhatsApp. "
+            "El administrador del comercio debe aprobar una plantilla MARKETING con {{1}} cliente, {{2}} producto "
+            "y {{3}} mensaje editable desde su cuenta de Meta." + detail
         )
 
     raise ValueError(
