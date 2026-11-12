@@ -164,18 +164,36 @@ def _record_commercial_campaign_status(status_rows):
 
 def _record_tenant_campaign_status(status_rows):
     from app import Campaign
+    from services.ai_agent.config_service import company_branch_for_whatsapp_phone_id
     from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+    from services.saas_commercial_whatsapp import get_commercial_company
+    from services.ai_agent.config_service import get_whatsapp_connection
 
     updated = 0
     for phone_number_id, message_id, state, _recipient_id, raw_status in status_rows:
-        if not is_commercial_phone_number_id(phone_number_id):
-            continue
         recipient = TenantCampaignRecipient.query.filter_by(
             provider_message_id=message_id,
             channel="whatsapp",
         ).first()
         if recipient is None:
             continue
+
+        # Keep status webhooks for any legacy shared-number sends attributable,
+        # but new tenant campaign events must arrive through that tenant's own
+        # registered Vendedor IA phone number.
+        if is_commercial_phone_number_id(phone_number_id):
+            platform_company = get_commercial_company()
+            platform_connection = (
+                get_whatsapp_connection(platform_company)
+                if platform_company is not None else {}
+            )
+            if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
+                continue
+        else:
+            sender_company, _sender_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+            if sender_company is None or int(sender_company.id) != int(recipient.company_id):
+                continue
+
         now = utcnow_naive()
         recipient.provider_status = state
         if state == "delivered":
@@ -661,27 +679,48 @@ def _process_shared_tenant_campaign_reply(
     *, phone_number_id: str, sender: str, external_id: str, text: str,
     context_message_id: str = "", message_type: str = "text",
 ) -> bool:
-    """Route shared-number campaign replies into exactly one originating tenant CRM."""
+    """Route campaign replies to the correct tenant CRM, using that tenant's own sender."""
     from app import Branch, Company
     from stockarmobile.branch_context import get_default_branch_id
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignAttribution,
         resolve_shared_campaign_reply,
+        resolve_tenant_campaign_reply,
     )
+    from services.ai_agent.config_service import company_branch_for_whatsapp_phone_id, get_whatsapp_connection
     from services.saas_commercial_whatsapp import get_commercial_company
-    from services.ai_agent.config_service import get_whatsapp_connection
 
-    recipient = resolve_shared_campaign_reply(
-        phone_number_id=phone_number_id,
-        sender=sender,
-        context_message_id=context_message_id,
-    )
+    is_platform_sender = is_commercial_phone_number_id(phone_number_id)
+    if is_platform_sender:
+        # Backward-compatible routing for campaigns already sent before the
+        # merchant-owned sender correction. New sends never use this path.
+        recipient = resolve_shared_campaign_reply(
+            phone_number_id=phone_number_id,
+            sender=sender,
+            context_message_id=context_message_id,
+        )
+        platform_company = get_commercial_company()
+        sender_connection = get_whatsapp_connection(platform_company) if platform_company is not None else {}
+        if str(sender_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
+            return False
+        company = Company.query.filter_by(id=int(recipient.company_id), active=True).first() if recipient else None
+        branch_id = get_default_branch_id(company.id) if company is not None else None
+        branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id and company else None
+    else:
+        recipient = resolve_tenant_campaign_reply(
+            phone_number_id=phone_number_id,
+            sender=sender,
+            context_message_id=context_message_id,
+        )
+        company, branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+        if recipient is None or company is None or int(recipient.company_id) != int(company.id):
+            return False
+        sender_connection = get_whatsapp_connection(company, branch_id=branch.id if branch else None)
+        if str(sender_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
+            return False
+        branch_id = branch.id if branch is not None else None
+
     if recipient is None:
-        return False
-
-    platform_company = get_commercial_company()
-    platform_connection = get_whatsapp_connection(platform_company) if platform_company is not None else {}
-    if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
         return False
     if _is_whatsapp_opt_out(text):
         from services.whatsapp_consent_service import record_whatsapp_consent
@@ -696,28 +735,26 @@ def _process_shared_tenant_campaign_reply(
         db.session.commit()
         return True
 
-    company = Company.query.filter_by(id=int(recipient.company_id), active=True).first()
-    if company is None:
-        return False
-    branch_id = get_default_branch_id(company.id)
-    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
-    if branch is None:
+    if company is None or not company.active or branch is None:
         current_app.logger.warning(
-            "Shared WhatsApp campaign reply has no active tenant branch; company_id=%s recipient_id=%s",
-            company.id, recipient.id,
+            "WhatsApp campaign reply has no active tenant branch; company_id=%s recipient_id=%s",
+            getattr(company, "id", None), recipient.id,
         )
         return False
 
-    platform_sender_ready = bool(
-        platform_connection.get("enabled") and platform_connection.get("access_token")
+    sender_ready = bool(
+        sender_connection.get("enabled")
+        and sender_connection.get("phone_number_id")
+        and sender_connection.get("access_token")
     )
 
     conversation = _get_or_create_conversation(company.id, sender, branch_id=branch.id)
     conversation_metadata = dict(conversation.metadata_json or {})
-    conversation_metadata["shared_campaign_origin"] = {
+    conversation_metadata["campaign_origin"] = {
         "campaign_id": int(recipient.campaign_id),
         "recipient_id": int(recipient.id),
-        "platform_phone_number_id": str(phone_number_id),
+        "phone_number_id": str(phone_number_id),
+        "sender_type": "stockarmobile_platform" if is_platform_sender else "merchant_vendedor_ia",
     }
     conversation.metadata_json = conversation_metadata
 
@@ -750,7 +787,7 @@ def _process_shared_tenant_campaign_reply(
         if assistant is not None:
             _send_persisted_reply(
                 company, sender=sender, assistant=assistant,
-                sender_connection=platform_connection,
+                sender_connection=sender_connection,
             )
         return True
 
@@ -776,7 +813,7 @@ def _process_shared_tenant_campaign_reply(
 
     access = can_use_ai(company, "vendedor")
     branch_access = branch_vendor_access(company, branch)
-    if not platform_sender_ready or not is_ai_enabled(company) or not access.allowed or not branch_access.get("allowed"):
+    if not sender_ready or not is_ai_enabled(company) or not access.allowed or not branch_access.get("allowed"):
         db.session.add(ConversationMessage(
             conversation_id=conversation.id,
             company_id=company.id,
@@ -788,12 +825,13 @@ def _process_shared_tenant_campaign_reply(
             idempotency_key=f"whatsapp:{external_id}",
             metadata_json={
                 "channel": "whatsapp",
-                "platform_shared_sender": True,
+                "platform_shared_sender": bool(is_platform_sender),
+                "merchant_sender": not is_platform_sender,
                 "campaign_id": int(recipient.campaign_id),
                 "message_type": message_type,
                 "context_message_id": context_message_id,
                 "ai_unavailable": True,
-                "delivery_blocked_reason": "platform_sender_not_ready" if not platform_sender_ready else "tenant_vendedor_unavailable",
+                "delivery_blocked_reason": "campaign_sender_not_ready" if not sender_ready else "tenant_vendedor_unavailable",
             },
         ))
         db.session.commit()
@@ -811,7 +849,8 @@ def _process_shared_tenant_campaign_reply(
                 "phone_number_id": phone_number_id,
                 "from": sender,
                 "channel": "whatsapp",
-                "platform_shared_sender": True,
+                "platform_shared_sender": bool(is_platform_sender),
+                "merchant_sender": not is_platform_sender,
                 "campaign_id": int(recipient.campaign_id),
                 "message_type": message_type,
                 "context_message_id": context_message_id,
@@ -843,7 +882,7 @@ def _process_shared_tenant_campaign_reply(
     if assistant is not None:
         _send_persisted_reply(
             company, sender=sender, assistant=assistant,
-            sender_connection=platform_connection,
+            sender_connection=sender_connection,
         )
     return True
 
@@ -1700,26 +1739,39 @@ def webhook():
 
     for phone_number_id, sender, external_id, text, context_message_id, message_type in _extract_messages(payload):
         try:
-            if _is_whatsapp_opt_out(text) and is_commercial_phone_number_id(phone_number_id):
-                saas_opted_out = _process_shared_saas_campaign_opt_out(
-                    phone_number_id=phone_number_id,
-                    sender=sender,
-                )
-                tenant_opted_out = _process_shared_tenant_campaign_reply(
+            if _is_whatsapp_opt_out(text):
+                if is_commercial_phone_number_id(phone_number_id):
+                    saas_opted_out = _process_shared_saas_campaign_opt_out(
+                        phone_number_id=phone_number_id,
+                        sender=sender,
+                    )
+                    tenant_opted_out = _process_shared_tenant_campaign_reply(
+                        phone_number_id=phone_number_id,
+                        sender=sender,
+                        external_id=external_id,
+                        text=text,
+                        context_message_id=context_message_id,
+                        message_type=message_type,
+                    )
+                    if not saas_opted_out and not tenant_opted_out:
+                        current_app.logger.info(
+                            "WhatsApp opt-out received without a uniquely attributable campaign; message_id=%s",
+                            external_id,
+                        )
+                    processed += 1
+                    continue
+                # Merchant-owned Vendedor IA numbers handle BAJA only when
+                # the inbound sender can be tied to one of that tenant's sends.
+                if _process_shared_tenant_campaign_reply(
                     phone_number_id=phone_number_id,
                     sender=sender,
                     external_id=external_id,
                     text=text,
                     context_message_id=context_message_id,
                     message_type=message_type,
-                )
-                if not saas_opted_out and not tenant_opted_out:
-                    current_app.logger.info(
-                        "WhatsApp opt-out received without a uniquely attributable campaign; message_id=%s",
-                        external_id,
-                    )
-                processed += 1
-                continue
+                ):
+                    processed += 1
+                    continue
             if is_commercial_phone_number_id(phone_number_id):
                 try:
                     if _process_shared_tenant_campaign_reply(
@@ -1748,6 +1800,27 @@ def webhook():
                     )
                     errors.append({"external_message_id": external_id, "error": "commercial_internal_error"})
                     retryable_errors = True
+                continue
+
+            try:
+                if _process_shared_tenant_campaign_reply(
+                    phone_number_id=phone_number_id,
+                    sender=sender,
+                    external_id=external_id,
+                    text=text,
+                    context_message_id=context_message_id,
+                    message_type=message_type,
+                ):
+                    processed += 1
+                    continue
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "Tenant WhatsApp campaign reply routing failed external_message_id=%s",
+                    external_id,
+                )
+                errors.append({"external_message_id": external_id, "error": "tenant_campaign_reply_internal_error"})
+                retryable_errors = True
                 continue
 
             company, whatsapp_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
