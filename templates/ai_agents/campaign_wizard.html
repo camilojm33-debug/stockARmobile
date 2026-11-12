@@ -36,7 +36,7 @@
   {% else %}
     <div class="alert alert-danger campaign-readiness" role="alert">
       <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Marketing IA todavía no está listo para enviar por WhatsApp</div>
-      <p class="mb-2">{{ template_error or "No se pudo validar el número oficial y su plantilla aprobada." }}</p>
+      <p class="mb-2">{{ template_error or "No se pudo validar el WhatsApp propio del comercio y su plantilla aprobada." }}</p>
       {% if campaign_sender_phone %}<div class="small mb-2">Número emisor del comercio detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
       <div class="small">Esta campaña saldrá desde el número de WhatsApp que este comercio tiene conectado en su propio Vendedor IA 24/7. Nunca se utilizará el número de StockARmobile ni el de otro comercio.</div>
       {% if template_admin_url %}
