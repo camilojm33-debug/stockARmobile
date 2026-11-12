@@ -18,7 +18,7 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
 def test_campaign_wizard_explains_merchant_whatsapp_readiness_before_showing_steps():
     template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
 
-    assert "Canal oficial listo" in template
+    assert "Canal del comercio listo" in template
     assert "WhatsApp propio del comercio (Vendedor IA 24/7)" in template
     assert "Nunca se utilizará el número de StockARmobile" in template
     assert "Marketing IA todavía no está listo" in template
