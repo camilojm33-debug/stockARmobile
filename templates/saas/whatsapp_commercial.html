@@ -252,8 +252,8 @@
       preview.classList.toggle('d-none', !item);
       preview.textContent = item
         ? (item.campaign_compatible
-          ? 'Compatible con campañas: ' + item.body_text
-          : 'No compatible con el mensaje editable de campañas. Requiere {{1}}, {{2}} y {{3}}. Plantilla: ' + item.body_text)
+          ? 'Compatible con campañas de WhatsApp. Cuerpo: ' + item.body_text
+          : (item.compatibility_reason || 'No compatible con campañas de WhatsApp.') + ' Plantilla: ' + item.body_text)
         : '';
     }
     if (item && !item.campaign_compatible) {
@@ -293,12 +293,14 @@
       const key = String(selected.name || '') + '|' + String(selected.language || '');
       if (selected.name && templates.some(item => item.name + '|' + item.language === key)) {
         select.value = key;
+      } else {
+        const firstCompatible = templates.find(item => item.campaign_compatible);
+        if (firstCompatible) select.value = firstCompatible.name + '|' + firstCompatible.language;
       }
       select.disabled = false;
       updateSelection();
-      if (!selectedTemplate() || selectedTemplate().campaign_compatible) {
-        setStatus(templates.length + ' plantilla(s) aprobada(s) disponible(s).');
-      }
+      const compatibleCount = templates.filter(item => item.campaign_compatible).length;
+      setStatus(templates.length + ' plantilla(s) aprobada(s) · ' + compatibleCount + ' compatible(s) con campañas.');
     } catch (error) {
       select.innerHTML = '<option value="">No se pudo sincronizar</option>';
       setStatus(error.message || 'Error al sincronizar con Meta.', true);
