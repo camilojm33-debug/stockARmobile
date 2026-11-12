@@ -112,7 +112,7 @@ def list_approved_campaign_templates(connection: dict) -> list[dict]:
     try:
         for _page in range(MAX_TEMPLATE_PAGES):
             parsed_url = urlparse(url)
-            if parsed_url.hostname != "graph.facebook.com":
+            if parsed_url.scheme != "https" or parsed_url.hostname != "graph.facebook.com":
                 raise ValueError("Meta devolvió una dirección de paginación no válida.")
             if url in visited_urls:
                 raise ValueError("Meta devolvió una paginación repetida al consultar las plantillas.")
