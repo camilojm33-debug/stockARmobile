@@ -1324,7 +1324,16 @@ def campaign_detail(campaign_id):
         or campaign.audience_count
         or 0
     )
-    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        _campaign_branch_id,
+        _tenant_campaign_whatsapp,
+    )
+    _sender_company, sender_connection = _tenant_campaign_whatsapp(
+        current_user.company_id,
+        branch_id=_campaign_branch_id(campaign),
+    )
+    campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
     ).order_by(TenantCampaignRecipient.id.asc()).limit(100).all()
@@ -1337,6 +1346,7 @@ def campaign_detail(campaign_id):
         campaign_template_preview=template_preview,
         campaign_recipients=recipient_rows,
         campaign_schedule_local=_campaign_schedule_local(campaign),
+        campaign_sender_phone=campaign_sender_phone,
         ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
         **_context(),
     )
