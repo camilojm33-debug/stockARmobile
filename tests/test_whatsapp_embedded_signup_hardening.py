@@ -187,10 +187,12 @@ def test_webhook_preserves_context_and_supports_common_interactive_and_media_typ
     assert 'message_type == "audio"' in extractor
     assert "yield phone_number_id, sender, external_id, body, context_message_id, message_type" in extractor
     assert "resolve_shared_campaign_reply" in source
-    assert "sender_connection=platform_connection" in source
+    assert "sender_connection=sender_connection" in source
+    assert "resolve_tenant_campaign_reply" in source
+    assert "merchant_vendedor_ia" in source
 
 
-def test_shared_campaign_reply_attribution_is_fail_closed_across_tenants():
+def test_campaign_reply_attribution_is_fail_closed_across_tenants():
     source = (ROOT / "services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
     start = source.index("def resolve_shared_campaign_reply(")
     end = source.index("def _client_phone(", start)
