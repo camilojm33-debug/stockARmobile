@@ -165,7 +165,7 @@ def _record_commercial_campaign_status(status_rows):
 def _record_tenant_campaign_status(status_rows):
     from app import Campaign
     from services.ai_agent.config_service import company_branch_for_whatsapp_phone_id
-    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient, _campaign_branch_id
     from services.saas_commercial_whatsapp import get_commercial_company
     from services.ai_agent.config_service import get_whatsapp_connection
 
@@ -190,8 +190,20 @@ def _record_tenant_campaign_status(status_rows):
             if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
                 continue
         else:
-            sender_company, _sender_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
-            if sender_company is None or int(sender_company.id) != int(recipient.company_id):
+            sender_company, sender_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+            if (
+                sender_company is None
+                or int(sender_company.id) != int(recipient.company_id)
+                or sender_branch is None
+            ):
+                continue
+            saved_branch_id = _campaign_branch_id(recipient.campaign)
+            if saved_branch_id is not None:
+                if int(saved_branch_id) != int(sender_branch.id):
+                    continue
+            elif not sender_branch.is_default:
+                # Legacy merchant campaigns without branch metadata can only
+                # be attributed to the merchant's default branch.
                 continue
 
         now = utcnow_naive()
