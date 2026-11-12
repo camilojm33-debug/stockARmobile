@@ -19,7 +19,9 @@ def test_main_sidebar_has_fixed_header_scroll_navigation_and_footer():
     assert "app-sidebar-footer" not in sidebar[scroll_start:scroll_end]
 
     nav_markup = sidebar[nav_start:scroll_end]
-    assert len(re.findall(r'class="nav-link', nav_markup)) == 55
+    assert len(re.findall(r'class="nav-link', nav_markup)) == 57
+    assert "CRM · requiere IA PRO" in nav_markup
+    assert "CRM · requiere permiso" in nav_markup
     assert "Precios mayoristas" in nav_markup
     assert "commercial_wholesale_pricing_allowed" in nav_markup
     assert "url_for('wholesale_pricing.index')" in nav_markup

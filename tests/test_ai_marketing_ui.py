@@ -9,7 +9,7 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
     assert "crm-kpi" in template
     assert "crm-section-card" in template
     assert "crm-status" in template
-    assert "Crear una propuesta" in template
+    assert "Crear campaña guiada" in template
     assert "Envío automático tras aprobar" in template
     assert "sin depender de un cron" in template
     assert "campaign_detail" in template

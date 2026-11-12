@@ -9,6 +9,8 @@ import secrets
 import time
 import uuid
 import hashlib
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -1295,19 +1297,291 @@ def campaign_detail(campaign_id):
         campaign_system_data = json.loads(campaign.system_data_json or "{}")
     except (TypeError, ValueError):
         campaign_system_data = {}
+    template = campaign_system_data.get("whatsapp_template") or {}
+    template_preview = ""
+    if template.get("body_text"):
+        from services.ai_agent.tenant_campaign_service import _render_content
+        try:
+            copy = _render_content(
+                campaign,
+                SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
+            )
+            template_preview = template["body_text"]
+            for variable, value in (
+                ("1", "Cliente de ejemplo"),
+                ("2", campaign.product.name if campaign.product else "Varios"),
+                ("3", copy),
+            ):
+                template_preview = re.sub(
+                    r"\{\{\s*" + variable + r"\s*\}\}",
+                    lambda _match, replacement=value: replacement,
+                    template_preview,
+                )
+        except ValueError as exc:
+            template_preview = f"No se puede mostrar la vista previa: {exc}"
     detected_audience_count = int(
         campaign_system_data.get("audience_count")
         or campaign.audience_count
         or 0
     )
+    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+    recipient_rows = TenantCampaignRecipient.query.filter_by(
+        campaign_id=campaign.id, company_id=current_user.company_id
+    ).order_by(TenantCampaignRecipient.id.asc()).limit(100).all()
     return render_template(
         "ai_agents/campaign_detail.html",
         campaign=campaign,
         campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
         detected_audience_count=detected_audience_count,
+        campaign_template=template,
+        campaign_template_preview=template_preview,
+        campaign_recipients=recipient_rows,
+        campaign_schedule_local=_campaign_schedule_local(campaign),
         ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
         **_context(),
     )
+
+
+def _company_timezone(company=None):
+    company = company or _current_active_company()
+    timezone_name = str(getattr(company, "timezone", "") or "America/Argentina/Buenos_Aires")
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        current_app.logger.warning("Invalid company timezone for campaign scheduling: %s", timezone_name)
+        return ZoneInfo("UTC")
+
+
+def _parse_campaign_schedule(raw_value):
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("La fecha de programación no es válida.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_company_timezone())
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _campaign_schedule_local(campaign):
+    if not campaign.scheduled_at:
+        return ""
+    return campaign.scheduled_at.replace(tzinfo=timezone.utc).astimezone(
+        _company_timezone()
+    ).strftime("%Y-%m-%dT%H:%M")
+
+
+def _campaign_audience_count(company_id, *, audience_segment, campaign_type, client_segment, days):
+    from app import Client
+    from services.ai_agent.tenant_campaign_service import _audience_query, _client_phone
+
+    audience = SimpleNamespace(
+        company_id=company_id,
+        audience_segment=audience_segment,
+        campaign_type=campaign_type,
+        system_data_json=json.dumps({"client_segment": client_segment, "days": days}),
+    )
+    query = _audience_query(audience).filter(
+        Client.whatsapp_marketing_consent == "opted_in",
+        Client.whatsapp_marketing_consent_recorded_at.isnot(None),
+        Client.whatsapp_marketing_consent_source.isnot(None),
+        Client.whatsapp_marketing_consent_evidence.isnot(None),
+    )
+    return sum(
+        1 for client in query.yield_per(500)
+        if _client_phone(client)
+        and client.whatsapp_marketing_consent_source
+        and client.whatsapp_marketing_consent_evidence
+    )
+
+
+def _campaign_audience_preview(company_id, audience, *, client_segment="", days=90):
+    from app import Client
+    from services.ai_agent.tenant_campaign_service import _audience_query, _client_phone
+
+    audience_segment = "clientes inactivos" if audience == "inactive" else "clientes activos"
+    campaign_type = "recuperacion_clientes_inactivos" if audience == "inactive" else "general"
+    campaign = SimpleNamespace(
+        company_id=company_id,
+        audience_segment=audience_segment,
+        campaign_type=campaign_type,
+        system_data_json=json.dumps({"client_segment": client_segment, "days": days}),
+    )
+    base_query = _audience_query(campaign)
+    eligible_query = base_query.filter(
+        Client.whatsapp_marketing_consent == "opted_in",
+        Client.whatsapp_marketing_consent_recorded_at.isnot(None),
+        Client.whatsapp_marketing_consent_source.isnot(None),
+        Client.whatsapp_marketing_consent_evidence.isnot(None),
+    )
+    eligible = sum(
+        1 for client in eligible_query.yield_per(500)
+        if _client_phone(client)
+        and client.whatsapp_marketing_consent_source
+        and client.whatsapp_marketing_consent_evidence
+    )
+    return {"eligible": eligible, "excluded": max(0, base_query.count() - eligible)}
+
+
+@bp.route("/campanas/nueva", methods=["GET", "POST"])
+@company_admin_required
+def campaign_wizard():
+    from app import Product, db
+    from services.ai_agent.campaign_service import CampaignService
+    from services.ai_agent.tenant_campaign_service import (
+        CAMPAIGN_OPT_OUT_TEXT,
+        _fetch_campaign_template,
+        _render_content,
+        _shared_campaign_whatsapp,
+    )
+
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    template = None
+    template_error = None
+    sender_company, connection = _shared_campaign_whatsapp()
+    try:
+        if (
+            sender_company is None
+            or not connection.get("enabled")
+            or not connection.get("phone_number_id")
+            or not connection.get("access_token")
+        ):
+            raise ValueError("El número oficial de WhatsApp no está conectado.")
+        template = _fetch_campaign_template(connection)
+    except ValueError as exc:
+        template_error = str(exc)
+
+    products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
+    if request.method == "POST":
+        if template is None:
+            flash(template_error or "No se puede validar la plantilla aprobada.", "danger")
+            return render_template(
+                "ai_agents/campaign_wizard.html",
+                template=None,
+                template_error=template_error,
+                products=products,
+                opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
+                audience_count=0,
+                schedule_local="",
+                **_context(),
+            ), 409
+        title = str(request.form.get("title") or "").strip()
+        objective = str(request.form.get("objective") or "").strip()
+        content = str(request.form.get("content") or "").strip()
+        audience_choice = str(request.form.get("audience") or "all").strip()
+        client_segment = str(request.form.get("client_segment") or "").strip()[:80]
+        try:
+            days = max(1, min(int(request.form.get("days") or 90), 365))
+            product_id = int(request.form.get("product_id")) if request.form.get("product_id") else None
+            scheduled_at = _parse_campaign_schedule(
+                request.form.get("scheduled_at_utc") or request.form.get("scheduled_at")
+            )
+        except (TypeError, ValueError) as exc:
+            flash(str(exc) or "Revisá los valores de la campaña.", "danger")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        if not title or len(title) > 180 or not objective or len(objective) > 120 or not content:
+            flash("Completá el nombre, el objetivo y el mensaje de la campaña.", "danger")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        if audience_choice not in {"all", "inactive", "notes"}:
+            flash("Seleccioná una audiencia válida.", "danger")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        if audience_choice == "notes" and not client_segment:
+            flash("Indicá la etiqueta que debe buscarse en las notas de cliente.", "danger")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        audience_segment = {
+            "all": "clientes activos",
+            "inactive": "clientes inactivos",
+            "notes": "clientes activos · filtro de notas",
+        }[audience_choice]
+        campaign_type = "recuperacion_clientes_inactivos" if audience_choice == "inactive" else "general"
+        audience_count = _campaign_audience_count(
+            current_user.company_id,
+            audience_segment=audience_segment,
+            campaign_type=campaign_type,
+            client_segment=client_segment if audience_choice == "notes" else "",
+            days=days,
+        )
+        if audience_count < 1:
+            flash("No hay destinatarios con WhatsApp y consentimiento documentado en esta audiencia.", "warning")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        try:
+            draft = CampaignService.create_draft(
+                company_id=current_user.company_id,
+                user_id=current_user.id,
+                title=title,
+                objective=objective,
+                campaign_type=campaign_type,
+                content=content,
+                system_data={
+                    "channel": "whatsapp",
+                    "client_segment": client_segment if audience_choice == "notes" else "",
+                    "days": days,
+                    "scheduled_at": scheduled_at.isoformat() + "Z" if scheduled_at else "",
+                    "whatsapp_template": template,
+                },
+                audience_segment=audience_segment,
+                audience_count=audience_count,
+                product_id=product_id,
+            )
+            preview = _render_content(
+                draft,
+                SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
+            )
+            if len(preview) > 900:
+                raise ValueError("El mensaje, incluida la instrucción de baja, supera los 900 caracteres.")
+            draft.scheduled_at = scheduled_at
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        flash("Borrador creado. Revisá la audiencia y la vista previa antes de solicitar aprobación.", "success")
+        return redirect(url_for("ai_agents.campaign_detail", campaign_id=draft.id))
+
+    audience_count = _campaign_audience_preview(current_user.company_id, "all")["eligible"]
+    inactive_audience_count = _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
+    return render_template(
+        "ai_agents/campaign_wizard.html",
+        template=template,
+        template_error=template_error,
+        products=products,
+        opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
+        audience_count=audience_count,
+        inactive_audience_count=inactive_audience_count,
+        schedule_local="",
+        **_context(),
+    )
+
+
+@bp.post("/campanas/audiencia-preview")
+@company_admin_required
+def campaign_audience_preview():
+    if not can_use_ai_feature(_current_active_company(), "marketing").allowed:
+        return jsonify({"success": False, "error": "Marketing IA requiere IA PRO."}), 403
+    payload = request.get_json(silent=True) or {}
+    audience = str(payload.get("audience") or "all").strip()
+    segment = str(payload.get("client_segment") or "").strip()[:80]
+    if audience not in {"all", "inactive", "notes"}:
+        return jsonify({"success": False, "error": "Seleccioná una audiencia válida."}), 400
+    if audience == "notes" and not segment:
+        return jsonify({"success": True, "eligible": 0, "excluded": 0})
+    try:
+        days = max(1, min(int(payload.get("days") or 90), 365))
+        result = _campaign_audience_preview(
+            current_user.company_id,
+            "all" if audience == "notes" else audience,
+            client_segment=segment if audience == "notes" else "",
+            days=days,
+        )
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "El período de inactividad no es válido."}), 400
+    return jsonify({"success": True, **result})
 
 
 @bp.post("/vendedor/webchat/toggle")
@@ -1345,12 +1619,11 @@ def campaign_edit(campaign_id):
                 campaign_data = {}
             campaign_data["channel"] = "whatsapp"
             campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
-            raw_schedule = str(request.form.get("scheduled_at") or "").strip()
+            raw_schedule = str(
+                request.form.get("scheduled_at_utc") or request.form.get("scheduled_at") or ""
+            ).strip()
             if raw_schedule:
-                try:
-                    campaign.scheduled_at = datetime.fromisoformat(raw_schedule).replace(tzinfo=None)
-                except ValueError:
-                    raise ValueError("La fecha de programación no es válida.")
+                campaign.scheduled_at = _parse_campaign_schedule(raw_schedule)
             else:
                 campaign.scheduled_at = None
         db.session.commit()

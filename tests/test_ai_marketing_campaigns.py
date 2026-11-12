@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timezone
 
 from services.ai_agent.campaign_service import CampaignService
 from services.ai_agent.tenant_campaign_service import (
@@ -11,8 +12,29 @@ from services.ai_agent.tenant_campaign_service import (
 )
 
 
+def _consent_evidence():
+    return {
+        "whatsapp_marketing_consent_recorded_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        "whatsapp_marketing_consent_source": "test_fixture",
+        "whatsapp_marketing_consent_evidence": "Explicit opt-in recorded for the test.",
+    }
+
+
+@pytest.fixture(autouse=True)
+def mock_approved_campaign_template(monkeypatch):
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+        lambda connection: {
+            "name": connection.get("template_name"),
+            "language": connection.get("template_language") or "es_AR",
+            "body_text": "Hola {{1}}, {{2}}. {{3}}",
+            "status": "APPROVED",
+        },
+    )
+
+
 def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch):
-    from app import Campaign, Client, Company, User, db
+    from app import Client, Company, User, db
 
     with app.app_context():
         company_a = Company(name="Marketing A", active=True)
@@ -27,9 +49,9 @@ def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch
         db.session.add_all([user_a, user_b])
         db.session.flush()
 
-        opted = Client(name="Optado", email="optado@example.com", whatsapp="5491122334455", company_id=company_a.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True)
+        opted = Client(name="Optado", email="optado@example.com", whatsapp="5491122334455", company_id=company_a.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True, **_consent_evidence())
         blocked = Client(name="Bloqueado", email="blocked@example.com", company_id=company_a.id, email_marketing_consent="opted_in", whatsapp_marketing_consent="unknown", active=True)
-        other = Client(name="Otra empresa", email="other@example.com", whatsapp="5491133445566", company_id=company_b.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True)
+        other = Client(name="Otra empresa", email="other@example.com", whatsapp="5491133445566", company_id=company_b.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True, **_consent_evidence())
         db.session.add_all([opted, blocked, other])
         db.session.flush()
 
@@ -46,9 +68,12 @@ def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch
         db.session.commit()
         CampaignService.transition(company_id=company_a.id, campaign_id=campaign.id, target_status="PENDIENTE_APROBACION", user_id=user_a.id)
         CampaignService.transition(company_id=company_a.id, campaign_id=campaign.id, target_status="APROBADA", user_id=user_a.id)
-        prepare_recipients(campaign.id, company_id=company_a.id)
+        first_preparation = prepare_recipients(campaign.id, company_id=company_a.id)
+        second_preparation = prepare_recipients(campaign.id, company_id=company_a.id)
 
         rows = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+        assert first_preparation["added"] == 1
+        assert second_preparation["added"] == 0
         assert {(row.client_id, row.channel) for row in rows} == {(opted.id, "whatsapp")}
         assert TenantCampaignRecipient.query.filter_by(company_id=company_b.id).count() == 0
 
@@ -65,7 +90,7 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
         user.set_password("password123")
         db.session.add(user)
         db.session.flush()
-        client = Client(name="Cliente Venta", email="sale@example.com", whatsapp="5491122334455", company_id=company.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True)
+        client = Client(name="Cliente Venta", email="sale@example.com", whatsapp="5491122334455", company_id=company.id, email_marketing_consent="unknown", whatsapp_marketing_consent="opted_in", active=True, **_consent_evidence())
         db.session.add(client)
         db.session.flush()
 
@@ -326,6 +351,7 @@ def test_dispatch_can_be_scoped_to_one_campaign(app, monkeypatch):
             email_marketing_consent="unknown",
             whatsapp_marketing_consent="opted_in",
             active=True,
+            **_consent_evidence(),
         )
         db.session.add_all([user, client])
         db.session.flush()
@@ -391,7 +417,7 @@ def test_in_process_campaign_workers_start_only_in_gunicorn_worker():
 
 
 
-def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
+def test_whatsapp_campaign_does_not_use_general_phone_as_whatsapp(app, monkeypatch):
     from app import Campaign, Client, Company, User, db
 
     with app.app_context():
@@ -411,6 +437,7 @@ def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
             company_id=company.id,
             active=True,
             whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
         )
         db.session.add_all([user, client])
         db.session.flush()
@@ -444,9 +471,8 @@ def test_whatsapp_campaign_normalizes_argentina_local_number(app, monkeypatch):
         )
 
         prepared = prepare_recipients(campaign.id, company_id=company.id)
-        recipient = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, channel="whatsapp").one()
-        assert prepared["added"] == 1
-        assert recipient.destination == "5493624228396"
+        assert prepared["added"] == 0
+        assert TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, channel="whatsapp").count() == 0
 
 
 
@@ -482,9 +508,11 @@ def test_tenant_crm_whatsapp_campaigns_use_shared_stockarmobile_vendedor_number(
         client = Client(
             name="Cliente autorizado",
             phone="3624228396",
+            whatsapp="3624228396",
             company_id=tenant.id,
             active=True,
             whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
         )
         db.session.add_all([user, client])
         db.session.flush()
@@ -612,6 +640,7 @@ def test_shared_campaign_reply_resolution_fails_closed_when_contact_has_multiple
                 company_id=company.id,
                 active=True,
                 whatsapp_marketing_consent="opted_in",
+                **_consent_evidence(),
             )
             db.session.add_all([user, client])
             db.session.flush()
@@ -682,6 +711,147 @@ def test_shared_campaign_reply_resolution_fails_closed_when_contact_has_multiple
             sender="5493624000000",
         ) is None
 
+
+def test_shared_campaign_reply_checks_tenant_ambiguity_beyond_first_hundred(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import resolve_shared_campaign_reply
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        tenant_a = Company(name="Large tenant", active=True)
+        tenant_b = Company(name="Older tenant", active=True)
+        db.session.add_all([platform, tenant_a, tenant_b])
+        db.session.flush()
+        campaigns = []
+        for index, company in enumerate((tenant_a, tenant_b), start=1):
+            user = User(
+                username=f"large-reply-{index}",
+                email=f"large-reply-{index}@example.com",
+                role="admin",
+                active=True,
+                company_id=company.id,
+            )
+            user.set_password("password123")
+            db.session.add(user)
+            db.session.flush()
+            campaign = CampaignService.create_draft(
+                company_id=company.id,
+                user_id=user.id,
+                title=f"Large reply campaign {index}",
+                objective="Resolve safely",
+                campaign_type="general",
+                content="Hola",
+                system_data={},
+                audience_segment="clientes activos",
+                audience_count=101,
+            )
+            campaigns.append(campaign)
+        clients = [
+            Client(
+                name=f"Client {index}",
+                whatsapp="5493624000000",
+                company_id=tenant_a.id,
+                active=True,
+            )
+            for index in range(101)
+        ]
+        clients.append(Client(
+            name="Older duplicate",
+            whatsapp="5493624000000",
+            company_id=tenant_b.id,
+            active=True,
+        ))
+        db.session.add_all(clients)
+        db.session.flush()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        recipients = [
+            TenantCampaignRecipient(
+                campaign_id=campaigns[0].id,
+                company_id=tenant_a.id,
+                client_id=client.id,
+                channel="whatsapp",
+                destination="5493624000000",
+                unsubscribe_token=f"large-reply-{index}",
+                status="sent",
+                provider_message_id=f"wamid.large-{index}",
+                sent_at=now - timedelta(minutes=index + 1),
+            )
+            for index, client in enumerate(clients[:101])
+        ]
+        recipients.append(TenantCampaignRecipient(
+            campaign_id=campaigns[1].id,
+            company_id=tenant_b.id,
+            client_id=clients[-1].id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="large-reply-older-tenant",
+            status="sent",
+            provider_message_id="wamid.large-older-tenant",
+            sent_at=now - timedelta(minutes=102),
+        ))
+        db.session.add_all(recipients)
+        db.session.commit()
+        monkeypatch.setattr("services.saas_commercial_whatsapp.get_commercial_company", lambda: platform)
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda company: {"phone_number_id": "shared-large", "enabled": True}
+            if company.id == platform.id else {},
+        )
+
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-large",
+            sender="5493624000000",
+        ) is None
+
+
+def test_whatsapp_consent_updates_are_audited_and_idempotent(app):
+    from app import Client, Company, WhatsAppConsentEvent, db
+    from services.whatsapp_consent_service import record_whatsapp_consent
+
+    with app.app_context():
+        company = Company(name="Consent audit", active=True)
+        db.session.add(company)
+        db.session.flush()
+        client = Client(name="Opt-in contact", company_id=company.id, active=True)
+        db.session.add(client)
+        db.session.flush()
+        record_whatsapp_consent(
+            client,
+            "opted_in",
+            source="crm_form",
+            evidence="Web form confirmation recorded 2026-11-10.",
+            actor_user_id=None,
+        )
+        db.session.commit()
+        record_whatsapp_consent(
+            client,
+            "opted_out",
+            source="whatsapp_reply",
+            evidence="STOP received; message ID wamid.audit-1.",
+        )
+        db.session.commit()
+        record_whatsapp_consent(
+            client,
+            "opted_out",
+            source="whatsapp_reply",
+            evidence="STOP received; message ID wamid.audit-1.",
+        )
+        db.session.commit()
+
+        events = WhatsAppConsentEvent.query.filter_by(client_id=client.id).order_by(
+            WhatsAppConsentEvent.id.asc()
+        ).all()
+        assert [(event.previous_status, event.new_status) for event in events] == [
+            ("unknown", "opted_in"),
+            ("opted_in", "opted_out"),
+        ]
+        assert client.whatsapp_marketing_consent_recorded_at is not None
+        assert client.whatsapp_marketing_consent == "opted_out"
 
 
 def test_legacy_queued_tenant_email_recipient_is_skipped_never_sent(app, monkeypatch):

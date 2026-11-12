@@ -34,6 +34,24 @@ def _marketing_consent_form_value(name, current="unknown"):
     return value
 
 
+def _record_client_whatsapp_consent(client, status, *, source):
+    evidence = str(request.form.get("whatsapp_marketing_consent_evidence") or "").strip()
+    if status == "opted_in" and not evidence:
+        raise ValueError("Para habilitar campañas, registrá cómo y cuándo el cliente autorizó los mensajes de WhatsApp.")
+    from services.whatsapp_consent_service import record_whatsapp_consent
+    if status == "opted_out":
+        evidence = "Permiso de WhatsApp retirado desde el formulario de clientes."
+    elif status == "unknown":
+        evidence = "Estado de permiso de WhatsApp marcado como desconocido desde el formulario de clientes."
+    record_whatsapp_consent(
+        client,
+        status,
+        source=source,
+        evidence=evidence,
+        actor_user_id=getattr(current_user, "id", None),
+    )
+
+
 def _coerce_payload():
     payload = request.get_json(silent=True)
     if isinstance(payload, dict):
@@ -226,11 +244,11 @@ def import_excel():
                 else:
                     was_active = bool(client.active)
                     updated += 1
-                    apply_record(client, record)
+                    apply_record(client, record, actor_user_id=current_user.id)
                     if not was_active and client.active:
                         reactivated += 1
                     continue
-                apply_record(client, record)
+                apply_record(client, record, actor_user_id=current_user.id)
 
             db.session.commit()
         except Exception:
@@ -328,7 +346,6 @@ def post():
         phone=request.form.get("phone") or None,
         whatsapp=request.form.get("whatsapp") or None,
         email_marketing_consent=email_consent,
-        whatsapp_marketing_consent=whatsapp_consent,
         birthday=_date_form("birthday"),
         balance=_float_form("balance"),
         credit_limit=_float_form("credit_limit"),
@@ -347,6 +364,12 @@ def post():
         flash(str(exc), "danger")
         return redirect(url_for("clients.index"))
     db.session.add(client)
+    try:
+        _record_client_whatsapp_consent(client, whatsapp_consent, source="client_form")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(url_for("clients.index"))
     db.session.commit()
     flash("Cliente creado exitosamente.", "success")
     return redirect(url_for("clients.index"))
@@ -379,7 +402,11 @@ def edit(client_id=None, id=None):
         client.phone = request.form.get("phone") or None
         client.whatsapp = request.form.get("whatsapp") or None
         client.email_marketing_consent = email_consent
-        client.whatsapp_marketing_consent = whatsapp_consent
+        try:
+            _record_client_whatsapp_consent(client, whatsapp_consent, source="client_form")
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("clients.edit", id=client.id))
         client.birthday = _date_form("birthday")
         client.balance = _float_form("balance")
         client.credit_limit = _float_form("credit_limit")

@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import re
+import unicodedata
 import uuid
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
@@ -159,6 +160,105 @@ def _record_commercial_campaign_status(status_rows):
                 ))
                 updated += 1
     return updated
+
+
+def _record_tenant_campaign_status(status_rows):
+    from app import Campaign
+    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+
+    updated = 0
+    for phone_number_id, message_id, state, _recipient_id, raw_status in status_rows:
+        if not is_commercial_phone_number_id(phone_number_id):
+            continue
+        recipient = TenantCampaignRecipient.query.filter_by(
+            provider_message_id=message_id,
+            channel="whatsapp",
+        ).first()
+        if recipient is None:
+            continue
+        now = utcnow_naive()
+        recipient.provider_status = state
+        if state == "delivered":
+            recipient.delivered_at = recipient.delivered_at or now
+            updated += 1
+        elif state == "read":
+            recipient.read_at = recipient.read_at or now
+            recipient.delivered_at = recipient.delivered_at or now
+            updated += 1
+        elif state == "failed":
+            errors = raw_status.get("errors") or []
+            recipient.error_reason = str(
+                (errors[0].get("title") or errors[0].get("message"))
+                if errors and isinstance(errors[0], dict)
+                else "WhatsApp no pudo entregar el mensaje."
+            )[:2000]
+            if recipient.status == "sent":
+                recipient.status = "failed"
+                campaign = Campaign.query.filter_by(
+                    id=recipient.campaign_id,
+                    company_id=recipient.company_id,
+                ).first()
+                if campaign is not None:
+                    campaign.sent_count = TenantCampaignRecipient.query.filter_by(
+                        campaign_id=campaign.id, status="sent"
+                    ).count()
+                    campaign.failed_count = TenantCampaignRecipient.query.filter_by(
+                        campaign_id=campaign.id, status="failed"
+                    ).count()
+                    if campaign.status in {"ENVIADA", "ENVIADA_PARCIAL"}:
+                        campaign.status = "ENVIADA_PARCIAL" if campaign.sent_count else "FALLIDA"
+                updated += 1
+    return updated
+
+
+def _is_whatsapp_opt_out(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(text or "").strip().lower())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized in {
+        "stop", "baja", "cancelar", "cancela", "unsubscribe", "quit", "parar",
+        "no mas", "no recibir", "dejar de recibir",
+    }
+
+
+def _process_shared_saas_campaign_opt_out(*, phone_number_id: str, sender: str) -> bool:
+    if not is_commercial_phone_number_id(phone_number_id):
+        return False
+    from app import SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent
+    from services.saas_commercial_service import normalize_phone
+
+    normalized_sender = normalize_phone(sender)
+    if not normalized_sender:
+        return False
+    sent_lead_ids = [
+        row[0] for row in SaaSCampaignRecipient.query.filter(
+            SaaSCampaignRecipient.channel == "whatsapp",
+            SaaSCampaignRecipient.destination == normalized_sender,
+            SaaSCampaignRecipient.status.in_(("sent", "delivered", "read")),
+        ).with_entities(SaaSCampaignRecipient.lead_id).distinct().all()
+    ]
+    if not sent_lead_ids:
+        return False
+    now = utcnow_naive()
+    leads = SaaSLead.query.filter(SaaSLead.id.in_(sent_lead_ids)).all()
+    for lead in leads:
+        lead.whatsapp_consent_status = "opted_out"
+        consent = SaaSLeadConsent.query.filter_by(lead_id=lead.id).first()
+        if consent is None:
+            consent = SaaSLeadConsent(
+                lead_id=lead.id,
+                email_status="unknown",
+                whatsapp_status="opted_out",
+                phone_status="unknown",
+            )
+            db.session.add(consent)
+        consent.whatsapp_status = "opted_out"
+        consent.whatsapp_source = "whatsapp_reply"
+        consent.revoked_at = consent.revoked_at or now
+        consent.updated_at = now
+    db.session.commit()
+    return bool(leads)
 
 
 def _get_or_create_conversation(company_id: int, sender: str, branch_id: int | None = None):
@@ -579,6 +679,23 @@ def _process_shared_tenant_campaign_reply(
     if recipient is None:
         return False
 
+    platform_company = get_commercial_company()
+    platform_connection = get_whatsapp_connection(platform_company) if platform_company is not None else {}
+    if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
+        return False
+    if _is_whatsapp_opt_out(text):
+        from services.whatsapp_consent_service import record_whatsapp_consent
+        record_whatsapp_consent(
+            recipient.client,
+            "opted_out",
+            source="whatsapp_reply",
+            evidence=(
+                f"El cliente solicitó la baja por WhatsApp; mensaje entrante ID {str(external_id or '')[:255]}."
+            ),
+        )
+        db.session.commit()
+        return True
+
     company = Company.query.filter_by(id=int(recipient.company_id), active=True).first()
     if company is None:
         return False
@@ -591,10 +708,6 @@ def _process_shared_tenant_campaign_reply(
         )
         return False
 
-    platform_company = get_commercial_company()
-    platform_connection = get_whatsapp_connection(platform_company) if platform_company is not None else {}
-    if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
-        return False
     platform_sender_ready = bool(
         platform_connection.get("enabled") and platform_connection.get("access_token")
     )
@@ -1575,7 +1688,9 @@ def webhook():
     processed, errors = 0, []
     retryable_errors = False
     try:
-        _record_commercial_campaign_status(_extract_statuses(payload))
+        statuses = list(_extract_statuses(payload))
+        _record_commercial_campaign_status(statuses)
+        _record_tenant_campaign_status(statuses)
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -1585,6 +1700,26 @@ def webhook():
 
     for phone_number_id, sender, external_id, text, context_message_id, message_type in _extract_messages(payload):
         try:
+            if _is_whatsapp_opt_out(text) and is_commercial_phone_number_id(phone_number_id):
+                saas_opted_out = _process_shared_saas_campaign_opt_out(
+                    phone_number_id=phone_number_id,
+                    sender=sender,
+                )
+                tenant_opted_out = _process_shared_tenant_campaign_reply(
+                    phone_number_id=phone_number_id,
+                    sender=sender,
+                    external_id=external_id,
+                    text=text,
+                    context_message_id=context_message_id,
+                    message_type=message_type,
+                )
+                if not saas_opted_out and not tenant_opted_out:
+                    current_app.logger.info(
+                        "WhatsApp opt-out received without a uniquely attributable campaign; message_id=%s",
+                        external_id,
+                    )
+                processed += 1
+                continue
             if is_commercial_phone_number_id(phone_number_id):
                 try:
                     if _process_shared_tenant_campaign_reply(

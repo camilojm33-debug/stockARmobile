@@ -141,6 +141,7 @@
                     </div>
                   </div>
                   <div id="commercial-template-status" class="small text-muted mt-2" role="status" aria-live="polite"></div>
+                  <div id="commercial-template-preview" class="small border rounded-3 p-2 mt-2 d-none" aria-live="polite"></div>
                   {% if commercial_template_env_locked %}
                     <div class="alert alert-info small mt-2 mb-0">Render tiene una plantilla configurada por variable de entorno. Esa variable tiene prioridad sobre la selección guardada aquí.</div>
                   {% endif %}
@@ -232,11 +233,33 @@
   const select = document.getElementById('commercial-template-select');
   const save = document.getElementById('commercial-template-save');
   const status = document.getElementById('commercial-template-status');
+  const preview = document.getElementById('commercial-template-preview');
   const templateInput = document.querySelector('input[name="template_name"]');
   const languageInput = document.querySelector('input[name="template_language"]');
   if (!refresh || !select || !save || !status) return;
   let templates = [];
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  function selectedTemplate() {
+    const parts = String(select.value || '').split('|');
+    return templates.find(item => parts.length === 2 && item.name === parts[0] && item.language === parts[1]) || null;
+  }
+
+  function updateSelection() {
+    const item = selectedTemplate();
+    save.disabled = !item || !item.campaign_compatible;
+    if (preview) {
+      preview.classList.toggle('d-none', !item);
+      preview.textContent = item
+        ? (item.campaign_compatible
+          ? 'Compatible con campañas: ' + item.body_text
+          : 'No compatible con el mensaje editable de campañas. Requiere {{1}}, {{2}} y {{3}}. Plantilla: ' + item.body_text)
+        : '';
+    }
+    if (item && !item.campaign_compatible) {
+      setStatus('Esta plantilla está aprobada, pero no es compatible con campañas editables.', true);
+    }
+  }
 
   function setStatus(message, error) {
     status.textContent = String(message || '');
@@ -263,7 +286,7 @@
       templates.forEach(function (item) {
         const option = document.createElement('option');
         option.value = item.name + '|' + item.language;
-        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category;
+        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category + (item.campaign_compatible ? ' · compatible' : ' · incompatible');
         select.appendChild(option);
       });
       const selected = data.selected || {};
@@ -272,8 +295,10 @@
         select.value = key;
       }
       select.disabled = false;
-      save.disabled = false;
-      setStatus(templates.length + ' plantilla(s) aprobada(s) disponible(s).');
+      updateSelection();
+      if (!selectedTemplate() || selectedTemplate().campaign_compatible) {
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponible(s).');
+      }
     } catch (error) {
       select.innerHTML = '<option value="">No se pudo sincronizar</option>';
       setStatus(error.message || 'Error al sincronizar con Meta.', true);
@@ -310,6 +335,7 @@
   }
 
   refresh.addEventListener('click', syncTemplates);
+  select.addEventListener('change', updateSelection);
   save.addEventListener('click', saveTemplate);
   syncTemplates();
 })();

@@ -1,0 +1,180 @@
+{% extends "base_master.html" %}
+{% block title %}Crear campaña - Marketing IA{% endblock %}
+{% block extra_css %}
+<style>
+.campaign-wizard{max-width:980px;margin:0 auto}
+.campaign-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.5rem}
+.campaign-step{border:1px solid var(--app-line);border-radius:12px;padding:.7rem;text-align:center;color:var(--app-muted);font-size:.84rem}
+.campaign-step.active{border-color:var(--bs-primary);color:var(--bs-primary);background:rgba(37,99,235,.06);font-weight:700}
+.campaign-pane{display:none}.campaign-pane.active{display:block}
+.campaign-template-preview{white-space:pre-wrap;min-height:120px;border:1px solid var(--app-line);border-radius:12px;padding:1rem;background:var(--app-panel-soft)}
+@media(max-width:640px){.campaign-step{padding:.5rem .25rem;font-size:.7rem}.campaign-step span{display:none}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="app-shell campaign-wizard">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div><span class="page-kicker"><i class="bi bi-stars"></i> Marketing IA · IA PRO</span><h1 class="h3 fw-bold mb-1">Crear campaña</h1><p class="text-muted mb-0">Definí la audiencia y el mensaje; la campaña queda como borrador para revisión y aprobación.</p></div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Volver a campañas</a>
+  </div>
+  {% if template_error %}<div class="alert alert-danger" role="alert"><strong>No se puede validar la plantilla de WhatsApp.</strong> {{ template_error }} La campaña no podrá aprobarse hasta resolverlo.</div>{% endif %}
+  <div class="card app-card"><div class="card-body p-3 p-md-4">
+    <div class="campaign-steps mb-4" aria-label="Pasos de la campaña">
+      {% for label in ['Objetivo','Audiencia','Mensaje','Programación','Confirmación'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
+    </div>
+    <form method="post" id="campaignWizardForm" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <section class="campaign-pane active" data-step="1">
+        <h2 class="h4 fw-bold">1. ¿Qué querés lograr?</h2><p class="text-muted">Este contexto guía la propuesta y facilita revisar el resultado.</p>
+        <div class="row g-3">
+          <div class="col-md-7"><label class="form-label">Nombre de campaña</label><input class="form-control" name="title" maxlength="180" required placeholder="Ej. Volvé a visitarnos"></div>
+          <div class="col-md-5"><label class="form-label">Objetivo</label><select class="form-select" name="objective" required><option value="">Elegir objetivo…</option><option>Recuperar clientes</option><option>Promocionar un producto</option><option>Informar una novedad</option><option>Fidelizar clientes</option></select></div>
+        </div>
+      </section>
+      <section class="campaign-pane" data-step="2">
+        <h2 class="h4 fw-bold">2. Elegí la audiencia</h2><p class="text-muted">Solo se consideran contactos activos, con número de WhatsApp explícito y consentimiento documentado.</p>
+        <div class="row g-3">
+          <div class="col-md-7"><label class="form-label">Segmento</label><select class="form-select" name="audience" id="campaignAudience"><option value="all">Todos los clientes elegibles</option><option value="inactive">Clientes sin compras recientes</option><option value="notes">Etiqueta en notas del cliente</option></select></div>
+          <div class="col-md-5" id="campaignDaysWrap"><label class="form-label">Días sin compra</label><input class="form-control" type="number" min="1" max="365" name="days" id="campaignDays" value="90"></div>
+          <div class="col-12 d-none" id="campaignSegmentWrap"><label class="form-label">Texto de etiqueta / filtro</label><input class="form-control" name="client_segment" id="campaignSegment" maxlength="80" placeholder="Ej. mayorista"><div class="form-text">Se busca en las notas internas del cliente.</div></div>
+        </div>
+        <div class="alert alert-primary mt-3 mb-2"><strong><span id="campaignAudienceCount">{{ audience_count }}</span> destinatarios elegibles estimados</strong><div class="small mt-1"><span id="campaignAudienceExcluded">Se excluyen clientes sin consentimiento registrado, sin WhatsApp o inactivos.</span></div></div>
+        <div class="small text-muted">La audiencia se vuelve a validar al aprobar y justo antes de cada envío; los cambios recientes de teléfono o consentimiento se respetan.</div>
+      </section>
+      <section class="campaign-pane" data-step="3">
+        <h2 class="h4 fw-bold">3. Escribí el mensaje</h2><p class="text-muted">El mensaje se envía en el parámetro editable de una plantilla Meta aprobada y compatible.</p>
+        {% if template %}
+        <div class="alert alert-success py-2"><i class="bi bi-patch-check me-1"></i>Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }}</div>
+        {% else %}
+        <div class="alert alert-warning">Sin una plantilla aprobada compatible, la campaña no se puede aprobar.</div>
+        {% endif %}
+        <label class="form-label">Mensaje para el cliente</label><textarea class="form-control" name="content" id="campaignContent" rows="6" maxlength="900" required placeholder="Escribí el texto que recibirán tus clientes"></textarea>
+        <div class="d-flex justify-content-between small text-muted mt-1"><span>Máximo 900 caracteres, incluida la instrucción de baja.</span><span><span id="campaignContentLength">0</span>/900</span></div>
+        <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
+        <div class="small text-muted mt-2">Se agrega la instrucción “{{ opt_out_text }}” y se reemplazan cliente y producto antes del envío.</div>
+        <div class="mt-3"><label class="form-label">Producto (opcional)</label><select class="form-select" name="product_id" id="campaignProduct"><option value="">Varios / sin producto</option>{% for product in products %}<option value="{{ product.id }}" data-price="{{ product.price }}">{{ product.name }}</option>{% endfor %}</select></div>
+      </section>
+      <section class="campaign-pane" data-step="4">
+        <h2 class="h4 fw-bold">4. ¿Cuándo querés enviarla?</h2><p class="text-muted">Podés dejarla sin programar. La hora ingresada se interpreta en la zona horaria del comercio: {{ company.timezone if company and company.timezone else 'America/Argentina/Buenos_Aires' }}.</p>
+        <label class="form-label">Fecha y hora local (opcional)</label><input class="form-control" type="datetime-local" name="scheduled_at" id="campaignScheduledAt">
+        <input type="hidden" name="scheduled_at_utc" id="campaignScheduledAtUtc">
+        <div class="form-text">Si no seleccionás una fecha, la campaña empezará cuando un administrador la apruebe.</div>
+      </section>
+      <section class="campaign-pane" data-step="5">
+        <h2 class="h4 fw-bold">5. Confirmá el borrador</h2><p class="text-muted">Todavía no se enviará ningún mensaje. Luego podrás revisar destinatarios, previsualización y resultados antes de aprobar.</p>
+        <div class="border rounded-3 p-3 mb-3"><div class="fw-semibold" id="campaignReviewTitle">Nombre de campaña</div><div class="small text-muted" id="campaignReviewObjective">Objetivo</div><hr><div class="small"><strong>Audiencia:</strong> <span id="campaignReviewAudience">Todos los clientes elegibles</span> · <span id="campaignReviewCount">{{ audience_count }}</span> elegibles</div><div class="small mt-2"><strong>Plantilla:</strong> {{ template.name if template else 'No disponible' }}</div></div>
+        <label class="form-label">Resumen del mensaje</label><div class="campaign-template-preview" id="campaignReviewMessage"></div>
+        <div class="alert alert-warning small mt-3 mb-0"><i class="bi bi-shield-check me-1"></i>Crear el borrador no envía nada. La aprobación requiere IA PRO, plantilla compatible y consentimiento documentado.</div>
+      </section>
+      <div class="d-flex justify-content-between gap-2 mt-4 pt-3 border-top">
+        <button class="btn btn-outline-secondary" type="button" id="campaignBack" disabled><i class="bi bi-arrow-left me-1"></i>Anterior</button>
+        <button class="btn btn-primary" type="button" id="campaignNext">Siguiente<i class="bi bi-arrow-right ms-1"></i></button>
+        <button class="btn btn-success d-none" type="submit" id="campaignSubmit" {% if not template %}disabled{% endif %}><i class="bi bi-check2-circle me-1"></i>Guardar borrador</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+<script>
+(function () {
+  const form = document.getElementById("campaignWizardForm");
+  if (!form) return;
+  const panes = Array.from(form.querySelectorAll(".campaign-pane"));
+  const indicators = Array.from(document.querySelectorAll("[data-step-indicator]"));
+  const back = document.getElementById("campaignBack");
+  const next = document.getElementById("campaignNext");
+  const submit = document.getElementById("campaignSubmit");
+  let step = 1;
+  const showStep = function (number) {
+    step = number;
+    panes.forEach(function (pane) { pane.classList.toggle("active", Number(pane.dataset.step) === step); });
+    indicators.forEach(function (item) { item.classList.toggle("active", Number(item.dataset.stepIndicator) === step); });
+    back.disabled = step === 1;
+    next.classList.toggle("d-none", step === 5);
+    submit.classList.toggle("d-none", step !== 5);
+    if (step === 5) updateReview();
+  };
+  const checkCurrentStep = function () {
+    const pane = panes.find(function (item) { return Number(item.dataset.step) === step; });
+    const fields = Array.from(pane.querySelectorAll("[required]"));
+    for (const field of fields) {
+      if (!field.checkValidity()) { field.reportValidity(); return false; }
+    }
+    return true;
+  };
+  next.addEventListener("click", function () { if (checkCurrentStep()) showStep(Math.min(5, step + 1)); });
+  back.addEventListener("click", function () { showStep(Math.max(1, step - 1)); });
+  const content = document.getElementById("campaignContent");
+  const preview = document.getElementById("campaignTemplatePreview");
+  const updatePreview = function () {
+    const templateBody = preview.dataset.templateBody || "";
+    let message = (content.value || "").trim();
+    if (message && !/para dejar de recibir mensajes, respondé baja\./i.test(message)) message += "\n\n{{optout}}";
+    const product = document.getElementById("campaignProduct");
+    const productName = product.selectedOptions.length && product.value ? product.selectedOptions[0].textContent : "Varios";
+    const productPrice = product.selectedOptions.length && product.value ? (product.selectedOptions[0].dataset.price || "") : "";
+    message = message.replace(/\{\{cliente\}\}|\{\{nombre\}\}/gi, "Cliente de ejemplo")
+      .replace(/\{\{telefono\}\}/gi, "5491100000000")
+      .replace(/\{\{producto\}\}/gi, productName)
+      .replace(/\{\{precio\}\}/gi, productPrice);
+    const rendered = templateBody
+      .replace(/\{\{\s*1\s*\}\}/g, "Cliente de ejemplo")
+      .replace(/\{\{\s*2\s*\}\}/g, productName)
+      .replace(/\{\{\s*3\s*\}\}/g, message.replace("{{optout}}", preview.dataset.optOut || ""));
+    preview.textContent = rendered || "La vista previa se actualizará al escribir el mensaje.";
+    document.getElementById("campaignContentLength").textContent = String(content.value.length);
+  };
+  content.addEventListener("input", updatePreview);
+  document.getElementById("campaignProduct").addEventListener("change", updatePreview);
+  const updateReview = function () {
+    document.getElementById("campaignReviewTitle").textContent = form.elements.title.value || "Nombre de campaña";
+    document.getElementById("campaignReviewObjective").textContent = form.elements.objective.value || "Objetivo";
+    document.getElementById("campaignReviewMessage").textContent = preview.textContent;
+    document.getElementById("campaignReviewAudience").textContent = document.getElementById("campaignAudience").selectedOptions[0].textContent;
+    document.getElementById("campaignReviewCount").textContent = document.getElementById("campaignAudienceCount").textContent;
+  };
+  form.addEventListener("submit", function (event) {
+    const requiredFields = Array.from(form.querySelectorAll("[required]"));
+    const invalid = requiredFields.find(function (field) { return !field.checkValidity(); });
+    if (invalid) {
+      event.preventDefault();
+      const ownerPane = invalid.closest(".campaign-pane");
+      showStep(Number(ownerPane.dataset.step));
+      invalid.reportValidity();
+      return;
+    }
+    const scheduled = document.getElementById("campaignScheduledAt").value;
+    document.getElementById("campaignScheduledAtUtc").value = scheduled ? new Date(scheduled).toISOString() : "";
+  });
+  const audience = document.getElementById("campaignAudience");
+  const segment = document.getElementById("campaignSegment");
+  const days = document.getElementById("campaignDays");
+  const refreshAudience = async function () {
+    const selected = audience.value;
+    document.getElementById("campaignDaysWrap").classList.toggle("d-none", selected !== "inactive");
+    document.getElementById("campaignSegmentWrap").classList.toggle("d-none", selected !== "notes");
+    const countLabel = document.getElementById("campaignAudienceCount");
+    const excludedLabel = document.getElementById("campaignAudienceExcluded");
+    const csrf = form.querySelector('input[name="csrf_token"]').value;
+    try {
+      const response = await fetch("{{ url_for('ai_agents.campaign_audience_preview') }}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": csrf},
+        body: JSON.stringify({audience: selected, client_segment: segment.value, days: days.value})
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "No se pudo actualizar la audiencia.");
+      countLabel.textContent = String(payload.eligible);
+      excludedLabel.textContent = payload.excluded + " contacto(s) excluido(s) por falta de WhatsApp válido o consentimiento documentado.";
+      updateReview();
+    } catch (error) {
+      excludedLabel.textContent = error.message || "No se pudo actualizar la audiencia.";
+    }
+  };
+  audience.addEventListener("change", refreshAudience);
+  segment.addEventListener("input", refreshAudience);
+  days.addEventListener("change", refreshAudience);
+  showStep(1);
+  updatePreview();
+})();
+</script>
+{% endblock %}

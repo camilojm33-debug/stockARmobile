@@ -123,6 +123,9 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
             email_marketing_consent="unknown",
             whatsapp_marketing_consent="opted_in",
             active=True,
+            whatsapp_marketing_consent_recorded_at=utcnow_naive(),
+            whatsapp_marketing_consent_source="test",
+            whatsapp_marketing_consent_evidence="Consentimiento otorgado durante la prueba",
         )
         db.session.add_all([user, client])
         db.session.flush()
@@ -154,6 +157,14 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
             lambda: (object(), {"enabled": True, "phone_number_id": "platform-phone", "access_token": "platform-token", "template_name": "approved_template"}),
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+            lambda _connection: {
+                "name": "approved_template",
+                "language": "es_AR",
+                "body_text": "Hola {{1}}: {{3}}",
+            },
         )
         prepare_recipients(campaign.id, company_id=company.id)
         campaign.status = "EN_PREPARACION"

@@ -198,7 +198,8 @@ def test_shared_campaign_reply_attribution_is_fail_closed_across_tenants():
 
     assert "context_message_id" in resolver
     assert "provider_message_id == referenced_id" in resolver
-    assert "tenant_ids = {int(row.company_id) for row in candidates}" in resolver
+    assert ".with_entities(TenantCampaignRecipient.company_id).distinct().limit(2).all()" in resolver
+    assert "TenantCampaignRecipient.company_id == tenant_ids[0]" in resolver
     assert "if len(tenant_ids) != 1:" in resolver
     assert "return None" in resolver
 

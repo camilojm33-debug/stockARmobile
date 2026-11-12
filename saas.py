@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import requests
 import secrets
 import hmac
@@ -6727,7 +6728,7 @@ def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
     version = (os.getenv("META_GRAPH_API_VERSION") or os.getenv("WHATSAPP_GRAPH_API_VERSION") or "v26.0").strip()
     response = requests.get(
         f"https://graph.facebook.com/{version}/{waba_id}/message_templates",
-        params={"fields": "name,status,category,language", "limit": 100},
+        params={"fields": "name,status,category,language,components", "limit": 100},
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=20,
     )
@@ -6743,11 +6744,22 @@ def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
         language = str(item.get("language") or "").strip()
         status = str(item.get("status") or "").upper()
         if name and language and status == "APPROVED":
+            body = next(
+                (
+                    component for component in (item.get("components") or [])
+                    if isinstance(component, dict) and str(component.get("type") or "").upper() == "BODY"
+                ),
+                {},
+            )
+            body_text = str(body.get("text") or "").strip()
+            placeholders = {int(value) for value in re.findall(r"\{\{\s*(\d+)\s*\}\}", body_text)}
             templates.append({
                 "name": name[:120],
                 "language": language[:20],
                 "category": str(item.get("category") or "")[:40],
                 "status": status,
+                "body_text": body_text,
+                "campaign_compatible": placeholders == {1, 2, 3},
             })
     return templates
 
@@ -6803,6 +6815,11 @@ def whatsapp_commercial_template_save():
     match = next((item for item in templates if item["name"] == name and item["language"] == language), None)
     if match is None:
         return jsonify({"success": False, "error": "La plantilla seleccionada no figura aprobada en la WABA comercial."}), 409
+    if not match.get("campaign_compatible"):
+        return jsonify({
+            "success": False,
+            "error": "La plantilla debe incluir {{1}} cliente, {{2}} producto y {{3}} mensaje editable para las campañas del CRM.",
+        }), 409
 
     env_template = str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip()
     if env_template and env_template != name:

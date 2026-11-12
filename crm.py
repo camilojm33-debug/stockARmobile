@@ -362,6 +362,21 @@ def prospect_new():
                 if not getattr(client, field, None) and value_in:
                     setattr(client, field, value_in)
 
+        if str(request.form.get("whatsapp_marketing_opt_in") or "").strip().lower() in {"1", "true", "on", "yes"}:
+            consent_evidence = str(request.form.get("whatsapp_marketing_consent_evidence") or "").strip()
+            if not consent_evidence:
+                db.session.rollback()
+                flash("Indicá cómo y cuándo el prospecto autorizó mensajes de marketing por WhatsApp.", "danger")
+                return render_template("crm/prospect_form.html"), 400
+            from services.whatsapp_consent_service import record_whatsapp_consent
+            record_whatsapp_consent(
+                client,
+                "opted_in",
+                source="crm_prospect_form",
+                evidence=consent_evidence,
+                actor_user_id=current_user.id,
+            )
+
         opportunity = CRMOpportunity(
             company_id=_company_id(),
             client_id=client.id,
@@ -702,11 +717,11 @@ def client_contact(client_id, channel):
         abort(404)
     channel = (channel or "").strip().lower()
     if channel == "whatsapp":
-        raw_phone = str(client.whatsapp or client.phone or "").strip()
+        raw_phone = str(client.whatsapp or "").strip()
         from services.whatsapp_share_service import normalize_whatsapp_number
         phone = normalize_whatsapp_number(raw_phone)
         if not phone:
-            flash("El cliente no tiene un teléfono válido para WhatsApp.", "warning")
+            flash("El cliente no tiene un número de WhatsApp válido registrado.", "warning")
             return redirect(url_for("crm.client_360", client_id=client.id))
         destination = f"https://wa.me/{phone}"
         activity_type = "whatsapp"
@@ -736,7 +751,7 @@ def client_contact(client_id, channel):
 @tenant_required
 @ai_pro_crm_required
 def client_360(client_id):
-    from app import Client, Quote, Sale
+    from app import Client, Quote, Sale, WhatsAppConsentEvent
 
     client = _client_for_company(client_id)
     if not client:
@@ -758,6 +773,9 @@ def client_360(client_id):
 
     opportunities = _opportunity_query().filter(CRMOpportunity.client_id == client.id).order_by(CRMOpportunity.updated_at.desc()).all()
     activities = _activity_query().filter(CRMActivity.client_id == client.id).order_by(CRMActivity.created_at.desc()).limit(50).all()
+    whatsapp_consent_events = WhatsAppConsentEvent.query.filter_by(
+        company_id=_company_id(), client_id=client.id
+    ).order_by(WhatsAppConsentEvent.occurred_at.desc()).limit(20).all()
 
     timeline = []
     for item in activities:
@@ -800,6 +818,7 @@ def client_360(client_id):
         quotes_count=quotes_count,
         opportunities=opportunities,
         activities=activities,
+        whatsapp_consent_events=whatsapp_consent_events,
         timeline=timeline,
         total_spent=total_spent,
         stages=STAGES,

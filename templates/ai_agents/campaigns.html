@@ -199,6 +199,9 @@
           </div>
         </div>
         <div class="crm-hero-actions">
+          <a class="btn btn-success px-3 me-1 mb-2" href="{{ url_for('ai_agents.campaign_wizard') }}">
+            <i class="bi bi-plus-lg me-1"></i>Crear campaña guiada
+          </a>
           <a class="btn btn-primary px-3" href="{{ url_for('crm.index') }}">
             <i class="bi bi-megaphone me-1"></i>Volver al CRM
           </a>
@@ -315,8 +318,8 @@
       <div class="crm-empty-icon"><i class="bi bi-megaphone"></i></div>
       <div class="crm-empty-title">Todavía no tenés campañas</div>
       <p class="crm-empty-copy">Pedile a Marketing IA que prepare una propuesta. Va a quedar guardada como borrador para que la revises antes de aprobar.</p>
-      <a class="btn btn-primary px-3" href="{{ url_for('ai_agents.agent', agent='marketing') }}">
-        <i class="bi bi-stars me-1"></i>Crear una propuesta
+      <a class="btn btn-primary px-3" href="{{ url_for('ai_agents.campaign_wizard') }}">
+        <i class="bi bi-stars me-1"></i>Crear campaña guiada
       </a>
     </div>
     {% endif %}

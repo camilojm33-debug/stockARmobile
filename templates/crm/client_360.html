@@ -4,11 +4,11 @@
 {% include 'crm/_nav.html' %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-person-vcard"></i> Cliente 360°</span><h1 class="h3 fw-bold mb-1">{{ client.name }}</h1><p class="text-muted mb-0">{{ client.whatsapp or client.phone or 'Sin WhatsApp registrado' }}</p></div>
+    <div><span class="page-kicker"><i class="bi bi-person-vcard"></i> Cliente 360°</span><h1 class="h3 fw-bold mb-1">{{ client.name }}</h1><p class="text-muted mb-0">WhatsApp: {{ client.whatsapp or 'Sin WhatsApp registrado' }}</p></div>
     <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Nueva oportunidad</a><a class="btn btn-primary" href="{{ url_for('crm.activities', client_id=client.id) }}">Nuevo seguimiento</a></div>
   </div>
   <div class="card app-card mb-3"><div class="card-body d-flex flex-wrap gap-2 align-items-center">
-    {% if client.whatsapp or client.phone %}
+    {% if client.whatsapp %}
       <form method="post" target="_blank" action="{{ url_for('crm.client_contact', client_id=client.id, channel='whatsapp') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp Web + seguimiento</button></form>
     {% endif %}
     <a class="btn btn-outline-secondary" href="{{ url_for('crm.clients') }}">Volver a clientes</a>
@@ -32,10 +32,17 @@
     <div class="col-xl-5">
       <div class="card app-card mb-4"><div class="card-body">
         <h2 class="h6 fw-bold">Datos de contacto</h2>
-        <div class="small text-muted mb-1">WhatsApp</div><div class="mb-2">{{ client.whatsapp or client.phone or '—' }}</div>
+        <div class="small text-muted mb-1">WhatsApp</div><div class="mb-2">{{ client.whatsapp or '—' }}</div>
+        <div class="small text-muted mb-1">Teléfono general</div><div class="mb-2">{{ client.phone or '—' }}</div>
         <div class="small text-muted mb-1">Dirección</div><div class="mb-2">{{ client.address or '—' }}</div>
         <div class="small text-muted mb-1">Ciudad / provincia</div><div class="mb-2">{{ client.city or '—' }}{% if client.province %}, {{ client.province }}{% endif %}</div>
         <div class="small text-muted mb-1">Canal comercial</div><div>WhatsApp</div>
+      </div></div>
+      <div class="card app-card mb-4"><div class="card-body">
+        <h2 class="h6 fw-bold">Consentimiento de WhatsApp</h2>
+        <div class="mb-2"><span class="badge {% if client.whatsapp_marketing_consent == 'opted_in' %}text-bg-success{% elif client.whatsapp_marketing_consent == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ client.whatsapp_marketing_consent or 'unknown' }}</span></div>
+        {% if client.whatsapp_marketing_consent_recorded_at %}<div class="small text-muted">Registrado {{ client.whatsapp_marketing_consent_recorded_at.strftime('%d/%m/%Y %H:%M') }} · {{ client.whatsapp_marketing_consent_source }}</div><div class="small mt-1 text-break">{{ client.whatsapp_marketing_consent_evidence }}</div>{% else %}<div class="small text-muted">No hay evidencia registrada; no es elegible para campañas.</div>{% endif %}
+        {% if whatsapp_consent_events %}<details class="mt-3"><summary class="small fw-semibold">Historial de consentimiento ({{ whatsapp_consent_events|length }})</summary><div class="mt-2">{% for event in whatsapp_consent_events %}<div class="border-top py-2 small"><strong>{{ event.previous_status }} → {{ event.new_status }}</strong><div class="text-muted">{{ event.occurred_at.strftime('%d/%m/%Y %H:%M') }} · {{ event.source }}{% if event.actor %} · {{ event.actor.username }}{% endif %}</div><div class="text-break">{{ event.evidence }}</div></div>{% endfor %}</div></details>{% endif %}
       </div></div>
       <div class="card app-card mb-4"><div class="card-body"><div class="d-flex justify-content-between gap-2 align-items-center mb-3"><h2 class="h6 fw-bold mb-0">Oportunidades</h2><a class="small" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Crear</a></div>
         {% for item in opportunities %}

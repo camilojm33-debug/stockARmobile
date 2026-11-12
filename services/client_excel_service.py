@@ -39,6 +39,7 @@ IMPORT_FIELDS = (
     "observations",
     "email_marketing_consent",
     "whatsapp_marketing_consent",
+    "whatsapp_marketing_consent_evidence",
     "account_current_enabled",
     "active",
 )
@@ -60,6 +61,7 @@ DISPLAY_HEADERS = {
     "observations": "observaciones",
     "email_marketing_consent": "consentimiento_email",
     "whatsapp_marketing_consent": "consentimiento_whatsapp",
+    "whatsapp_marketing_consent_evidence": "evidencia_consentimiento_whatsapp",
     "account_current_enabled": "cuenta_corriente_habilitada",
     "active": "activo",
 }
@@ -81,6 +83,7 @@ ALIASES = {
     "observations": {"observations", "observaciones", "observacion", "observación"},
     "email_marketing_consent": {"email marketing consent", "email_marketing_consent", "consentimiento email", "consentimiento de email", "marketing email"},
     "whatsapp_marketing_consent": {"whatsapp marketing consent", "whatsapp_marketing_consent", "consentimiento whatsapp", "consentimiento de whatsapp", "marketing whatsapp"},
+    "whatsapp_marketing_consent_evidence": {"whatsapp consent evidence", "whatsapp_marketing_consent_evidence", "evidencia consentimiento whatsapp", "evidencia permiso whatsapp"},
     "account_current_enabled": {"account current enabled", "account_current_enabled", "cuenta corriente habilitada", "cuenta corriente activa", "cc habilitada"},
     "active": {"active", "activo", "estado", "habilitado", "habilitada"},
 }
@@ -308,6 +311,17 @@ def build_records(upload) -> list[dict[str, Any]]:
                     )
                 identity_keys[identity] = row_number
 
+            whatsapp_consent = parse_consent(
+                _cell(raw_row, positions, "whatsapp_marketing_consent"),
+                "consentimiento_whatsapp",
+            )
+            whatsapp_consent_evidence = normalize_text(
+                _cell(raw_row, positions, "whatsapp_marketing_consent_evidence")
+            )
+            if whatsapp_consent == "opted_in" and not whatsapp_consent_evidence:
+                raise ClientImportError(
+                    f"Fila {row_number}: registrá evidencia del consentimiento de WhatsApp antes de habilitar campañas."
+                )
             records.append(
                 {
                     "row_number": row_number,
@@ -326,7 +340,8 @@ def build_records(upload) -> list[dict[str, Any]]:
                     "notes": normalize_text(_cell(raw_row, positions, "notes")) or None,
                     "observations": normalize_text(_cell(raw_row, positions, "observations")) or None,
                     "email_marketing_consent": parse_consent(_cell(raw_row, positions, "email_marketing_consent"), "consentimiento_email"),
-                    "whatsapp_marketing_consent": parse_consent(_cell(raw_row, positions, "whatsapp_marketing_consent"), "consentimiento_whatsapp"),
+                    "whatsapp_marketing_consent": whatsapp_consent,
+                    "whatsapp_marketing_consent_evidence": whatsapp_consent_evidence,
                     "account_current_enabled": parse_bool(_cell(raw_row, positions, "account_current_enabled"), "cuenta_corriente_habilitada", default=False),
                     "active": parse_bool(_cell(raw_row, positions, "active"), "activo", default=True),
                 }
@@ -397,11 +412,23 @@ def resolve_existing(record, lookups):
     return None
 
 
-def apply_record(client, record):
+def apply_record(client, record, *, actor_user_id=None):
     for field in IMPORT_FIELDS:
-        if field == "id":
+        if field in {"id", "whatsapp_marketing_consent", "whatsapp_marketing_consent_evidence"}:
             continue
         setattr(client, field, record[field])
+    from services.whatsapp_consent_service import record_whatsapp_consent
+    status = record["whatsapp_marketing_consent"]
+    record_whatsapp_consent(
+        client,
+        status,
+        source="client_import",
+        evidence=record.get("whatsapp_marketing_consent_evidence") or (
+            "Baja registrada mediante importación de clientes."
+            if status == "opted_out" else ""
+        ),
+        actor_user_id=actor_user_id,
+    )
 
 
 def create_workbook(*, clients, client_stats, include_guide: bool = True) -> BytesIO:
@@ -444,6 +471,7 @@ def create_workbook(*, clients, client_stats, include_guide: bool = True) -> Byt
             client.observations or "",
             client.email_marketing_consent or "unknown",
             client.whatsapp_marketing_consent or "unknown",
+            getattr(client, "whatsapp_marketing_consent_evidence", None) or "",
             "Sí" if client.account_current_enabled else "No",
             "Sí" if client.active else "No",
             stats.get("purchase_count", 0),
@@ -455,8 +483,8 @@ def create_workbook(*, clients, client_stats, include_guide: bool = True) -> Byt
 
     widths = {
         1: 10, 2: 28, 3: 30, 4: 20, 5: 20, 6: 34, 7: 20, 8: 20, 9: 14,
-        10: 16, 11: 14, 12: 16, 13: 34, 14: 34, 15: 24, 16: 26, 17: 24, 18: 12,
-        19: 12, 20: 18, 21: 14, 22: 20,
+        10: 16, 11: 14, 12: 16, 13: 34, 14: 34, 15: 24, 16: 26, 17: 24, 18: 34,
+        19: 18, 20: 12, 21: 12, 22: 18, 23: 14, 24: 20,
     }
     for col_idx, width in widths.items():
         sheet.column_dimensions[get_column_letter(col_idx)].width = width
@@ -471,7 +499,7 @@ def create_workbook(*, clients, client_stats, include_guide: bool = True) -> Byt
             ("Campos obligatorios", "nombre es obligatorio."),
             ("Fechas", "fecha_nacimiento: DD/MM/AAAA o AAAA-MM-DD."),
             ("Valores Sí/No", "cuenta_corriente_habilitada y activo aceptan Sí/No, 1/0, true/false."),
-            ("Consentimientos", "consentimiento_email y consentimiento_whatsapp aceptan unknown, opted_in u opted_out."),
+            ("Consentimientos", "consentimiento_email y consentimiento_whatsapp aceptan unknown, opted_in u opted_out. Para importar opted_in en WhatsApp, completá evidencia_consentimiento_whatsapp."),
             ("Columnas informativas", "compras, total_comprado, presupuestos y total_presupuestado son informativas: el sistema las calcula y no las importa."),
             ("Seguridad", "No se exportan/importan company_id, token de baja de marketing, created_at ni updated_at."),
             ("Límite", f"Máximo {MAX_IMPORT_ROWS} filas por importación."),

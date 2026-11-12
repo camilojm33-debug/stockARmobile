@@ -797,8 +797,12 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i><span class="nav-text">QR y etiquetas</span></a>
       {% endif %}
       <div class="nav-section-label">Comercial</div>
-      {% if ai_feature_crm_allowed %}
+      {% if ai_feature_crm_allowed and ai_feature_crm_permission_allowed %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('crm.') %}active{% endif %}" href="{{ url_for('crm.index') }}"><i class="bi bi-kanban"></i><span class="nav-text">CRM</span></a>
+      {% elif not ai_feature_crm_allowed %}
+      <span class="nav-link text-muted" aria-disabled="true" title="{{ ai_feature_crm_reason }}"><i class="bi bi-lock"></i><span class="nav-text">CRM · requiere IA PRO</span></span>
+      {% else %}
+      <span class="nav-link text-muted" aria-disabled="true" title="Solicitá al administrador el permiso CRM para tu usuario."><i class="bi bi-person-lock"></i><span class="nav-text">CRM · requiere permiso</span></span>
       {% endif %}
       <div class="nav-section-label">Resumen</div>
       <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2"></i><span class="nav-text">Panel principal</span></a>

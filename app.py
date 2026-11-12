@@ -1057,6 +1057,9 @@ class Client(db.Model):
     whatsapp = db.Column(db.String(30))
     email_marketing_consent = db.Column(db.String(20), nullable=False, default="unknown", index=True)
     whatsapp_marketing_consent = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    whatsapp_marketing_consent_recorded_at = db.Column(db.DateTime)
+    whatsapp_marketing_consent_source = db.Column(db.String(40))
+    whatsapp_marketing_consent_evidence = db.Column(db.Text)
     marketing_unsubscribe_token = db.Column(db.String(120), unique=True, index=True)
     birthday = db.Column(db.Date)
     balance = db.Column(MONEY, default=Decimal("0.00"))
@@ -1093,6 +1096,23 @@ class Client(db.Model):
     @property
     def telefono(self):
         return self.phone
+
+
+class WhatsAppConsentEvent(db.Model):
+    __tablename__ = "whatsapp_consent_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    previous_status = db.Column(db.String(20), nullable=False)
+    new_status = db.Column(db.String(20), nullable=False)
+    source = db.Column(db.String(40), nullable=False)
+    evidence = db.Column(db.Text, nullable=False)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    occurred_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    client = db.relationship("Client")
+    actor = db.relationship("User")
 
 
 class Sale(db.Model):
@@ -3216,6 +3236,8 @@ def inject_notifications():
     ai_feature_vendor_allowed = False
     ai_feature_marketing_allowed = False
     ai_feature_crm_allowed = False
+    ai_feature_crm_permission_allowed = False
+    ai_feature_crm_reason = "CRM comercial requiere IA PRO."
     commercial_promotions_allowed = False
     commercial_wholesale_pricing_allowed = False
     ai_employee_access_allowed = False
@@ -3242,7 +3264,13 @@ def inject_notifications():
                 )
                 ai_feature_vendor_allowed = can_use_ai_feature(company, "vendedor").allowed
                 ai_feature_marketing_allowed = can_use_ai_feature(company, "marketing").allowed
-                ai_feature_crm_allowed = can_use_ai_feature(company, "crm").allowed
+                crm_access = can_use_ai_feature(company, "crm")
+                ai_feature_crm_allowed = crm_access.allowed
+                ai_feature_crm_reason = crm_access.reason or ""
+                ai_feature_crm_permission_allowed = (
+                    getattr(current_user, "role", None) in {"admin", "superadmin"}
+                    or _user_has_permission(current_user, "crm")
+                )
                 commercial_promotions_allowed = can_use_commercial_feature(company, "promotions").allowed
                 commercial_wholesale_pricing_allowed = can_use_commercial_feature(company, "wholesale_pricing").allowed
                 ai_employee_access_allowed = (
@@ -3253,6 +3281,9 @@ def inject_notifications():
                 ai_feature_pricing_allowed = False
                 ai_feature_vendor_allowed = False
                 ai_feature_marketing_allowed = False
+                ai_feature_crm_allowed = False
+                ai_feature_crm_permission_allowed = False
+                ai_feature_crm_reason = "No se pudo verificar el acceso a CRM; consultá al administrador."
                 commercial_promotions_allowed = False
                 commercial_wholesale_pricing_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
@@ -3297,6 +3328,8 @@ def inject_notifications():
             "ai_feature_vendor_allowed": ai_feature_vendor_allowed,
             "ai_feature_marketing_allowed": ai_feature_marketing_allowed,
             "ai_feature_crm_allowed": ai_feature_crm_allowed,
+            "ai_feature_crm_permission_allowed": ai_feature_crm_permission_allowed,
+            "ai_feature_crm_reason": ai_feature_crm_reason,
             "commercial_promotions_allowed": commercial_promotions_allowed,
             "commercial_wholesale_pricing_allowed": commercial_wholesale_pricing_allowed,
             "ai_employee_access_allowed": ai_employee_access_allowed,
@@ -3312,6 +3345,8 @@ def inject_notifications():
         "company_feature_enabled": lambda key, default=False: bool(default),
         "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
         "ai_feature_crm_allowed": False,
+        "ai_feature_crm_permission_allowed": False,
+        "ai_feature_crm_reason": "CRM comercial requiere IA PRO.",
         "commercial_wholesale_pricing_allowed": False,
     }
 

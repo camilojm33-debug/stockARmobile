@@ -39,7 +39,9 @@ def test_tenant_crm_requires_ia_pro_route_guards():
 
 def test_tenant_crm_menu_is_plan_gated():
     template = open("templates/base_master.html", encoding="utf-8").read()
-    assert "{% if ai_feature_crm_allowed %}" in template
+    assert "{% if ai_feature_crm_allowed and ai_feature_crm_permission_allowed %}" in template
+    assert "CRM · requiere IA PRO" in template
+    assert "CRM · requiere permiso" in template
     assert "overflow-y: auto;" in template
 
 
@@ -379,6 +381,7 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
         name="Contacto WhatsApp",
         company_id=company.id,
         phone="3624228396",
+        whatsapp="3624228396",
         active=True,
     )
     db.session.add_all([user, client_record])

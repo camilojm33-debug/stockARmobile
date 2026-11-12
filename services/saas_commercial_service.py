@@ -581,12 +581,9 @@ def parse_segment_json(raw: str | None) -> dict:
 
 
 def _lead_whatsapp_destination(lead) -> str | None:
-    """Return normalized WhatsApp destination, preferring the explicit WhatsApp field."""
-    for raw_value in (getattr(lead, "whatsapp", None), getattr(lead, "phone", None)):
-        normalized = normalize_phone(raw_value)
-        if normalized and 8 <= len(normalized) <= 15:
-            return normalized
-    return None
+    """Return a destination only when the lead has an explicit WhatsApp number."""
+    normalized = normalize_phone(getattr(lead, "whatsapp", None))
+    return normalized if normalized and 8 <= len(normalized) <= 15 else None
 
 
 def _eligible_leads_query(channel: str, filters: dict):
@@ -609,10 +606,10 @@ def _eligible_leads_query(channel: str, filters: dict):
     if channel == "whatsapp":
         from sqlalchemy import and_, func, or_
 
-        query = query.filter(or_(
-            and_(SaaSLead.whatsapp.isnot(None), func.length(func.trim(SaaSLead.whatsapp)) > 0),
-            and_(SaaSLead.phone.isnot(None), func.length(func.trim(SaaSLead.phone)) > 0),
-        ))
+        query = query.filter(
+            SaaSLead.whatsapp.isnot(None),
+            func.length(func.trim(SaaSLead.whatsapp)) > 0,
+        )
         return _apply_consent_eligibility(query, SaaSLead, channel)
     raise ValueError("Canal de campaña no soportado.")
 
@@ -644,10 +641,10 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
     email_available = sum(1 for lead in email_candidates.yield_per(1000) if _campaign_email_is_valid(lead))
     from sqlalchemy import and_, func, or_
 
-    whatsapp_candidates = query.filter(or_(
-        and_(SaaSLead.whatsapp.isnot(None), func.length(func.trim(SaaSLead.whatsapp)) > 0),
-        and_(SaaSLead.phone.isnot(None), func.length(func.trim(SaaSLead.phone)) > 0),
-    ))
+    whatsapp_candidates = query.filter(
+        SaaSLead.whatsapp.isnot(None),
+        func.length(func.trim(SaaSLead.whatsapp)) > 0,
+    )
     whatsapp_available = sum(
         1 for lead in whatsapp_candidates.yield_per(1000)
         if _lead_whatsapp_destination(lead)

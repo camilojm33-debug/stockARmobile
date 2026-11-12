@@ -1,12 +1,13 @@
 {% extends "base_master.html" %}
 {% block title %}Pipeline CRM — StockArmobile{% endblock %}
 {% block extra_css %}<style>
-.crm-pipeline{display:grid;grid-template-columns:repeat(7,minmax(230px,1fr));gap:14px;overflow-x:auto;padding-bottom:10px}
-.crm-column{background:var(--app-panel-soft);border:1px solid var(--app-line);border-radius:14px;min-height:300px;padding:12px}
+.crm-pipeline{display:grid;grid-template-columns:repeat(7,minmax(245px,1fr));gap:14px;max-width:100%;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding:0 0 12px}
+.crm-column{background:var(--app-panel-soft);border:1px solid var(--app-line);border-radius:14px;min-height:300px;min-width:0;padding:12px;scroll-snap-align:start}
 .crm-card{display:block;background:var(--app-panel);border:1px solid var(--app-line);border-radius:12px;padding:13px;margin-bottom:9px;text-decoration:none;color:inherit}
 .crm-card:hover{border-color:rgba(37,99,235,.35);box-shadow:var(--app-shadow-soft)}
 .crm-filter-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:.65rem}
-@media(max-width:900px){.crm-filter-grid{grid-template-columns:1fr 1fr}.crm-filter-grid .crm-filter-search{grid-column:1/-1}}
+@media(max-width:900px){.crm-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.crm-filter-grid .crm-filter-search{grid-column:1/-1}.crm-pipeline{grid-template-columns:repeat(7,minmax(82vw,1fr));gap:10px}}
+@media(max-width:575px){.crm-filter-grid{grid-template-columns:minmax(0,1fr)}.crm-filter-grid .crm-filter-search{grid-column:auto}.crm-pipeline{grid-template-columns:repeat(7,minmax(86vw,1fr));gap:9px}.crm-column{padding:10px;min-height:240px}.crm-card{padding:11px}}
 </style>{% endblock %}
 {% block content %}
 {% include 'crm/_nav.html' %}
@@ -25,7 +26,7 @@
     </form>
     <div class="small text-muted mt-2">{{ result_count }} oportunidad(es) · Se muestran hasta 500 resultados por consulta.</div>
   </div></div>
-  <div class="crm-pipeline">
+  <div class="crm-pipeline" role="region" aria-label="Etapas del pipeline comercial; desplazate horizontalmente para ver todas" tabindex="0">
     {% for stage,label in stages %}
       <section class="crm-column">
         <div class="d-flex justify-content-between align-items-center mb-3"><div class="fw-bold">{{ label }}</div><span class="badge text-bg-secondary">{{ grouped.get(stage, [])|length }}</span></div>

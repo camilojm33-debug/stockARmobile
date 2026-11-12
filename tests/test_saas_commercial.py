@@ -348,7 +348,7 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         assert recipient.provider_status == "accepted"
 
 
-def test_whatsapp_campaign_uses_explicit_whatsapp_or_phone_fallback(app):
+def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
     from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, User, db
     from services.saas_commercial_service import build_campaign_recipients
 
@@ -397,7 +397,7 @@ def test_whatsapp_campaign_uses_explicit_whatsapp_or_phone_fallback(app):
         db.session.flush()
 
         campaign = SaaSCampaign(
-            name="Campaña teléfono fallback",
+            name="Campaña WhatsApp explícito",
             subject="Hola",
             channel="whatsapp",
             body_html="<p>Hola</p>",
@@ -412,11 +412,11 @@ def test_whatsapp_campaign_uses_explicit_whatsapp_or_phone_fallback(app):
         rows = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
         by_lead = {row.lead_id: row.destination for row in rows}
 
-        assert summary["eligible_whatsapp"] == 2
+        assert summary["eligible_whatsapp"] == 1
         assert by_lead == {
-            phone_only.id: "5491112345678",
             explicit.id: "5491122223333",
         }
+        assert phone_only.id not in by_lead
         assert no_permission.id not in by_lead
         assert invalid_number.id not in by_lead
 

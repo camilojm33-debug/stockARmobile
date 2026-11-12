@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from stockarmobile.extensions import db
 from stockarmobile.helpers.dates import utcnow_naive
@@ -42,7 +42,11 @@ class CampaignService:
         raw_schedule = str(context.get("scheduled_at") or "").strip()
         if raw_schedule:
             try:
-                scheduled_at = datetime.fromisoformat(raw_schedule.replace("Z", "+00:00")).replace(tzinfo=None)
+                parsed_schedule = datetime.fromisoformat(raw_schedule.replace("Z", "+00:00"))
+                if parsed_schedule.tzinfo is not None:
+                    scheduled_at = parsed_schedule.astimezone(timezone.utc).replace(tzinfo=None)
+                else:
+                    scheduled_at = parsed_schedule
             except ValueError:
                 scheduled_at = None
         campaign = Campaign(
@@ -89,6 +93,22 @@ class CampaignService:
             raise ValueError(f"Transición no permitida: {campaign.status} → {target_status}.")
         campaign.channel = "whatsapp"
         campaign.status = target_status
+        if target_status == "CANCELADA":
+            from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+
+            pending = TenantCampaignRecipient.query.filter(
+                TenantCampaignRecipient.campaign_id == campaign.id,
+                TenantCampaignRecipient.status.in_(("pending", "retry_wait")),
+            ).all()
+            for recipient in pending:
+                recipient.status = "skipped"
+                recipient.error_reason = "Cancelada por un administrador del comercio antes del envío."
+                recipient.updated_at = utcnow_naive()
+            in_flight = TenantCampaignRecipient.query.filter_by(
+                campaign_id=campaign.id, status="sending"
+            ).count()
+            if not in_flight:
+                campaign.finished_at = utcnow_naive()
         if target_status == "APROBADA":
             campaign.approved_by_user_id = user_id
             campaign.approved_at = utcnow_naive()
