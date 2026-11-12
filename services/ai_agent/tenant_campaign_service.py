@@ -204,7 +204,30 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
             "El número oficial de Vendedor 24/7 de StockARmobile no está conectado. "
             "Contactá al administrador de StockARmobile para habilitar WhatsApp."
         )
-    template = _fetch_campaign_template(connection)
+    stored_template = campaign_data.get("whatsapp_template")
+    if isinstance(stored_template, dict) and stored_template.get("name"):
+        configured_name = str(connection.get("template_name") or "").strip()
+        configured_language = str(connection.get("template_language") or "es_AR").strip()
+        if configured_name and (
+            configured_name != str(stored_template.get("name") or "").strip()
+            or configured_language != str(stored_template.get("language") or "").strip()
+        ):
+            raise ValueError(
+                "La plantilla oficial cambió desde que creaste el borrador. "
+                "Volvé a revisar la vista previa y guardá una nueva propuesta."
+            )
+        if configured_name:
+            template = _fetch_campaign_template(connection)
+        else:
+            template = _fetch_campaign_template(
+                connection,
+                selected_name=str(stored_template.get("name") or ""),
+                selected_language=str(stored_template.get("language") or "es_AR"),
+                allow_single_auto_select=False,
+            )
+            template["auto_selected"] = True
+    else:
+        template = _fetch_campaign_template(connection)
     if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
@@ -285,76 +308,22 @@ def _render_content(campaign, client):
     return content
 
 
-def _fetch_campaign_template(connection: dict) -> dict:
-    """Fetch and validate the currently approved shared template used by tenant campaigns."""
-    waba_id = str(connection.get("business_account_id") or "").strip()
-    access_token = str(connection.get("access_token") or "").strip()
-    template_name = str(connection.get("template_name") or "").strip()
-    language = str(connection.get("template_language") or "es_AR").strip()
-    if not waba_id or not access_token or not template_name:
-        raise ValueError(
-            "Configurá una plantilla aprobada en la WABA del número oficial de StockARmobile."
-        )
-    version = (
-        os.getenv("META_GRAPH_API_VERSION")
-        or os.getenv("WHATSAPP_GRAPH_API_VERSION")
-        or "v26.0"
-    ).strip()
-    url = f"https://graph.facebook.com/{version}/{waba_id}/message_templates"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    params = {"fields": "name,status,language,components", "limit": 100}
-    selected = None
-    try:
-        for _ in range(10):
-            response = requests.get(url, params=params, headers=headers, timeout=20)
-            if not response.ok:
-                raise ValueError(
-                    "Meta no permitió verificar la plantilla. Revisá la conexión y los permisos de WhatsApp."
-                )
-            payload = response.json() or {}
-            for item in payload.get("data") or []:
-                if (
-                    isinstance(item, dict)
-                    and str(item.get("name") or "").strip() == template_name
-                    and str(item.get("language") or "").strip() == language
-                ):
-                    selected = item
-                    break
-            if selected is not None:
-                break
-            next_url = (payload.get("paging") or {}).get("next")
-            if not next_url:
-                break
-            url, params = next_url, None
-    except requests.RequestException as exc:
-        raise ValueError("No se pudo verificar la plantilla aprobada con Meta.") from exc
-    except (TypeError, ValueError) as exc:
-        if isinstance(exc, ValueError):
-            raise
-        raise ValueError("Meta devolvió una respuesta de plantillas inválida.") from exc
+def _fetch_campaign_template(
+    connection: dict,
+    *,
+    selected_name: str | None = None,
+    selected_language: str | None = None,
+    allow_single_auto_select: bool = True,
+) -> dict:
+    """Resolve the approved campaign template from the shared StockARmobile WABA."""
+    from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
 
-    if not selected or str(selected.get("status") or "").upper() != "APPROVED":
-        raise ValueError("La plantilla seleccionada no está aprobada en Meta.")
-    body = next(
-        (
-            component for component in (selected.get("components") or [])
-            if isinstance(component, dict) and str(component.get("type") or "").upper() == "BODY"
-        ),
-        None,
+    return get_campaign_template(
+        connection,
+        selected_name=selected_name,
+        selected_language=selected_language,
+        allow_single_auto_select=allow_single_auto_select,
     )
-    body_text = str((body or {}).get("text") or "").strip()
-    placeholder_ids = {int(value) for value in re.findall(r"\{\{\s*(\d+)\s*\}\}", body_text)}
-    if not body_text or placeholder_ids != {1, 2, 3}:
-        raise ValueError(
-            "La plantilla aprobada debe incluir exactamente las variables {{1}} (cliente), "
-            "{{2}} (producto) y {{3}} (mensaje editable)."
-        )
-    return {
-        "name": template_name,
-        "language": language,
-        "body_text": body_text,
-        "status": "APPROVED",
-    }
 
 
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
@@ -374,11 +343,16 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     template = _json(campaign).get("whatsapp_template") or {}
     template_name = str(template.get("name") or "").strip()
     language = str(template.get("language") or "").strip()
+    configured_template_name = str(connection.get("template_name") or "").strip()
+    configured_template_language = str(connection.get("template_language") or "es_AR").strip()
+    template_was_auto_selected = bool(template.get("auto_selected"))
     if (
         not template_name
-        or template_name != str(connection.get("template_name") or "").strip()
-        or language != str(connection.get("template_language") or "es_AR").strip()
+        or not language
         or not template.get("body_text")
+        or (configured_template_name and template_name != configured_template_name)
+        or (configured_template_name and language != configured_template_language)
+        or (not configured_template_name and not template_was_auto_selected)
     ):
         return False, "La plantilla aprobada cambió desde que se preparó la campaña; volvé a validar y aprobar.", ""
 

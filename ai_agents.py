@@ -1446,16 +1446,24 @@ def campaign_wizard():
     template_error = None
     sender_company, connection = _shared_campaign_whatsapp()
     try:
-        if (
-            sender_company is None
-            or not connection.get("enabled")
-            or not connection.get("phone_number_id")
-            or not connection.get("access_token")
-        ):
-            raise ValueError("El número oficial de WhatsApp no está conectado.")
+        if sender_company is None:
+            raise ValueError(
+                "No está inicializada la empresa interna de WhatsApp Comercial de StockARmobile."
+            )
         template = _fetch_campaign_template(connection)
     except ValueError as exc:
         template_error = str(exc)
+
+    campaign_sender_phone = str(connection.get("display_phone_number") or "").strip()
+    template_admin_url = (
+        url_for("saas.whatsapp_commercial_settings")
+        if getattr(current_user, "role", None) == "superadmin"
+        else None
+    )
+    if sender_company is None:
+        template_error = template_error or (
+            "No está inicializada la empresa interna de WhatsApp Comercial de StockARmobile."
+        )
 
     products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
     if request.method == "POST":
@@ -1469,6 +1477,9 @@ def campaign_wizard():
                 opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
                 audience_count=0,
                 schedule_local="",
+                campaign_sender_phone=campaign_sender_phone,
+                template_admin_url=template_admin_url,
+                template_auto_selected=False,
                 **_context(),
             ), 409
         title = str(request.form.get("title") or "").strip()
@@ -1544,12 +1555,21 @@ def campaign_wizard():
         flash("Borrador creado. Revisá la audiencia y la vista previa antes de solicitar aprobación.", "success")
         return redirect(url_for("ai_agents.campaign_detail", campaign_id=draft.id))
 
-    audience_count = _campaign_audience_preview(current_user.company_id, "all")["eligible"]
-    inactive_audience_count = _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
+    audience_count = (
+        _campaign_audience_preview(current_user.company_id, "all")["eligible"]
+        if template else 0
+    )
+    inactive_audience_count = (
+        _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
+        if template else 0
+    )
     return render_template(
         "ai_agents/campaign_wizard.html",
         template=template,
         template_error=template_error,
+        campaign_sender_phone=campaign_sender_phone,
+        template_admin_url=template_admin_url,
+        template_auto_selected=bool(template and template.get("auto_selected")),
         products=products,
         opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
         audience_count=audience_count,

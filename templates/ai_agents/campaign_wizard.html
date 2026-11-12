@@ -8,6 +8,8 @@
 .campaign-step.active{border-color:var(--bs-primary);color:var(--bs-primary);background:rgba(37,99,235,.06);font-weight:700}
 .campaign-pane{display:none}.campaign-pane.active{display:block}
 .campaign-template-preview{white-space:pre-wrap;min-height:120px;border:1px solid var(--app-line);border-radius:12px;padding:1rem;background:var(--app-panel-soft)}
+.campaign-readiness{border-radius:14px;padding:1rem 1.1rem;margin-bottom:1rem}
+.campaign-readiness .readiness-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:800;opacity:.75}
 @media(max-width:640px){.campaign-step{padding:.5rem .25rem;font-size:.7rem}.campaign-step span{display:none}}
 </style>
 {% endblock %}
@@ -17,7 +19,34 @@
     <div><span class="page-kicker"><i class="bi bi-stars"></i> Marketing IA · IA PRO</span><h1 class="h3 fw-bold mb-1">Crear campaña</h1><p class="text-muted mb-0">Definí la audiencia y el mensaje; la campaña queda como borrador para revisión y aprobación.</p></div>
     <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Volver a campañas</a>
   </div>
-  {% if template_error %}<div class="alert alert-danger" role="alert"><strong>No se puede validar la plantilla de WhatsApp.</strong> {{ template_error }} La campaña no podrá aprobarse hasta resolverlo.</div>{% endif %}
+  {% if template %}
+    <div class="alert alert-success campaign-readiness" role="status">
+      <div class="d-flex flex-wrap justify-content-between gap-3">
+        <div>
+          <div class="readiness-label mb-1">Canal oficial listo</div>
+          <div class="fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp compartido de StockARmobile{% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
+          <div class="small mt-1">Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }} · {{ template.category }}</div>
+        </div>
+        <span class="badge text-bg-success align-self-start"><i class="bi bi-check-circle me-1"></i>Listo para crear borrador</span>
+      </div>
+      {% if template_auto_selected %}
+        <div class="small mt-2">Detectamos una única plantilla compatible y la seleccionamos automáticamente. Un SuperAdmin puede guardarla como predeterminada desde WhatsApp Comercial para mantener una configuración explícita.</div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="alert alert-danger campaign-readiness" role="alert">
+      <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Marketing IA todavía no está listo para enviar por WhatsApp</div>
+      <p class="mb-2">{{ template_error or "No se pudo validar el número oficial y su plantilla aprobada." }}</p>
+      {% if campaign_sender_phone %}<div class="small mb-2">Número emisor compartido detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
+      <div class="small">Las campañas de todos los comercios salen desde el número oficial de StockARmobile; no necesitás conectar un WhatsApp personal ni el número de tu comercio.</div>
+      {% if template_admin_url %}
+        <a class="btn btn-sm btn-outline-danger mt-3" href="{{ template_admin_url }}"><i class="bi bi-gear me-1"></i>Configurar WhatsApp Comercial</a>
+      {% else %}
+        <div class="small mt-3"><strong>Próximo paso:</strong> el administrador de StockARmobile debe revisar la conexión, sincronizar las plantillas de Meta y seleccionar una plantilla aprobada compatible.</div>
+      {% endif %}
+    </div>
+  {% endif %}
+  {% if template %}
   <div class="card app-card"><div class="card-body p-3 p-md-4">
     <div class="campaign-steps mb-4" aria-label="Pasos de la campaña">
       {% for label in ['Objetivo','Audiencia','Mensaje','Programación','Confirmación'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
@@ -73,6 +102,15 @@
       </div>
     </form>
   </div></div>
+  {% else %}
+    <div class="card app-card">
+      <div class="card-body p-4 text-center">
+        <div class="mb-2 text-danger"><i class="bi bi-shield-lock fs-2"></i></div>
+        <h2 class="h5 fw-bold">Asistente de campañas pausado</h2>
+        <p class="text-muted mb-0">Podés crear campañas cuando el número oficial y una plantilla MARKETING aprobada estén validados. No se enviará ningún mensaje mientras este control esté pendiente.</p>
+      </div>
+    </div>
+  {% endif %}
 </div>
 <script>
 (function () {
