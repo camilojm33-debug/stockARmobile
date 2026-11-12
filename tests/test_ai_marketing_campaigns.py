@@ -909,3 +909,106 @@ def test_legacy_queued_tenant_email_recipient_is_skipped_never_sent(app, monkeyp
         assert "únicamente por WhatsApp" in row.error_reason
         assert campaign.channel == "whatsapp"
         assert campaign.status == "SIN_ENVIO"
+
+
+def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatch):
+    import json
+    from app import Client, Company, User, db
+
+    with app.app_context():
+        company = Company(name="Template continuity", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="template-continuity-admin",
+            email="template-continuity@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente autorizado",
+            whatsapp="5491122334455",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        selected_template = {
+            "name": "the_template_seen_in_the_draft",
+            "language": "es_AR",
+            "category": "MARKETING",
+            "status": "APPROVED",
+            "body_text": "Hola {{1}}: {{3}}",
+            "campaign_compatible": True,
+        }
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Template continuity",
+            objective="Retener clientes",
+            campaign_type="general",
+            content="Tenemos una novedad para vos.",
+            system_data={"channel": "whatsapp", "whatsapp_template": selected_template},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
+
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (
+                object(),
+                {
+                    "enabled": True,
+                    "phone_number_id": "platform-phone",
+                    "access_token": "platform-token",
+                    "template_name": "",
+                    "template_language": "es_AR",
+                },
+            ),
+        )
+        calls = {}
+
+        def revalidate(connection, *, selected_name=None, selected_language=None, allow_single_auto_select=True):
+            calls["name"] = selected_name
+            calls["language"] = selected_language
+            calls["allow_single_auto_select"] = allow_single_auto_select
+            return {
+                **selected_template,
+                "auto_selected": True,
+            }
+
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+            revalidate,
+        )
+
+        prepared = prepare_recipients(campaign.id, company_id=company.id)
+        db.session.refresh(campaign)
+        saved = json.loads(campaign.system_data_json)["whatsapp_template"]
+
+        assert prepared["added"] == 1
+        assert calls == {
+            "name": "the_template_seen_in_the_draft",
+            "language": "es_AR",
+            "allow_single_auto_select": False,
+        }
+        assert saved["name"] == "the_template_seen_in_the_draft"
+        assert saved["auto_selected"] is True
