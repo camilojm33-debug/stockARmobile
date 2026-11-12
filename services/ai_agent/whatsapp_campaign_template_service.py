@@ -181,7 +181,7 @@ def get_campaign_template(
     if not str(connection.get("business_account_id") or "").strip():
         raise ValueError("Falta el WABA ID del número oficial de StockARmobile.")
     if not str(connection.get("access_token") or "").strip():
-        raise ValueError("Falta el token de Meta del número oficial. Un SuperAdmin debe renovar la conexión.")
+        raise ValueError("Falta el token de acceso de Meta del número oficial. Un SuperAdmin debe renovar la conexión.")
 
     name = str(selected_name or connection.get("template_name") or "").strip()
     language = str(selected_language or connection.get("template_language") or "es_AR").strip() or "es_AR"
