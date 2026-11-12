@@ -6721,48 +6721,10 @@ def global_settings():
 
 
 def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
-    waba_id = str(connection.get("business_account_id") or "").strip()
-    access_token = str(connection.get("access_token") or "").strip()
-    if not waba_id or not access_token:
-        raise ValueError("Configurá primero la WABA y el token del número comercial.")
-    version = (os.getenv("META_GRAPH_API_VERSION") or os.getenv("WHATSAPP_GRAPH_API_VERSION") or "v26.0").strip()
-    response = requests.get(
-        f"https://graph.facebook.com/{version}/{waba_id}/message_templates",
-        params={"fields": "name,status,category,language,components", "limit": 100},
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=20,
-    )
-    if not response.ok:
-        current_app.logger.warning("Commercial WhatsApp template sync failed: HTTP %s", response.status_code)
-        raise ValueError("Meta no permitió consultar las plantillas. Verificá los permisos de administración de WhatsApp.")
-    payload = response.json() or {}
-    templates = []
-    for item in payload.get("data") or []:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        language = str(item.get("language") or "").strip()
-        status = str(item.get("status") or "").upper()
-        if name and language and status == "APPROVED":
-            body = next(
-                (
-                    component for component in (item.get("components") or [])
-                    if isinstance(component, dict) and str(component.get("type") or "").upper() == "BODY"
-                ),
-                {},
-            )
-            body_text = str(body.get("text") or "").strip()
-            placeholders = {int(value) for value in re.findall(r"\{\{\s*(\d+)\s*\}\}", body_text)}
-            templates.append({
-                "name": name[:120],
-                "language": language[:20],
-                "category": str(item.get("category") or "")[:40],
-                "status": status,
-                "body_text": body_text,
-                "campaign_compatible": placeholders == {1, 2, 3},
-            })
-    return templates
+    """List approved platform templates with the same compatibility rules as tenant campaigns."""
+    from services.ai_agent.whatsapp_campaign_template_service import list_approved_campaign_templates
 
+    return list_approved_campaign_templates(connection)
 
 @bp.get("/whatsapp-comercial/plantillas")
 @superadmin_required
