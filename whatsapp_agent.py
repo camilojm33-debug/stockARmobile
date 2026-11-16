@@ -697,6 +697,7 @@ def _process_shared_tenant_campaign_reply(
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignAttribution,
         _campaign_branch_id,
+        resolve_shared_campaign_opt_out_clients,
         resolve_shared_campaign_reply,
         resolve_tenant_campaign_reply,
     )
@@ -741,6 +742,28 @@ def _process_shared_tenant_campaign_reply(
         branch_id = branch.id if branch is not None else None
 
     if recipient is None:
+        if is_platform_sender and _is_whatsapp_opt_out(text):
+            # BAJA without quoted-message context can be ambiguous across
+            # tenants/branches because the sender number is shared. Suppress
+            # this sender number in every tenant CRM that recently contacted it.
+            opted_out_clients = resolve_shared_campaign_opt_out_clients(
+                phone_number_id=phone_number_id,
+                sender=sender,
+            )
+            if opted_out_clients:
+                from services.whatsapp_consent_service import record_whatsapp_consent
+                for opted_out_client in opted_out_clients:
+                    record_whatsapp_consent(
+                        opted_out_client,
+                        "opted_out",
+                        source="whatsapp_reply",
+                        evidence=(
+                            "El cliente respondió BAJA al número compartido Vendedor 24/7; "
+                            f"mensaje entrante ID {str(external_id or '')[:255]}."
+                        ),
+                    )
+                db.session.commit()
+                return True
         return False
     if _is_whatsapp_opt_out(text):
         from services.whatsapp_consent_service import record_whatsapp_consent
