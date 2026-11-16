@@ -167,3 +167,13 @@ def test_superadmin_inbox_has_conversation_first_layout_and_mobile_navigation():
     assert "Se enviará en el mismo hilo de Gmail." in template
     assert "latest_text = latest_text.replace(" in source
     assert 'content = f"Asunto: {str(subject or ' in service
+
+
+def test_superadmin_inbox_can_sync_gmail_without_leaving_the_conversation():
+    template = (ROOT / "templates/saas/crm_inbox.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+
+    assert "Sincronizar Gmail" in template
+    assert 'name="return_to_inbox" value="1"' in template
+    assert 'if request.form.get("return_to_inbox") == "1":' in source
+    assert 'url_for("saas.crm_inbox", conversation_id=conversation_id)' in source
