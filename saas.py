@@ -6720,6 +6720,83 @@ def global_settings():
     return render_template("saas/settings.html", settings_snapshot=settings_snapshot)
 
 
+@bp.get("/whatsapp-plantillas-maestras")
+@superadmin_required
+def whatsapp_master_templates():
+    """Show the centrally managed WhatsApp template definitions used for tenant provisioning."""
+    _require_superadmin()
+    from app import Branch, Company
+    from services.ai_agent.config_service import (
+        _branch_preferences,
+        get_ai_preferences,
+        is_commercial_company,
+    )
+    from services.ai_agent.whatsapp_master_template_service import list_master_templates
+
+    channel_rows = []
+
+    def add_channel_row(company, branch_name, whatsapp):
+        phone = str((whatsapp or {}).get("display_phone_number") or "").strip()
+        enabled = bool((whatsapp or {}).get("enabled") and (whatsapp or {}).get("phone_number_id"))
+        sync_state = (whatsapp or {}).get("master_template_sync")
+        sync_state = sync_state if isinstance(sync_state, dict) else {}
+        synced_templates = sync_state.get("templates")
+        synced_templates = synced_templates if isinstance(synced_templates, list) else []
+        master_state = next(
+            (item for item in synced_templates if isinstance(item, dict) and item.get("key") == "marketing_general"),
+            None,
+        )
+        if not enabled:
+            status = "Sin WhatsApp conectado"
+            detail = "Conectá el WhatsApp del Vendedor IA para instalar la plantilla."
+        elif master_state is None:
+            status = "Pendiente de sincronización"
+            detail = "La plantilla se instalará cuando el comercio sincronice su WhatsApp."
+        else:
+            raw_status = str(master_state.get("status") or "UNKNOWN").upper()
+            status = {
+                "APPROVED": "Aprobada",
+                "PENDING": "Pendiente de aprobación de Meta",
+                "IN_APPEAL": "En revisión de Meta",
+                "REJECTED": "Rechazada por Meta",
+                "CONFLICT": "Conflicto de contenido",
+                "ERROR": "Error de instalación",
+                "UNCERTAIN": "Resultado por confirmar",
+            }.get(raw_status, raw_status.replace("_", " ").title())
+            detail = str(master_state.get("message") or "")
+        channel_rows.append({
+            "company": str(getattr(company, "name", "") or "Comercio"),
+            "branch": str(branch_name or "Casa central"),
+            "phone": phone or "—",
+            "connected": enabled,
+            "status": status,
+            "detail": detail,
+            "checked_at": str(sync_state.get("checked_at") or ""),
+        })
+
+    companies = Company.query.filter_by(active=True).order_by(Company.name.asc()).all()
+    for company in companies:
+        if is_commercial_company(company):
+            continue
+        company_whatsapp = get_ai_preferences(company).get("whatsapp") or {}
+        add_channel_row(company, "Casa central", company_whatsapp)
+
+        branches = Branch.query.filter_by(company_id=company.id, active=True).order_by(Branch.id.asc()).all()
+        for branch in branches:
+            if bool(getattr(branch, "is_default", False)):
+                continue
+            branch_prefs = _branch_preferences(branch)
+            branch_whatsapp = branch_prefs.get("whatsapp") if isinstance(branch_prefs.get("whatsapp"), dict) else {}
+            if branch_whatsapp:
+                add_channel_row(company, getattr(branch, "name", None), branch_whatsapp)
+
+    return render_template(
+        "saas/whatsapp_master_templates.html",
+        master_templates=list_master_templates(),
+        channel_rows=channel_rows,
+    )
+
+
 def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
     """List approved platform templates with the same compatibility rules as tenant campaigns."""
     from services.ai_agent.whatsapp_campaign_template_service import list_approved_campaign_templates

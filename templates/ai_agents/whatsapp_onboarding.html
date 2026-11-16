@@ -74,13 +74,13 @@
             {% endif %}
             <section class="wa-template-panel" aria-labelledby="wa-template-heading">
               <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
-                <div><h3 id="wa-template-heading" class="h6 fw-bold mb-1">Plantillas aprobadas de tu WhatsApp</h3><p class="small text-muted mb-3">Sincronizá con Meta y elegí una plantilla disponible para este canal.</p></div>
-                <button type="button" id="wa-template-refresh" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Actualizar</button>
+                <div><h3 id="wa-template-heading" class="h6 fw-bold mb-1">Plantilla predeterminada de StockARmobile</h3><p class="small text-muted mb-3">StockARmobile instala la plantilla maestra en la cuenta de WhatsApp de este comercio. Meta revisa cada copia por separado.</p></div>
+                <button type="button" id="wa-template-refresh" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Instalar / sincronizar</button>
               </div>
               <label for="wa-template-select" class="form-label small fw-semibold">Plantilla aprobada</label>
               <select id="wa-template-select" class="form-select" disabled><option value="">Consultando Meta...</option></select>
               <div class="d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
-                <span id="wa-template-status" class="wa-template-status" role="status" aria-live="polite">Consultando las plantillas aprobadas.</span>
+                <span id="wa-template-status" class="wa-template-status" role="status" aria-live="polite">Instalando y sincronizando la plantilla predeterminada.</span>
                 <button type="button" id="wa-template-save" class="btn btn-primary btn-sm" disabled><i class="bi bi-check2 me-1"></i>Guardar selección</button>
               </div>
             </section>
@@ -334,6 +334,7 @@
 (function () {
   const listUrl = {{ templates_url|tojson }};
   const saveUrl = {{ template_save_url|tojson }};
+  const provisionUrl = {{ template_provision_url|tojson }};
   const select = document.getElementById('wa-template-select');
   const refresh = document.getElementById('wa-template-refresh');
   const save = document.getElementById('wa-template-save');
@@ -351,8 +352,26 @@
     refresh.disabled = true;
     save.disabled = true;
     select.disabled = true;
-    select.innerHTML = '<option value="">Consultando Meta...</option>';
-    setStatus('Sincronizando plantillas aprobadas...');
+    select.innerHTML = '<option value="">Instalando plantilla maestra...</option>';
+    setStatus('Verificando la plantilla predeterminada en la cuenta de este comercio...');
+    let provisioning = [];
+    let provisioningError = '';
+    try {
+      const provisionResponse = await fetch(provisionUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+        body: JSON.stringify({})
+      });
+      const provisionData = await provisionResponse.json().catch(() => ({}));
+      if (!provisionResponse.ok || !provisionData.success) {
+        throw new Error(provisionData.error || 'No pudimos instalar la plantilla predeterminada.');
+      }
+      provisioning = Array.isArray(provisionData.master_templates) ? provisionData.master_templates : [];
+    } catch (error) {
+      provisioningError = error.message || 'No se pudo instalar la plantilla predeterminada.';
+    }
+
     try {
       const response = await fetch(listUrl, {credentials: 'same-origin'});
       const data = await response.json().catch(() => ({}));
@@ -360,8 +379,21 @@
       templates = Array.isArray(data.templates) ? data.templates : [];
       select.innerHTML = '';
       if (!templates.length) {
-        select.innerHTML = '<option value="">No hay plantillas aprobadas</option>';
-        setStatus('Meta no devolvió plantillas aprobadas para este número.');
+        select.innerHTML = '<option value="">Esperando aprobación de Meta</option>';
+        const result = provisioning[0] || null;
+        if (provisioningError) {
+          setStatus(provisioningError, true);
+        } else if (result && result.status === 'PENDING') {
+          setStatus('La plantilla predeterminada fue enviada a Meta y está pendiente de aprobación. No necesitás crearla nuevamente.');
+        } else if (result && result.status === 'REJECTED') {
+          setStatus('Meta rechazó la plantilla predeterminada. Revisá el motivo en WhatsApp Manager.', true);
+        } else if (result && result.status === 'CONFLICT') {
+          setStatus(result.message || 'Ya existe una plantilla con el mismo nombre y contenido diferente. No se modificó.', true);
+        } else if (result && result.message) {
+          setStatus(result.message, result.status === 'ERROR' || result.status === 'UNCERTAIN');
+        } else {
+          setStatus('Meta todavía no devolvió plantillas aprobadas para este número.');
+        }
         return;
       }
       templates.forEach(function (item) {
@@ -374,10 +406,26 @@
       const selectedValue = String(selected.name || '') + '|' + String(selected.language || '');
       if (selected.name && templates.some(item => item.name + '|' + item.language === selectedValue)) {
         select.value = selectedValue;
+      } else {
+        const master = templates.find(item => item.name === 'campana_marketing_es_ar' && item.language === 'es_AR');
+        if (master) select.value = master.name + '|' + master.language;
       }
       select.disabled = false;
       save.disabled = false;
-      setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles.');
+      const approvedMaster = provisioning.find(item => item.status === 'APPROVED');
+      const pendingMaster = provisioning.find(item => ['PENDING', 'IN_APPEAL'].includes(item.status));
+      const provisioningIssue = provisioning.find(item => ['ERROR', 'CONFLICT', 'REJECTED', 'UNCERTAIN'].includes(item.status));
+      if (provisioningError) {
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + provisioningError, true);
+      } else if (provisioningIssue) {
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + (provisioningIssue.message || 'Revisá la instalación de la plantilla maestra.'), true);
+      } else if (approvedMaster) {
+        setStatus('La plantilla maestra está aprobada. ' + templates.length + ' plantilla(s) disponible(s).');
+      } else if (pendingMaster) {
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponible(s). La plantilla maestra sigue pendiente de revisión.');
+      } else {
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles.');
+      }
     } catch (error) {
       select.innerHTML = '<option value="">No se pudo sincronizar</option>';
       setStatus(error.message || 'Error al consultar Meta.', true);
