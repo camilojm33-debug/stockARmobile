@@ -616,3 +616,35 @@ def test_crm_message_delete_does_not_remove_recorded_ai_usage(commercial_databas
         )
 
     assert ConversationMessage.query.filter_by(id=message.id).first() is not None
+
+
+
+def test_gmail_inbound_capture_persists_original_thread_metadata(commercial_database):
+    from app import SaaSLead
+    from services.saas_commercial_service import capture_inbound_email
+
+    result = capture_inbound_email(
+        sender_email="prospect@gmail.com",
+        subject="Consulta comercial",
+        text="Quiero conocer los planes.",
+        external_message_id="<message-1@gmail.com>",
+        recipient_email="stockarmobile@gmail.com",
+        thread_id="gmail-thread-1",
+        rfc_message_id="<message-1@gmail.com>",
+        references="<root@gmail.com>",
+    )
+    conversation = Conversation.query.filter_by(
+        company_id=commercial_database["company"].id,
+        channel="email_commercial",
+        external_conversation_id="email:prospect@gmail.com",
+    ).first()
+    inbound = ConversationMessage.query.filter_by(
+        conversation_id=conversation.id,
+        external_message_id="<message-1@gmail.com>",
+    ).first()
+
+    assert result["status"] == "received"
+    assert conversation.metadata_json["gmail_thread_id"] == "gmail-thread-1"
+    assert conversation.metadata_json["subject"] == "Consulta comercial"
+    assert inbound.metadata_json["rfc_message_id"] == "<message-1@gmail.com>"
+    assert inbound.metadata_json["references"] == "<root@gmail.com>"
