@@ -209,7 +209,7 @@ def _message_date(message: dict) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def sync_recent_messages(hours: int = 48, *, max_pages: int = 20) -> dict:
+def sync_recent_messages(hours: int = 48, *, max_pages: int = 100) -> dict:
     """Import recent inbound messages, following Gmail pagination up to a safe cap."""
     from services.saas_commercial_service import capture_inbound_email
 
@@ -369,6 +369,11 @@ def process_pubsub_notification(payload: dict) -> dict:
         result.get("duplicates"),
         result.get("deleted_ignored"),
         result.get("skipped"),
+    )
+    logging.getLogger(__name__).info(
+        "Gmail Pub/Sub pagination pages=%s has_more=%s",
+        result.get("pages"),
+        result.get("has_more"),
     )
     return result
 
