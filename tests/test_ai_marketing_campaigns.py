@@ -12,6 +12,37 @@ from services.ai_agent.tenant_campaign_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_shared_vendedor247_campaign_readiness(monkeypatch):
+    """Keep campaign preparation tests deterministic and independent from Meta."""
+    connection = {
+        "enabled": True,
+        "phone_number_id": "stockarmobile-vendedor247-phone",
+        "business_account_id": "stockarmobile-vendedor247-waba",
+        "access_token": "test-platform-token",
+        "display_phone_number": "+54 9 362 420-2415",
+        "template_name": "stockarmobile_vendedor247_marketing_es_ar",
+        "template_language": "es_AR",
+    }
+    template = {
+        "name": "stockarmobile_vendedor247_marketing_es_ar",
+        "language": "es_AR",
+        "category": "MARKETING",
+        "status": "APPROVED",
+        "body_text": "¡Hola {{1}}! Novedades sobre {{2}}: {{3}}",
+        "campaign_compatible": True,
+        "auto_selected": False,
+    }
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+        lambda: (object(), dict(connection)),
+    )
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
+        lambda _connection: dict(template),
+    )
+
+
 def _consent_evidence():
     return {
         "whatsapp_marketing_consent_recorded_at": datetime.now(timezone.utc).replace(tzinfo=None),
@@ -326,7 +357,11 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
             user_id=user.id,
         )
 
-        with pytest.raises(ValueError, match="WhatsApp del Vendedor IA 24/7 de este comercio no está conectado"):
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (None, {}),
+        )
+        with pytest.raises(ValueError, match="número compartido Vendedor 24/7 de StockARmobile no está conectado"):
             prepare_recipients(campaign.id, company_id=company.id)
 
 
@@ -580,6 +615,12 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         monkeypatch.setattr(
             "services.ai_agent.config_service.get_whatsapp_connection",
             shared_connection,
+        )
+        # Exercise the production resolver and keep SuperAdmin's template separate.
+        from services.ai_agent.tenant_campaign_service import _shared_campaign_whatsapp
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            _shared_campaign_whatsapp,
         )
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
@@ -934,13 +975,18 @@ def test_legacy_queued_tenant_email_recipient_is_skipped_never_sent(app, monkeyp
         assert campaign.status == "SIN_ENVIO"
 
 
-def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatch):
+def test_preparation_revalidates_the_dedicated_shared_template_saved_in_the_draft(app, monkeypatch):
     import json
     from app import Client, Company, User, db
 
     with app.app_context():
         company = Company(name="Template continuity", active=True)
-        db.session.add(company)
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        db.session.add_all([company, platform])
         db.session.flush()
         user = User(
             username="template-continuity-admin",
@@ -962,12 +1008,13 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
         db.session.flush()
 
         selected_template = {
-            "name": "the_template_seen_in_the_draft",
+            "name": "stockarmobile_vendedor247_marketing_es_ar",
             "language": "es_AR",
             "category": "MARKETING",
             "status": "APPROVED",
-            "body_text": "Hola {{1}}: {{3}}",
+            "body_text": "¡Hola {{1}}! Novedades sobre {{2}}: {{3}}",
             "campaign_compatible": True,
+            "auto_selected": False,
         }
         campaign = CampaignService.create_draft(
             company_id=company.id,
@@ -994,29 +1041,27 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
             user_id=user.id,
         )
 
+        connection = {
+            "enabled": True,
+            "phone_number_id": "stockarmobile-vendedor247-phone",
+            "business_account_id": "stockarmobile-vendedor247-waba",
+            "access_token": "platform-token",
+            "template_name": "stockarmobile_vendedor247_marketing_es_ar",
+            "template_language": "es_AR",
+        }
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
-            lambda *_args, **_kwargs: (
-                object(),
-                {
-                    "enabled": True,
-                    "phone_number_id": "merchant-phone",
-                    "access_token": "merchant-token",
-                    "template_name": "",
-                    "template_language": "es_AR",
-                },
-            ),
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
         )
-        calls = {}
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: connection,
+        )
+        calls = []
 
-        def revalidate(connection, *, selected_name=None, selected_language=None, allow_single_auto_select=True):
-            calls["name"] = selected_name
-            calls["language"] = selected_language
-            calls["allow_single_auto_select"] = allow_single_auto_select
-            return {
-                **selected_template,
-                "auto_selected": True,
-            }
+        def revalidate(current_connection, *, selected_name=None, selected_language=None, allow_single_auto_select=True):
+            calls.append((selected_name, selected_language, allow_single_auto_select))
+            return dict(selected_template)
 
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
@@ -1028,13 +1073,13 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
         saved = json.loads(campaign.system_data_json)["whatsapp_template"]
 
         assert prepared["added"] == 1
-        assert calls == {
-            "name": "the_template_seen_in_the_draft",
-            "language": "es_AR",
-            "allow_single_auto_select": False,
-        }
-        assert saved["name"] == "the_template_seen_in_the_draft"
-        assert saved["auto_selected"] is True
+        assert calls == [(
+            "stockarmobile_vendedor247_marketing_es_ar",
+            "es_AR",
+            False,
+        )]
+        assert saved["name"] == "stockarmobile_vendedor247_marketing_es_ar"
+        assert saved["auto_selected"] is False
 
 
 
