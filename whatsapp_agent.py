@@ -691,7 +691,7 @@ def _process_shared_tenant_campaign_reply(
     *, phone_number_id: str, sender: str, external_id: str, text: str,
     context_message_id: str = "", message_type: str = "text",
 ) -> bool:
-    """Route campaign replies to the correct tenant CRM, using that tenant's own sender."""
+    """Route shared Vendedor 24/7 campaign replies into the correct tenant CRM without mixing data."""
     from app import Branch, Company
     from stockarmobile.branch_context import get_default_branch_id
     from services.ai_agent.tenant_campaign_service import (
