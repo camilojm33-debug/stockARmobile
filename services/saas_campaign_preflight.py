@@ -94,22 +94,36 @@ def campaign_preflight(db_session, campaign) -> dict:
     smtp_password = current_app.config.get("SMTP_PASSWORD") or ""
     smtp_configured = bool(smtp_host and smtp_user and smtp_password)
 
+    gmail_api_configured = False
+    gmail_api_ok = False
+    gmail_api_detail = "Gmail API no está configurado."
     try:
-        smtp_port = int(current_app.config.get("SMTP_PORT") or 587)
-    except (TypeError, ValueError):
-        smtp_port = 587
+        from services.gmail_commercial_service import (
+            commercial_gmail_configuration_status,
+            commercial_gmail_send_status,
+        )
+        gmail_api_configured = bool(commercial_gmail_configuration_status().get("send_configured"))
+    except Exception:
+        gmail_api_configured = False
 
-    smtp_ok = smtp_configured
-    smtp_detail = "SMTP configurado."
-    if email_channel and smtp_configured:
-        smtp_ok, smtp_detail = _smtp_probe()
+    email_ok = False
+    email_detail = "No hay un proveedor de email listo."
+    if email_channel and gmail_api_configured:
+        # Prefer the OAuth Gmail API for the SuperAdmin commercial mailbox.
+        # It sends over HTTPS and does not depend on Render SMTP egress.
+        gmail_api_ok, gmail_api_detail = commercial_gmail_send_status()
+        email_ok = gmail_api_ok
+        email_detail = gmail_api_detail
+    elif email_channel and smtp_configured:
+        email_ok, email_detail = _smtp_probe()
+        if smtp_host:
+            try:
+                smtp_port = int(current_app.config.get("SMTP_PORT") or 587)
+            except (TypeError, ValueError):
+                smtp_port = 587
+            email_detail = f"{email_detail} Servidor configurado: {smtp_host}:{smtp_port}."
     email_eligible = int(audience.get("eligible_email") or 0)
-    if email_channel:
-        smtp_endpoint = f"{smtp_host or 'sin-host'}:{smtp_port}"
-        smtp_detail = f"{smtp_detail} Servidor configurado: {smtp_endpoint}."
-        if (not smtp_ok) and smtp_port == 587:
-            smtp_detail += " Si este proveedor usa SSL directo, la alternativa habitual es puerto 465."
-    add("email_config", "Email", (not email_channel) or smtp_ok, smtp_detail if email_channel else "No requerido.")
+    add("email_config", "Email", (not email_channel) or email_ok, email_detail if email_channel else "No requerido.")
     add("email_audience", "Email elegible", (not email_channel) or email_eligible > 0, f"{email_eligible} con permiso." if email_eligible > 0 or not email_channel else "No hay emails con permiso registrado.")
 
     whatsapp_channel = channel in {"whatsapp", "both"}
