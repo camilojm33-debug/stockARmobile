@@ -696,6 +696,7 @@ def _process_shared_tenant_campaign_reply(
     from stockarmobile.branch_context import get_default_branch_id
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignAttribution,
+        _campaign_branch_id,
         resolve_shared_campaign_reply,
         resolve_tenant_campaign_reply,
     )
@@ -716,8 +717,15 @@ def _process_shared_tenant_campaign_reply(
         if str(sender_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
             return False
         company = Company.query.filter_by(id=int(recipient.company_id), active=True).first() if recipient else None
-        branch_id = get_default_branch_id(company.id) if company is not None else None
+        saved_branch_id = _campaign_branch_id(recipient.campaign) if recipient and recipient.campaign else None
+        branch_id = saved_branch_id or (get_default_branch_id(company.id) if company is not None else None)
         branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id and company else None
+        if company is not None and branch is None:
+            current_app.logger.warning(
+                "Shared Vendedor 24/7 campaign reply has no active originating tenant branch; company_id=%s campaign_id=%s",
+                company.id, getattr(recipient, "campaign_id", None),
+            )
+            return False
     else:
         recipient = resolve_tenant_campaign_reply(
             phone_number_id=phone_number_id,
