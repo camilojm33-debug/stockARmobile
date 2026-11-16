@@ -745,7 +745,7 @@ def _process_shared_tenant_campaign_reply(
         if is_platform_sender and _is_whatsapp_opt_out(text):
             # BAJA without quoted-message context can be ambiguous across
             # tenants/branches because the sender number is shared. Suppress
-            # this sender number in every tenant CRM that recently contacted it.
+            # this sender number in every tenant CRM that has sent to it.
             opted_out_clients = resolve_shared_campaign_opt_out_clients(
                 phone_number_id=phone_number_id,
                 sender=sender,
