@@ -696,6 +696,7 @@ def vendor_whatsapp_connect():
         selected_template_language=whatsapp.get("template_language", "es_AR"),
         templates_url=url_for("ai_agents.vendor_whatsapp_templates", branch_id=branch.id),
         template_save_url=url_for("ai_agents.vendor_whatsapp_template_save", branch_id=branch.id),
+        template_provision_url=url_for("ai_agents.vendor_whatsapp_templates_provision", branch_id=branch.id),
         branch=branch,
         complete_url=url_for("ai_agents.vendor_whatsapp_complete", branch_id=branch.id),
         vendor_url=url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id),
@@ -919,8 +920,32 @@ def vendor_whatsapp_complete():
         if not is_extra_branch:
             update_ai_preferences(company, whatsapp_updates=whatsapp_updates)
         db.session.commit()
+        master_template_provisioning = []
+        try:
+            from services.ai_agent.whatsapp_master_template_service import provision_master_templates
+
+            master_template_provisioning = provision_master_templates({
+                "enabled": True,
+                "phone_number_id": phone_number_id,
+                "business_account_id": waba_id,
+                "access_token": access_token,
+            })
+        except Exception as exc:
+            # The WhatsApp connection is already committed. A template-permission
+            # or Meta review problem must never roll back a working channel.
+            current_app.logger.warning(
+                "WhatsApp master-template provisioning deferred company_id=%s branch_id=%s error_type=%s",
+                company.id,
+                branch.id,
+                type(exc).__name__,
+            )
         current_app.logger.info("WhatsApp Embedded Signup connected company_id=%s waba_id=%s phone_number_id=%s", current_user.company_id, waba_id, phone_number_id)
-        return jsonify({"success": True, "phone_number": str(phone.get("display_phone_number") or "").strip(), "redirect_url": url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, whatsapp="connected")})
+        return jsonify({
+            "success": True,
+            "phone_number": str(phone.get("display_phone_number") or "").strip(),
+            "redirect_url": url_for("ai_agents.agent", agent="vendedor", branch_id=branch.id, whatsapp="connected"),
+            "master_template_provisioning": master_template_provisioning,
+        })
     except requests.RequestException:
         current_app.logger.exception("WhatsApp Embedded Signup network failure")
         return jsonify({"success": False, "error": "No pudimos comunicarnos con Meta. Intentá nuevamente en unos segundos."}), 502
@@ -959,6 +984,69 @@ def vendor_whatsapp_templates():
             "language": str(connection.get("template_language") or "es_AR"),
         },
     })
+
+
+@bp.post("/vendedor/whatsapp/plantillas/predeterminadas")
+@tenant_required
+@company_admin_required
+def vendor_whatsapp_templates_provision():
+    """Install the StockARmobile master campaign template in this tenant WABA."""
+    company = _current_active_company()
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+
+    branch_id = request.args.get("branch_id", type=int) or get_default_branch_id(company.id)
+    branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id else None
+    if branch is None or not branch_vendor_access(company, branch).get("allowed"):
+        return jsonify({"success": False, "error": "La sucursal no tiene habilitado el Vendedor IA."}), 403
+
+    connection = get_whatsapp_connection(company, branch_id=branch.id)
+    if not connection.get("enabled") or not connection.get("access_token"):
+        return jsonify({"success": False, "error": "Conectá primero el WhatsApp de esta sucursal."}), 409
+
+    try:
+        from services.ai_agent.whatsapp_master_template_service import provision_master_templates
+
+        results = provision_master_templates(connection)
+        # As soon as Meta approves the master template, make it the default for
+        # this WhatsApp channel. Never overwrite a selection already made by the merchant.
+        if not str(connection.get("template_name") or "").strip():
+            approved_master = next(
+                (item for item in results if item.get("status") == "APPROVED"),
+                None,
+            )
+            if approved_master:
+                configure_whatsapp_connection(
+                    company,
+                    phone_number_id=connection.get("phone_number_id"),
+                    access_token=None,
+                    business_account_id=connection.get("business_account_id"),
+                    display_phone_number=connection.get("display_phone_number"),
+                    enabled=True,
+                    template_name=approved_master["name"],
+                    template_language=approved_master["language"],
+                    branch_id=branch.id if not branch.is_default else None,
+                )
+                db.session.commit()
+        return jsonify({
+            "success": True,
+            "master_templates": results,
+            "selected": {
+                "name": str(connection.get("template_name") or ""),
+                "language": str(connection.get("template_language") or "es_AR"),
+            },
+        })
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 502
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "WhatsApp master-template provisioning failed company_id=%s branch_id=%s",
+            company.id,
+            branch.id,
+        )
+        return jsonify({"success": False, "error": "No pudimos instalar la plantilla predeterminada. La conexión de WhatsApp sigue activa; podés volver a sincronizar."}), 500
 
 
 @bp.post("/vendedor/whatsapp/plantillas")
