@@ -189,7 +189,7 @@
             <div class="small text-muted">Plantilla exclusiva</div>
             <div class="fw-bold wa-code">{{ tenant_campaign_template_name }}</div>
             <div class="small text-muted mt-1">Español (Argentina) · MARKETING · {{ tenant_campaign_template_state.get('status', 'Sin verificar') }}</div>
-            <div class="small mt-2">Variables: <code>{{1}}</code> contacto · <code>{{2}}</code> comercio/producto · <code>{{3}}</code> mensaje de campaña.</div>
+            <div class="small mt-2">Variables: <code>{{ '{{1}}' }}</code> contacto · <code>{{ '{{2}}' }}</code> producto/novedad · <code>{{ '{{3}}' }}</code> mensaje de campaña.</div>
             {% if tenant_campaign_template_state.get('message') %}
               <div class="small mt-2">{{ tenant_campaign_template_state.get('message') }}</div>
             {% endif %}
