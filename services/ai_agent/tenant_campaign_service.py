@@ -256,7 +256,23 @@ def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_
     if referenced_id:
         matches = query.filter(TenantCampaignRecipient.provider_message_id == referenced_id).limit(2).all()
         return matches[0] if len(matches) == 1 else None
+
+    # The same platform number also serves the separate SuperAdmin acquisition
+    # CRM. Without a quoted provider message, a recently sent SuperAdmin
+    # campaign to this contact makes ownership ambiguous; never cross-route it
+    # into a merchant CRM by guessing.
+    from app import SaaSCampaignRecipient
     cutoff = _now() - timedelta(days=30)
+    superadmin_campaign_match = SaaSCampaignRecipient.query.filter(
+        SaaSCampaignRecipient.channel == "whatsapp",
+        SaaSCampaignRecipient.destination == normalized_sender,
+        SaaSCampaignRecipient.status.in_(("sent", "delivered", "read")),
+        SaaSCampaignRecipient.sent_at.isnot(None),
+        SaaSCampaignRecipient.sent_at >= cutoff,
+    ).first()
+    if superadmin_campaign_match is not None:
+        return None
+
     candidates = query.filter(
         TenantCampaignRecipient.destination == normalized_sender,
         TenantCampaignRecipient.sent_at.isnot(None),
