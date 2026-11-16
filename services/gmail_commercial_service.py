@@ -369,6 +369,95 @@ def send_commercial_reply(
 
 
 
+def commercial_gmail_send_status() -> tuple[bool, str]:
+    """Validate the authorized commercial Gmail mailbox over HTTPS before campaigns."""
+    configuration = commercial_gmail_configuration_status()
+    if not configuration.get("send_configured"):
+        return False, "Gmail API no está autorizado para enviar campañas. Reautorizá Gmail y confirmá el permiso de envío en Render."
+
+    expected_mailbox = str(configuration.get("mailbox") or "").strip().lower()
+    if not expected_mailbox:
+        return False, "Falta GMAIL_COMMERCIAL_MAILBOX."
+
+    try:
+        profile = gmail_service().users().getProfile(userId="me").execute()
+    except Exception as exc:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status == 401:
+            return False, "Google rechazó la autorización de Gmail. Volvé a conectar la casilla comercial."
+        if status == 403:
+            return False, "Google no permite consultar la casilla comercial. Revisá los permisos de Gmail."
+        logging.getLogger(__name__).warning("Commercial Gmail API preflight failed: %s", exc)
+        return False, "No se pudo validar la casilla comercial mediante Gmail API. Revisá la autorización y volvé a intentar."
+
+    actual_mailbox = str(profile.get("emailAddress") or "").strip().lower()
+    if not actual_mailbox or actual_mailbox != expected_mailbox:
+        return False, (
+            "La cuenta autorizada de Google no coincide con GMAIL_COMMERCIAL_MAILBOX. "
+            f"Cuenta autorizada: {actual_mailbox or 'no informada'}."
+        )
+    return True, f"Gmail API verificado para {actual_mailbox}."
+
+
+def send_commercial_message(message: EmailMessage) -> dict:
+    """Send one commercial campaign message through Gmail API over HTTPS.
+
+    Gmail API avoids outbound SMTP port restrictions and uses the same
+    OAuth-authorized SuperAdmin mailbox as the commercial inbox.
+    """
+    configuration = commercial_gmail_configuration_status()
+    if not configuration.get("send_configured"):
+        raise RuntimeError(
+            "Gmail API no está autorizado para enviar. Reautorizá Gmail y confirmá el permiso de envío."
+        )
+
+    mailbox = str(configuration.get("mailbox") or "").strip().lower()
+    if not mailbox:
+        raise RuntimeError("Falta GMAIL_COMMERCIAL_MAILBOX.")
+
+    # Gmail API sends as the authenticated mailbox. Using a non-authorized
+    # SMTP_FROM_EMAIL here would cause Google to reject unverified aliases.
+    if message.get("From"):
+        message.replace_header("From", mailbox)
+    else:
+        message["From"] = mailbox
+    if message.get("Reply-To"):
+        message.replace_header("Reply-To", mailbox)
+    else:
+        message["Reply-To"] = mailbox
+
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    try:
+        response = gmail_service().users().messages().send(
+            userId="me",
+            body={"raw": raw},
+        ).execute()
+    except Exception as exc:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status == 401:
+            raise RuntimeError(
+                "Google rechazó la autorización de envío. Volvé a conectar Gmail desde el CRM."
+            ) from exc
+        if status == 403:
+            raise RuntimeError(
+                "Google rechazó el envío por permisos o límites de Gmail. Revisá el permiso gmail.send y los límites de la casilla."
+            ) from exc
+        logging.getLogger(__name__).warning("Commercial campaign Gmail API send failed: %s", exc)
+        raise RuntimeError(
+            "No se pudo enviar por Gmail API. Revisá la conexión de la casilla comercial."
+        ) from exc
+
+    message_id = str(response.get("id") or "").strip()
+    if not message_id:
+        raise RuntimeError("Gmail API no confirmó el identificador del mensaje enviado.")
+    return {
+        "message_id": message_id,
+        "thread_id": str(response.get("threadId") or ""),
+        "recipient": str(message.get("To") or ""),
+        "mailbox": mailbox,
+    }
+
+
 
 def process_pubsub_notification(payload: dict) -> dict:
     settings = _settings()

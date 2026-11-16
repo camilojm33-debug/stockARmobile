@@ -1262,3 +1262,100 @@ def test_gmail_watch_worker_is_not_started_during_tests(app):
 
     with app.app_context():
         assert start_gmail_watch_maintenance_worker(app) is False
+
+
+def test_campaign_preflight_prefers_authorized_gmail_api_over_smtp(app, monkeypatch):
+    from services.saas_campaign_preflight import campaign_preflight
+
+    class Campaign:
+        name = "Campaña de prueba"
+        subject = "StockARmobile"
+        body_html = "<p>Hola</p>"
+        body_text = "Hola"
+        channel = "email"
+        target_count = 1
+        segment_json = "{}"
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        monkeypatch.setattr(
+            "services.saas_commercial_service.campaign_audience_metrics",
+            lambda db_session, campaign: {"eligible_email": 1},
+        )
+        monkeypatch.setattr(
+            "services.saas_commercial_service.crm_campaign_dispatch_worker_started",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "services.gmail_commercial_service.commercial_gmail_configuration_status",
+            lambda: {"send_configured": True, "mailbox": "stockarmobile@gmail.com"},
+        )
+        monkeypatch.setattr(
+            "services.gmail_commercial_service.commercial_gmail_send_status",
+            lambda: (True, "Gmail API verificado para stockarmobile@gmail.com."),
+        )
+        monkeypatch.setattr(
+            "services.saas_campaign_preflight._smtp_probe",
+            lambda: (_ for _ in ()).throw(AssertionError("No debe probar SMTP si Gmail API está autorizado")),
+        )
+
+        result = campaign_preflight(None, Campaign())
+        email_check = next(check for check in result["checks"] if check["code"] == "email_config")
+        assert email_check["ok"] is True
+        assert "Gmail API verificado" in email_check["detail"]
+
+
+def test_superadmin_campaign_email_uses_gmail_api_without_smtp(app, monkeypatch):
+    from types import SimpleNamespace
+    from services.saas_commercial_service import _send_email
+
+    sent = []
+    lead = SimpleNamespace(id=77, company_name="Comercio Demo", contact_name="Ana")
+    recipient = SimpleNamespace(
+        id=31,
+        lead=lead,
+        destination="prospect@example.com",
+        tracking_token="campaign-track-token",
+    )
+    campaign = SimpleNamespace(
+        id=12,
+        subject="Novedades StockARmobile",
+        body_text="Hola {{contacto}}",
+        body_html="<p>Hola {{contacto}}</p>",
+    )
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        app.config["SMTP_HOST"] = ""
+        app.config["SMTP_USER"] = ""
+        app.config["SMTP_PASSWORD"] = ""
+
+        monkeypatch.setattr(
+            "services.gmail_commercial_service.commercial_gmail_configuration_status",
+            lambda: {"send_configured": True, "mailbox": "stockarmobile@gmail.com"},
+        )
+        monkeypatch.setattr(
+            "services.gmail_commercial_service.send_commercial_message",
+            lambda message: sent.append(message) or {"message_id": "gmail-message-123"},
+        )
+        monkeypatch.setattr(
+            "services.saas_commercial_service.render_merge",
+            lambda value, current_lead: str(value).replace("{{contacto}}", "Ana"),
+        )
+        monkeypatch.setattr("services.saas_commercial_service._unsubscribe_url", lambda current_lead: None)
+        monkeypatch.setattr("services.saas_commercial_service._one_click_unsubscribe_url", lambda current_lead: None)
+        monkeypatch.setattr(
+            "services.saas_commercial_service._render_tracking_html",
+            lambda html, current_recipient: html,
+        )
+
+        ok, detail = _send_email(recipient, campaign)
+
+    assert ok is True
+    assert detail == "sent"
+    assert len(sent) == 1
+    message = sent[0]
+    assert message["From"] == "stockarmobile@gmail.com"
+    assert message["To"] == "prospect@example.com"
+    assert message["X-StockArMobile-Campaign"] == "12"
+    assert message["X-StockArMobile-Recipient"] == "31"
