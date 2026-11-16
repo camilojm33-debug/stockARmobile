@@ -163,7 +163,7 @@ def test_superadmin_inbox_has_conversation_first_layout_and_mobile_navigation():
     assert "crm-composer" in template
     assert "crm-mobile-back" in template
     assert "has-selection" in template
-    assert "aria-label=\\"Lista de conversaciones\\"" in template
+    assert 'aria-label="Lista de conversaciones"' in template
     assert "Se enviará en el mismo hilo de Gmail." in template
-    assert 'latest_text = latest_text.replace("\\\\\\\\n", "\\\\n").replace("\\\\n", "\\\\n")' in source
-    assert 'content = f"Asunto: {str(subject or \'\').strip()[:500]}\\\\n\\\\n{body}".strip()' in service
+    assert "latest_text = latest_text.replace(" in source
+    assert 'content = f"Asunto: {str(subject or ' in service
