@@ -151,3 +151,19 @@ def test_gmail_reply_route_fails_closed_until_send_scope_is_confirmed():
     source = open("saas.py", encoding="utf-8").read()
     assert 'if not commercial_gmail_configuration_status().get("send_configured"):' in source
     assert "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED=1" in source
+
+
+def test_superadmin_inbox_has_conversation_first_layout_and_mobile_navigation():
+    template = (ROOT / "templates/saas/crm_inbox.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    service = (ROOT / "services/saas_commercial_service.py").read_text(encoding="utf-8")
+
+    assert "crm-list-heading" in template
+    assert "crm-message-scroll" in template
+    assert "crm-composer" in template
+    assert "crm-mobile-back" in template
+    assert "has-selection" in template
+    assert "aria-label=\\"Lista de conversaciones\\"" in template
+    assert "Se enviará en el mismo hilo de Gmail." in template
+    assert 'latest_text = latest_text.replace("\\\\\\\\n", "\\\\n").replace("\\\\n", "\\\\n")' in source
+    assert 'content = f"Asunto: {str(subject or \'\').strip()[:500]}\\\\n\\\\n{body}".strip()' in service
