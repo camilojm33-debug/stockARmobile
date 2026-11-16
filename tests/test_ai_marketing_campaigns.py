@@ -1433,3 +1433,108 @@ def test_shared_campaign_reply_without_context_fails_closed_across_tenant_branch
             sender="5493624000000",
             context_message_id="wamid.branch-second",
         ).id == recipient_second.id
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624999999",
+            context_message_id="wamid.branch-second",
+        ) is None
+
+
+
+def test_shared_vendedor247_baja_suppresses_matching_contacts_in_each_tenant(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Client, Company, db
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        resolve_shared_campaign_opt_out_clients,
+    )
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        merchant_a = Company(name="Tenant A", active=True)
+        merchant_b = Company(name="Tenant B", active=True)
+        db.session.add_all([platform, merchant_a, merchant_b])
+        db.session.flush()
+        client_a = Client(
+            name="Cliente A",
+            whatsapp="5493624000000",
+            company_id=merchant_a.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        client_b = Client(
+            name="Cliente B",
+            whatsapp="5493624000000",
+            company_id=merchant_b.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        db.session.add_all([client_a, client_b])
+        db.session.flush()
+        user_a = User(username="baja-a", email="baja-a@example.com", role="admin", active=True, company_id=merchant_a.id)
+        user_b = User(username="baja-b", email="baja-b@example.com", role="admin", active=True, company_id=merchant_b.id)
+        user_a.set_password("password123")
+        user_b.set_password("password123")
+        db.session.add_all([user_a, user_b])
+        db.session.flush()
+        campaign_a = CampaignService.create_draft(
+            company_id=merchant_a.id, user_id=user_a.id, title="A", objective="A",
+            campaign_type="general", content="Hola", system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos", audience_count=1,
+        )
+        campaign_b = CampaignService.create_draft(
+            company_id=merchant_b.id, user_id=user_b.id, title="B", objective="B",
+            campaign_type="general", content="Hola", system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos", audience_count=1,
+        )
+        db.session.flush()
+        sent_at = datetime.utcnow() - timedelta(days=120)
+        db.session.add_all([
+            TenantCampaignRecipient(
+                campaign_id=campaign_a.id,
+                company_id=merchant_a.id,
+                client_id=client_a.id,
+                channel="whatsapp",
+                destination="5493624000000",
+                unsubscribe_token="baja-a",
+                status="sent",
+                provider_message_id="wamid.baja-a",
+                sent_at=sent_at,
+            ),
+            TenantCampaignRecipient(
+                campaign_id=campaign_b.id,
+                company_id=merchant_b.id,
+                client_id=client_b.id,
+                channel="whatsapp",
+                destination="5493624000000",
+                unsubscribe_token="baja-b",
+                status="sent",
+                provider_message_id="wamid.baja-b",
+                sent_at=sent_at,
+            ),
+        ])
+        db.session.commit()
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {"phone_number_id": "shared-vendedor-phone"},
+        )
+
+        opted_out = resolve_shared_campaign_opt_out_clients(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+        )
+        assert {client.id for client in opted_out} == {client_a.id, client_b.id}
+        assert resolve_shared_campaign_opt_out_clients(
+            phone_number_id="wrong-phone",
+            sender="5493624000000",
+        ) == []
