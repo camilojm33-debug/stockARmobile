@@ -211,7 +211,7 @@ def _message_date(message: dict) -> datetime:
 
 
 def sync_recent_messages(hours: int = 48, *, max_pages: int = 100) -> dict:
-    """Import recent inbound messages, following Gmail pagination up to a safe cap."""
+    """Import recent inbound messages chronologically, following Gmail pagination."""
     from services.saas_commercial_service import capture_inbound_email
 
     service = gmail_service()
@@ -221,6 +221,7 @@ def sync_recent_messages(hours: int = 48, *, max_pages: int = 100) -> dict:
     page_token = None
     pages = 0
     found = received = duplicates = deleted_ignored = skipped = 0
+    pending_messages = []
 
     while pages < max(1, min(int(max_pages or 20), 100)):
         kwargs = {"userId": "me", "q": query, "maxResults": 100}
@@ -247,28 +248,46 @@ def sync_recent_messages(hours: int = 48, *, max_pages: int = 100) -> dict:
                 continue
 
             plain, html = _extract_text(message.get("payload") or {})
-            rfc_message_id = str(headers.get("message-id") or "").strip()
-            result = capture_inbound_email(
-                sender_email=sender_email,
-                subject=headers.get("subject", ""),
-                text=plain,
-                html=html,
-                external_message_id=rfc_message_id or gmail_message_id,
-                recipient_email=headers.get("to", settings["mailbox"]),
-                thread_id=str(message.get("threadId") or "").strip(),
-                rfc_message_id=rfc_message_id,
-                references=str(headers.get("references") or "").strip(),
-            )
-            if result.get("status") == "duplicate":
-                duplicates += 1
-            elif result.get("status") == "ignored_deleted":
-                deleted_ignored += 1
-            else:
-                received += 1
+            internal_date = int(message.get("internalDate") or 0)
+            pending_messages.append((
+                internal_date,
+                {
+                    "sender_email": sender_email,
+                    "subject": headers.get("subject", ""),
+                    "body": (plain or html or "(Email sin contenido de texto)")[:12000],
+                    "external_message_id": str(headers.get("message-id") or "").strip() or gmail_message_id,
+                    "recipient_email": headers.get("to", settings["mailbox"]),
+                    "thread_id": str(message.get("threadId") or "").strip(),
+                    "rfc_message_id": str(headers.get("message-id") or "").strip(),
+                    "references": str(headers.get("references") or "").strip(),
+                },
+            ))
 
         page_token = response.get("nextPageToken")
         if not page_token:
             break
+
+    # Gmail list results are not guaranteed to arrive in chronological order.
+    # Sort on each message's internalDate before inserting so the newest inbound
+    # message remains the latest CRM message and the reply composer targets its thread.
+    pending_messages.sort(key=lambda item: item[0])
+    for _, item in pending_messages:
+        result = capture_inbound_email(
+            sender_email=item["sender_email"],
+            subject=item["subject"],
+            text=item["body"],
+            external_message_id=item["external_message_id"],
+            recipient_email=item["recipient_email"],
+            thread_id=item["thread_id"],
+            rfc_message_id=item["rfc_message_id"],
+            references=item["references"],
+        )
+        if result.get("status") == "duplicate":
+            duplicates += 1
+        elif result.get("status") == "ignored_deleted":
+            deleted_ignored += 1
+        else:
+            received += 1
 
     return {
         "status": "synced",
