@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import base64
+import logging
+import threading
+import time
 import json
 import os
 import base64
@@ -367,3 +370,87 @@ def process_pubsub_notification(payload: dict) -> dict:
         result.get("skipped"),
     )
     return result
+
+_GMAIL_WATCH_WORKER_LOCK = threading.Lock()
+_GMAIL_WATCH_WORKER_STARTED = False
+_GMAIL_WATCH_ADVISORY_LOCK_KEY = 918274646
+
+
+def start_gmail_watch_maintenance_worker(flask_app, *, initial_delay_seconds: int = 90, interval_seconds: int = 86400) -> bool:
+    """Renew Gmail push notifications daily from the web worker; no external cron required."""
+    if flask_app.testing or "pytest" in __import__("sys").modules:
+        return False
+
+    global _GMAIL_WATCH_WORKER_STARTED
+    with _GMAIL_WATCH_WORKER_LOCK:
+        if _GMAIL_WATCH_WORKER_STARTED:
+            return False
+        _GMAIL_WATCH_WORKER_STARTED = True
+
+    initial_delay = max(5, min(int(initial_delay_seconds or 90), 3600))
+    interval = max(3600, min(int(interval_seconds or 86400), 86400))
+    logger = logging.getLogger(__name__)
+
+    def run_once() -> None:
+        from app import db
+        try:
+            with flask_app.app_context():
+                if db.engine.dialect.name == "postgresql":
+                    with db.engine.connect() as connection:
+                        acquired = bool(
+                            connection.execute(
+                                __import__("sqlalchemy").text("SELECT pg_try_advisory_lock(:key)"),
+                                {"key": _GMAIL_WATCH_ADVISORY_LOCK_KEY},
+                            ).scalar()
+                        )
+                        if not acquired:
+                            logger.debug("Gmail watch renewal skipped; another web worker owns the lock.")
+                            return
+                        try:
+                            result = renew_watch()
+                        finally:
+                            connection.execute(
+                                __import__("sqlalchemy").text("SELECT pg_advisory_unlock(:key)"),
+                                {"key": _GMAIL_WATCH_ADVISORY_LOCK_KEY},
+                            )
+                            connection.commit()
+                else:
+                    result = renew_watch()
+
+                if result.get("status") == "renewed":
+                    logger.info(
+                        "Gmail commercial watch renewed expiration=%s",
+                        result.get("expiration") or "not-reported",
+                    )
+                else:
+                    logger.warning(
+                        "Gmail commercial watch not renewed status=%s reason=%s",
+                        result.get("status"),
+                        result.get("reason"),
+                    )
+        except Exception:
+            logger.exception("Gmail commercial watch renewal failed.")
+        finally:
+            try:
+                db.session.remove()
+            except Exception:
+                pass
+
+    def worker() -> None:
+        time.sleep(initial_delay)
+        while True:
+            run_once()
+            time.sleep(interval)
+
+    thread = threading.Thread(
+        target=worker,
+        name="stockarmobile-gmail-watch-maintenance",
+        daemon=True,
+    )
+    thread.start()
+    logger.info(
+        "Gmail commercial watch maintenance worker started (initial_delay=%ss interval=%ss)",
+        initial_delay,
+        interval,
+    )
+    return True
