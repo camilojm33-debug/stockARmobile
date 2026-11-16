@@ -333,6 +333,10 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
             return True, "sent", "wamid.test.001"
 
         monkeypatch.setattr("services.saas_commercial_service._send_whatsapp", fake_whatsapp)
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.validate_commercial_whatsapp_template",
+            lambda *args, **kwargs: {"ok": True, "status": "APPROVED", "category": "MARKETING", "detail": "approved"},
+        )
         recipient_before = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
         assert recipient_before is not None
         assert recipient_before.status == "pending"
