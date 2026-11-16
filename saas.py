@@ -1737,7 +1737,7 @@ COMMERCIAL_CRM_CHANNELS = {"email_commercial", "whatsapp_commercial"}
 
 def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = "all", limit: int = 100):
     """Return a unified, human-readable inbox for StockArMobile commercial conversations."""
-    from app import SaaSLead
+    from app import SaaSLead, db
     from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
     from services.saas_commercial_whatsapp import commercial_conversation_attention
 
@@ -1760,37 +1760,93 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
     state = state if state in {"all", "pending", "waiting"} else "all"
     rows = []
 
-    for conversation in conversations:
-        latest = (
-            ConversationMessage.query
+    # Load latest messages and related prospect records in bounded queries rather
+    # than issuing several additional SQL statements for each conversation.
+    conversation_ids = [int(conversation.id) for conversation in conversations]
+    metadata_by_conversation = {
+        int(conversation.id): conversation.metadata_json
+        if isinstance(conversation.metadata_json, dict) else {}
+        for conversation in conversations
+    }
+    latest_by_conversation = {}
+    lead_ids = {
+        int(metadata.get("lead_id"))
+        for metadata in metadata_by_conversation.values()
+        if str(metadata.get("lead_id") or "").isdigit()
+    }
+    if conversation_ids:
+        latest_message_ids = (
+            db.session.query(
+                ConversationMessage.conversation_id.label("conversation_id"),
+                db.func.max(ConversationMessage.id).label("latest_message_id"),
+            )
             .filter(
                 ConversationMessage.company_id == int(company.id),
-                ConversationMessage.conversation_id == int(conversation.id),
+                ConversationMessage.conversation_id.in_(conversation_ids),
             )
-            .order_by(ConversationMessage.id.desc())
-            .first()
+            .group_by(ConversationMessage.conversation_id)
+            .subquery()
         )
+        latest_messages = (
+            ConversationMessage.query
+            .join(latest_message_ids, ConversationMessage.id == latest_message_ids.c.latest_message_id)
+            .all()
+        )
+        latest_by_conversation = {int(message.conversation_id): message for message in latest_messages}
 
-        metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
-        lead = None
-        lead_id = metadata.get("lead_id")
-        if str(lead_id or "").isdigit():
-            lead = SaaSLead.query.filter_by(id=int(lead_id)).first()
+    leads_by_id = {}
+    if lead_ids:
+        leads_by_id = {
+            int(lead.id): lead
+            for lead in SaaSLead.query.filter(SaaSLead.id.in_(lead_ids)).all()
+        }
 
-        if lead is None:
-            participant = (
-                ConversationParticipant.query
-                .filter_by(
-                    company_id=int(company.id),
-                    conversation_id=int(conversation.id),
-                    participant_type="prospect",
-                )
-                .order_by(ConversationParticipant.id.desc())
-                .first()
+    conversations_without_lead = [
+        conversation_id
+        for conversation_id, metadata in metadata_by_conversation.items()
+        if not str(metadata.get("lead_id") or "").isdigit()
+        or int(metadata.get("lead_id")) not in leads_by_id
+    ]
+    participants_by_conversation = {}
+    if conversations_without_lead:
+        participants = (
+            ConversationParticipant.query
+            .filter(
+                ConversationParticipant.company_id == int(company.id),
+                ConversationParticipant.conversation_id.in_(conversations_without_lead),
+                ConversationParticipant.participant_type == "prospect",
             )
+            .order_by(ConversationParticipant.id.desc())
+            .all()
+        )
+        for participant in participants:
+            participants_by_conversation.setdefault(
+                int(participant.conversation_id),
+                participant,
+            )
+
+    participant_lead_ids = {
+        int(participant.participant_id)
+        for participant in participants_by_conversation.values()
+        if getattr(participant, "participant_id", None)
+    }
+    missing_participant_lead_ids = participant_lead_ids - set(leads_by_id)
+    if missing_participant_lead_ids:
+        leads_by_id.update({
+            int(lead.id): lead
+            for lead in SaaSLead.query.filter(SaaSLead.id.in_(missing_participant_lead_ids)).all()
+        })
+
+    for conversation in conversations:
+        latest = latest_by_conversation.get(int(conversation.id))
+        metadata = metadata_by_conversation.get(int(conversation.id), {})
+        lead_id = metadata.get("lead_id")
+        lead = leads_by_id.get(int(lead_id)) if str(lead_id or "").isdigit() else None
+        if lead is None:
+            participant = participants_by_conversation.get(int(conversation.id))
             participant_id = getattr(participant, "participant_id", None)
             if participant_id:
-                lead = SaaSLead.query.filter_by(id=int(participant_id)).first()
+                lead = leads_by_id.get(int(participant_id))
 
         raw_external = str(conversation.external_conversation_id or "")
         phone = ""
