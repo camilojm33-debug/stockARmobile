@@ -349,7 +349,6 @@ def resolve_shared_campaign_opt_out_clients(*, phone_number_id: str, sender: str
         client = Client.query.filter_by(
             id=int(client_id),
             company_id=int(company_id),
-            active=True,
         ).first()
         if client is not None:
             resolved.append(client)
