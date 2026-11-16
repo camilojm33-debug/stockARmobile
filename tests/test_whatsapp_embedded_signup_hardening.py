@@ -266,3 +266,13 @@ def test_shared_vendedor247_unquoted_baja_is_routed_to_tenant_opt_out_resolver()
     assert 'status == "sent"' in (
         ROOT / "services/ai_agent/tenant_campaign_service.py"
     ).read_text(encoding="utf-8")
+
+
+
+def test_shared_campaign_baja_is_recorded_before_originating_branch_validation():
+    source = (ROOT / "whatsapp_agent.py").read_text(encoding="utf-8")
+    handler = source[source.index("def _process_shared_tenant_campaign_reply"):]
+
+    opt_out = handler.index('if _is_whatsapp_opt_out(text):')
+    branch_validation = handler.index('if company is None or not company.active or branch is None:')
+    assert opt_out < branch_validation
