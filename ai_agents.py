@@ -1412,7 +1412,7 @@ def campaign_detail(campaign_id):
             template_preview = template["body_text"]
             for variable, value in (
                 ("1", "Cliente de ejemplo"),
-                ("2", campaign.product.name if campaign.product else "Varios"),
+                ("2", getattr(getattr(campaign, "company", None), "name", None) or "tu comercio"),
                 ("3", copy),
             ):
                 template_preview = re.sub(
