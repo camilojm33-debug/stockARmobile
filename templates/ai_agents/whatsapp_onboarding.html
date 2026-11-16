@@ -414,8 +414,11 @@
       save.disabled = false;
       const approvedMaster = provisioning.find(item => item.status === 'APPROVED');
       const pendingMaster = provisioning.find(item => ['PENDING', 'IN_APPEAL'].includes(item.status));
+      const provisioningIssue = provisioning.find(item => ['ERROR', 'CONFLICT', 'REJECTED', 'UNCERTAIN'].includes(item.status));
       if (provisioningError) {
         setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + provisioningError, true);
+      } else if (provisioningIssue) {
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + (provisioningIssue.message || 'Revisá la instalación de la plantilla maestra.'), true);
       } else if (approvedMaster) {
         setStatus('La plantilla maestra está aprobada. ' + templates.length + ' plantilla(s) disponible(s).');
       } else if (pendingMaster) {
