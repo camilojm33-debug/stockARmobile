@@ -54,7 +54,7 @@ SHARED_TENANT_CAMPAIGN_TEMPLATE = {
     "description": "Plantilla exclusiva del número compartido Vendedor 24/7 para campañas creadas desde los CRM de los comercios.",
     "body_text": (
         "¡Hola, {{1}}! 👋\n\n"
-        "Queremos compartirte novedades sobre {{2}}.\n\n"
+        "Queremos compartirte novedades de {{2}}.\n\n"
         "{{3}}\n\n"
         "Para dejar de recibir mensajes promocionales, respondé BAJA.\n\n"
         "¡Gracias!"
