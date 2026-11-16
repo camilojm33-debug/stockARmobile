@@ -13,6 +13,7 @@ from services.ai_agent.tenant_campaign_service import (
 
 
 @pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True)
 def _mock_shared_vendedor247_campaign_readiness(monkeypatch):
     """Keep campaign preparation tests deterministic and independent from Meta."""
     connection = {
