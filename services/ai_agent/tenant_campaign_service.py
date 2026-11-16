@@ -1,7 +1,8 @@
 """Tenant-scoped Marketing IA delivery engine.
 
-Tenant campaigns use each merchant's own Vendedor IA WhatsApp Cloud connection.
-Campaigns, recipients, consent, conversations and attribution remain tenant scoped.
+Tenant CRM campaigns share StockARmobile's Vendedor 24/7 WhatsApp sender, while
+campaigns, recipients, consent, conversations, branch attribution and reporting
+remain isolated inside each tenant.
 """
 from __future__ import annotations
 
@@ -124,12 +125,11 @@ def _fetch_shared_campaign_template(connection: dict) -> dict:
 
 
 def _tenant_campaign_whatsapp(company_id: int, branch_id: int | None = None):
-    """Resolve only the merchant's own Vendedor IA WhatsApp connection.
+    """Legacy merchant-number resolver retained for replies to older in-flight campaigns.
 
-    The StockARmobile SuperAdmin/commercial sender is explicitly excluded. A
-    branch-bound campaign keeps using the exact branch number selected when the
-    draft was created; legacy drafts fall back to the merchant's default branch.
+    New tenant CRM campaigns use _shared_campaign_whatsapp instead.
     """
+
     from app import Branch, Company
     from services.ai_agent.config_service import get_whatsapp_connection
     from services.saas_commercial_whatsapp import get_commercial_company
@@ -225,12 +225,11 @@ def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_
 
 
 def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
-    """Resolve a platform-sender inbound reply to one tenant campaign, without cross-tenant guessing.
+    """Resolve a shared-sender inbound reply to one tenant/branch without cross-tenant guessing.
 
-    A quoted/replied-to provider message ID is authoritative. Without it, the
-    fallback is allowed only when the customer has recent WhatsApp campaign
-    history in exactly one tenant. Ambiguous cross-tenant contacts stay in the
-    SuperAdmin inbox instead of leaking a conversation to the wrong business.
+    A quoted/replied-to provider message ID is authoritative. Without it, routing
+    is permitted only when recent history resolves to exactly one tenant and one
+    campaign branch. Ambiguous replies remain outside a tenant CRM.
     """
     from services.ai_agent.config_service import get_whatsapp_connection
     from services.saas_commercial_whatsapp import get_commercial_company
@@ -268,9 +267,21 @@ def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_
     ]
     if len(tenant_ids) != 1:
         return None
-    return candidates.filter(
+
+    # A single tenant may still have sent to this number from multiple branches.
+    # Do not guess which branch owns a free-form reply without quoted-message context.
+    history = candidates.filter(
         TenantCampaignRecipient.company_id == tenant_ids[0]
-    ).order_by(TenantCampaignRecipient.sent_at.desc(), TenantCampaignRecipient.id.desc()).first()
+    ).order_by(
+        TenantCampaignRecipient.sent_at.desc(),
+        TenantCampaignRecipient.id.desc(),
+    ).limit(501).all()
+    if not history or len(history) > 500:
+        return None
+    branch_ids = {_campaign_branch_id(row.campaign) if row.campaign is not None else None for row in history}
+    if len(branch_ids) != 1:
+        return None
+    return history[0]
 
 
 def _client_phone(client):
@@ -471,7 +482,7 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
         or not connection.get("phone_number_id")
         or not connection.get("access_token")
     ):
-        return False, "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado.", ""
+        return False, "El número compartido Vendedor 24/7 de StockARmobile no está conectado.", ""
 
     # Tenant campaign records remain scoped to the merchant, while the outbound
     # message uses the shared StockARmobile Vendedor 24/7 sender.
