@@ -1089,16 +1089,19 @@ def _finalize_campaign_status(campaign, recipients) -> str | None:
     return status
 
 
-def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50) -> dict:
+def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50, campaign_id: int | None = None) -> dict:
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
     from flask import current_app
 
     now = utcnow()
     marketing_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
-    campaigns = SaaSCampaign.query.filter(
+    campaign_query = SaaSCampaign.query.filter(
         SaaSCampaign.status.in_({"APROBADA", "ENVIANDO"}),
         SaaSCampaign.scheduled_at.is_(None) | (SaaSCampaign.scheduled_at <= now),
-    ).order_by(SaaSCampaign.id.asc()).limit(limit).all()
+    )
+    if campaign_id is not None:
+        campaign_query = campaign_query.filter(SaaSCampaign.id == int(campaign_id))
+    campaigns = campaign_query.order_by(SaaSCampaign.id.asc()).limit(limit).all()
     summary = {
         "campaigns": 0,
         "sent": 0,
