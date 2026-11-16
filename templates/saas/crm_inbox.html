@@ -85,6 +85,14 @@
         <p class="text-muted mb-0">Centralizá los contactos que llegan por Gmail y WhatsApp y respondé desde un solo lugar.</p>
       </div>
       <div class="d-flex flex-wrap gap-2">
+        {% if gmail_sync_configured %}
+        <form method="post" action="{{ url_for('saas.crm_email_gmail_sync') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_to_inbox" value="1">
+          {% if selected %}<input type="hidden" name="conversation_id" value="{{ selected.conversation_id }}">{% endif %}
+          <button class="btn btn-outline-primary" type="submit" title="Traer los últimos correos de Gmail"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar Gmail</button>
+        </form>
+        {% endif %}
         <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-arrow-left me-1"></i>Centro Comercial</a>
         <a class="btn btn-primary" href="{{ url_for('saas.crm_panel') }}#crmLeads"><i class="bi bi-people me-1"></i>Prospectos</a>
       </div>
