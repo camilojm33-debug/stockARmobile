@@ -922,7 +922,10 @@ def vendor_whatsapp_complete():
         db.session.commit()
         master_template_provisioning = []
         try:
-            from services.ai_agent.whatsapp_master_template_service import provision_master_templates
+            from services.ai_agent.whatsapp_master_template_service import (
+                provision_master_templates,
+                record_master_template_provisioning,
+            )
 
             master_template_provisioning = provision_master_templates({
                 "enabled": True,
@@ -930,6 +933,12 @@ def vendor_whatsapp_complete():
                 "business_account_id": waba_id,
                 "access_token": access_token,
             })
+            record_master_template_provisioning(
+                company,
+                master_template_provisioning,
+                branch=branch,
+            )
+            db.session.commit()
         except Exception as exc:
             # The WhatsApp connection is already committed. A template-permission
             # or Meta review problem must never roll back a working channel.
@@ -1006,9 +1015,13 @@ def vendor_whatsapp_templates_provision():
         return jsonify({"success": False, "error": "Conectá primero el WhatsApp de esta sucursal."}), 409
 
     try:
-        from services.ai_agent.whatsapp_master_template_service import provision_master_templates
+        from services.ai_agent.whatsapp_master_template_service import (
+            provision_master_templates,
+            record_master_template_provisioning,
+        )
 
         results = provision_master_templates(connection)
+        record_master_template_provisioning(company, results, branch=branch)
         # As soon as Meta approves the master template, make it the default for
         # this WhatsApp channel. Never overwrite a selection already made by the merchant.
         if not str(connection.get("template_name") or "").strip():
@@ -1028,16 +1041,18 @@ def vendor_whatsapp_templates_provision():
                     template_language=approved_master["language"],
                     branch_id=branch.id if not branch.is_default else None,
                 )
-                db.session.commit()
+        db.session.commit()
+        updated_connection = get_whatsapp_connection(company, branch_id=branch.id)
         return jsonify({
             "success": True,
             "master_templates": results,
             "selected": {
-                "name": str(connection.get("template_name") or ""),
-                "language": str(connection.get("template_language") or "es_AR"),
+                "name": str(updated_connection.get("template_name") or ""),
+                "language": str(updated_connection.get("template_language") or "es_AR"),
             },
         })
     except ValueError as exc:
+        db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 502
     except Exception:
         db.session.rollback()
