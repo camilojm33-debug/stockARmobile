@@ -75,8 +75,8 @@
         {% endif %}
         <label class="form-label">Mensaje para el cliente</label><textarea class="form-control" name="content" id="campaignContent" rows="6" maxlength="900" required placeholder="Escribí el texto que recibirán tus clientes"></textarea>
         <div class="d-flex justify-content-between small text-muted mt-1"><span>Máximo 900 caracteres, incluida la instrucción de baja.</span><span><span id="campaignContentLength">0</span>/900</span></div>
-        <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
-        <div class="small text-muted mt-2">Se agrega la instrucción “{{ opt_out_text }}” y se reemplazan cliente y producto antes del envío.</div>
+        <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-tenant-name="{{ company.name if company else 'tu comercio' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
+        <div class="small text-muted mt-2">Se completan automáticamente el nombre del cliente, el nombre del comercio y el mensaje editable. La baja queda incluida en el mensaje enviado.</div>
         <div class="mt-3"><label class="form-label">Producto (opcional)</label><select class="form-select" name="product_id" id="campaignProduct"><option value="">Varios / sin producto</option>{% for product in products %}<option value="{{ product.id }}" data-price="{{ product.price }}">{{ product.name }}</option>{% endfor %}</select></div>
       </section>
       <section class="campaign-pane" data-step="4">
@@ -152,7 +152,7 @@
       .replace(/\{\{precio\}\}/gi, productPrice);
     const rendered = templateBody
       .replace(/\{\{\s*1\s*\}\}/g, "Cliente de ejemplo")
-      .replace(/\{\{\s*2\s*\}\}/g, productName)
+      .replace(/\{\{\s*2\s*\}\}/g, preview.dataset.tenantName || "tu comercio")
       .replace(/\{\{\s*3\s*\}\}/g, message.replace("{{optout}}", preview.dataset.optOut || ""));
     preview.textContent = rendered || "La vista previa se actualizará al escribir el mensaje.";
     document.getElementById("campaignContentLength").textContent = String(content.value.length);
