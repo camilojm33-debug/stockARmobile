@@ -138,3 +138,16 @@ def test_superadmin_gmail_reply_flow_is_exposed_from_the_inbox():
     assert "def crm_email_reply()" in source
     assert "send_commercial_reply(" in source
     assert "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED" in template
+
+
+
+def test_gmail_watch_skipped_state_is_not_reported_as_active():
+    source = open("saas.py", encoding="utf-8").read()
+    assert 'if result.get("status") != "renewed":' in source
+    assert "La escucha de Gmail sigue pendiente" in source
+
+
+def test_gmail_reply_route_fails_closed_until_send_scope_is_confirmed():
+    source = open("saas.py", encoding="utf-8").read()
+    assert 'if not commercial_gmail_configuration_status().get("send_configured"):' in source
+    assert "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED=1" in source
