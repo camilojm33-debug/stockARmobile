@@ -1372,7 +1372,7 @@ def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "
         "recipient_email": str(recipient_email or "")[:160],
         "subject": str(subject or "")[:500],
         "gmail_thread_id": str(thread_id or "").strip()[:255],
-        "rfc_message_id": str(rfc_message_id or external_message_id or "").strip()[:998],
+        "rfc_message_id": str(rfc_message_id or "").strip()[:998],
         "references": str(references or "").strip()[:2000],
     })
     conversation.metadata_json = conversation_metadata
@@ -1385,6 +1385,18 @@ def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "
 
         duplicate = ConversationMessage.query.filter_by(company_id=company.id, conversation_id=conversation.id, external_message_id=message_id).first()
         if duplicate is not None:
+            duplicate_metadata = dict(duplicate.metadata_json or {})
+            duplicate_metadata.update({
+                "channel": "email_commercial",
+                "sender_email": email,
+                "recipient_email": str(recipient_email or "")[:160],
+                "subject": str(subject or "")[:500],
+                "gmail_thread_id": str(thread_id or "").strip()[:255],
+                "rfc_message_id": str(rfc_message_id or "").strip()[:998],
+                "references": str(references or "").strip()[:2000],
+            })
+            duplicate.metadata_json = duplicate_metadata
+            db.session.commit()
             return {"status": "duplicate", "lead_id": lead.id, "conversation_id": conversation.id, "message_id": duplicate.id}
 
     body = (str(text or "").strip() or str(html or "").strip())[:20000] or "(Email sin contenido de texto)"
