@@ -53,14 +53,26 @@ def _consent_evidence():
 
 @pytest.fixture(autouse=True)
 def mock_approved_campaign_template(monkeypatch):
-    monkeypatch.setattr(
-        "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
-        lambda connection: {
-            "name": connection.get("template_name"),
-            "language": connection.get("template_language") or "es_AR",
+    def _approved(
+        connection,
+        *,
+        selected_name=None,
+        selected_language=None,
+        allow_single_auto_select=True,
+    ):
+        return {
+            "name": selected_name or connection.get("template_name"),
+            "language": selected_language or connection.get("template_language") or "es_AR",
+            "category": "MARKETING",
             "body_text": "Hola {{1}}, {{2}}. {{3}}",
             "status": "APPROVED",
-        },
+            "campaign_compatible": True,
+            "auto_selected": bool(not selected_name and allow_single_auto_select),
+        }
+
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+        _approved,
     )
 
 
