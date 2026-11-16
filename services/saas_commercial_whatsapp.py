@@ -107,14 +107,15 @@ def validate_commercial_whatsapp_template(template_name: str, language: str = "e
     """Verify against Meta that a configured SuperAdmin template is approved for marketing."""
     name = str(template_name or "").strip()
     lang = str(language or "es_AR").strip()
-    if not name:
-        return {"ok": False, "status": "MISSING", "detail": "No hay una plantilla configurada."}
     company = get_commercial_company()
     if company is None:
         return {"ok": False, "status": "UNCONFIGURED", "detail": "No existe el canal comercial interno."}
     try:
         from services.ai_agent.config_service import get_whatsapp_connection
         connection = get_whatsapp_connection(company)
+        name = name or str(connection.get("template_name") or "").strip()
+        if not name:
+            return {"ok": False, "status": "MISSING", "detail": "No hay una plantilla configurada."}
         if not connection.get("enabled"):
             return {"ok": False, "status": "DISCONNECTED", "detail": "WhatsApp Comercial no está habilitado."}
         waba_id = str(connection.get("business_account_id") or "").strip()
