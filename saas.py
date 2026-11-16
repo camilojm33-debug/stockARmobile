@@ -2060,6 +2060,11 @@ def crm_inbox():
         channel=channel,
         state=state,
         counts=counts,
+        gmail_sync_configured=(
+            bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_ID"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_SECRET"))
+        ),
         gmail_send_configured=(
             str(os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED") or "").strip().lower() in {"1", "true", "yes", "on"}
             and bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN"))
@@ -3361,18 +3366,29 @@ def crm_email_gmail_sync():
     from services.gmail_commercial_service import sync_recent_messages
 
     _require_superadmin()
+
+    def _sync_redirect():
+        if request.form.get("return_to_inbox") == "1":
+            conversation_id = request.form.get("conversation_id", type=int)
+            return redirect(
+                url_for("saas.crm_inbox", conversation_id=conversation_id)
+                if conversation_id
+                else url_for("saas.crm_inbox")
+            )
+        return redirect(url_for("saas.crm_panel"))
+
     try:
         result = sync_recent_messages(hours=48)
     except Exception as exc:
         current_app.logger.exception("Gmail manual sync failed: %s", exc)
         flash(f"No se pudo sincronizar Gmail: {exc}", "danger")
-        return redirect(url_for("saas.crm_panel"))
+        return _sync_redirect()
     flash(
         f"Gmail sincronizado: {result.get('received', 0)} nuevos, "
         f"{result.get('duplicates', 0)} duplicados.",
         "success",
     )
-    return redirect(url_for("saas.crm_panel"))
+    return _sync_redirect()
 
 
 @bp.post("/crm/email/gmail/pubsub")
