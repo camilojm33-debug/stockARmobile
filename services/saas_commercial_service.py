@@ -1108,6 +1108,7 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
         "failed": 0,
         "skipped": 0,
         "disabled": 0,
+        "blocked": 0,
         "claimed": 0,
     }
 
@@ -1115,6 +1116,19 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
         if not marketing_enabled:
             summary["disabled"] += 1
             continue
+
+        if campaign.channel in {"whatsapp", "both"}:
+            try:
+                from services.saas_commercial_whatsapp import validate_commercial_whatsapp_template
+                template_check = validate_commercial_whatsapp_template(
+                    campaign.whatsapp_template_name,
+                    campaign.whatsapp_template_language or "es_AR",
+                )
+            except Exception as exc:
+                template_check = {"ok": False, "detail": str(exc)[:240]}
+            if not template_check.get("ok"):
+                summary["blocked"] += 1
+                continue
 
         campaign.status = "ENVIANDO"
         campaign.started_at = campaign.started_at or now
