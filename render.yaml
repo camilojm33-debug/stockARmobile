@@ -74,6 +74,8 @@ services:
         value: https://www.stockarmobile.com/superadmin/crm/email/gmail/callback
       - key: GMAIL_COMMERCIAL_REFRESH_TOKEN
         sync: false
+      - key: GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED
+        value: "0"
       - key: GMAIL_COMMERCIAL_PUBSUB_TOPIC
         sync: false
       - key: GMAIL_COMMERCIAL_PUBSUB_AUDIENCE
