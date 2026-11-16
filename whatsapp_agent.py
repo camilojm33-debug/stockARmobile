@@ -766,6 +766,8 @@ def _process_shared_tenant_campaign_reply(
                 return True
         return False
     if _is_whatsapp_opt_out(text):
+        # Record BAJA immediately once a campaign recipient is identified.
+        # It must work even if the originating branch was deactivated later.
         from services.whatsapp_consent_service import record_whatsapp_consent
         record_whatsapp_consent(
             recipient.client,
