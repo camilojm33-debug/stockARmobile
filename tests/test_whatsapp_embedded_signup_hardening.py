@@ -230,3 +230,24 @@ def test_tenant_and_superadmin_template_controls_validate_meta_approval():
     assert "wa-template-refresh" in tenant_ui
     assert "commercial-template-refresh" in superadmin_ui
     assert "Los CRM de los comercios" in superadmin_ui or "CRM de los comercios" in superadmin_ui
+
+
+def test_tenant_crm_campaigns_use_platform_shared_sender_and_separate_template_configuration():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    service = (root / "services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
+    routes = (root / "saas.py").read_text(encoding="utf-8")
+    settings = (root / "templates/saas/whatsapp_commercial.html").read_text(encoding="utf-8")
+    wizard = (root / "templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
+    detail = (root / "templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
+
+    assert "def _shared_campaign_whatsapp()" in service
+    assert "get_commercial_company()" in service
+    assert "AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME" in service
+    assert "WHATSAPP_COMMERCIAL_TEMPLATE_NAME" in service
+    assert "provision_shared_tenant_campaign_template" in routes
+    assert "tenant_campaign_template_state" in routes
+    assert "Crear / sincronizar plantilla del CRM de comercios" in settings
+    assert "Los contactos, campañas, consentimientos, conversaciones y resultados siguen aislados por comercio" in wizard
+    assert "Número compartido · Vendedor 24/7 StockARmobile" in detail
