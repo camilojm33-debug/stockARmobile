@@ -40,6 +40,32 @@ MASTER_TEMPLATES = (
     },
 )
 
+
+# Dedicated sender-side template for tenant CRM campaigns. It lives only in the
+# shared StockARmobile Vendedor 24/7 WABA; it is intentionally not provisioned
+# into merchant-owned WABAs and does not replace the SuperAdmin acquisition template.
+SHARED_TENANT_CAMPAIGN_TEMPLATE = {
+    "key": "tenant_crm_shared_vendedor247",
+    "name": "stockarmobile_vendedor247_marketing_es_ar",
+    "display_name": "Vendedor 24/7 · campañas del CRM de comercios",
+    "language": "es_AR",
+    "language_label": "Español (Argentina)",
+    "category": "MARKETING",
+    "description": "Plantilla exclusiva del número compartido Vendedor 24/7 para campañas creadas desde los CRM de los comercios.",
+    "body_text": (
+        "¡Hola, {{1}}! 👋\n\n"
+        "Queremos compartirte novedades de {{2}}.\n\n"
+        "{{3}}\n\n"
+        "Para dejar de recibir mensajes promocionales, respondé BAJA.\n\n"
+        "¡Gracias!"
+    ),
+    "examples": [
+        "María",
+        "Comercial Demo",
+        "Esta semana tenemos novedades y beneficios especiales para vos. ¡Escribinos para conocer más!",
+    ],
+}
+
 MAX_TEMPLATE_PAGES = 20
 REQUEST_TIMEOUT_SECONDS = 10
 _META_TEMPLATE_FIELDS = "id,name,status,category,language,components"
@@ -241,7 +267,7 @@ def _existing_template_result(master: dict, existing: dict) -> dict:
     }
 
 
-def provision_master_templates(connection: dict) -> list[dict]:
+def provision_master_templates(connection: dict, *, templates=None) -> list[dict]:
     """Create missing master templates in the connected WABA without touching existing ones.
 
     The operation is safe to retry: an existing matching template is reused;
@@ -261,8 +287,9 @@ def provision_master_templates(connection: dict) -> list[dict]:
 
     existing_templates = _list_waba_templates(waba_id, access_token)
     results: list[dict] = []
+    selected_masters = tuple(templates) if templates is not None else MASTER_TEMPLATES
 
-    for master in MASTER_TEMPLATES:
+    for master in selected_masters:
         existing = next(
             (
                 item for item in existing_templates
@@ -375,3 +402,41 @@ def provision_master_templates(connection: dict) -> list[dict]:
             })
 
     return results
+
+
+def provision_shared_tenant_campaign_template(connection: dict) -> dict:
+    """Install/check the dedicated Vendedor 24/7 template in the shared WABA.
+
+    This is deliberately separate from both merchant WABAs and the SuperAdmin
+    acquisition CRM's selected template. Meta approval is still account-specific.
+    """
+    results = provision_master_templates(
+        connection,
+        templates=(SHARED_TENANT_CAMPAIGN_TEMPLATE,),
+    )
+    return results[0] if results else {
+        "key": SHARED_TENANT_CAMPAIGN_TEMPLATE["key"],
+        "name": SHARED_TENANT_CAMPAIGN_TEMPLATE["name"],
+        "language": SHARED_TENANT_CAMPAIGN_TEMPLATE["language"],
+        "status": "ERROR",
+        "created": False,
+        "message": "Meta no devolvió un resultado para la plantilla compartida.",
+    }
+
+
+def record_shared_tenant_campaign_template(company, result: dict) -> dict:
+    """Persist safe status metadata for the shared sender's tenant CRM template."""
+    from services.ai_agent.config_service import update_ai_preferences
+
+    item = result if isinstance(result, dict) else {}
+    safe = {
+        "key": str(item.get("key") or SHARED_TENANT_CAMPAIGN_TEMPLATE["key"])[:80],
+        "name": str(item.get("name") or SHARED_TENANT_CAMPAIGN_TEMPLATE["name"])[:120],
+        "language": str(item.get("language") or SHARED_TENANT_CAMPAIGN_TEMPLATE["language"])[:20],
+        "status": str(item.get("status") or "UNKNOWN").upper()[:30],
+        "created": bool(item.get("created")),
+        "message": str(item.get("message") or "")[:300],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    update_ai_preferences(company, whatsapp_updates={"tenant_campaign_template": safe})
+    return safe
