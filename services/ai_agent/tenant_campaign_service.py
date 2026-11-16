@@ -241,20 +241,21 @@ def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_
     if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
         return None
 
+    from services.whatsapp_share_service import normalize_whatsapp_number
+    normalized_sender = normalize_whatsapp_number(sender)
+    if not normalized_sender:
+        return None
+
     query = TenantCampaignRecipient.query.filter(
         TenantCampaignRecipient.channel == "whatsapp",
         TenantCampaignRecipient.status == "sent",
         TenantCampaignRecipient.provider_message_id.isnot(None),
+        TenantCampaignRecipient.destination == normalized_sender,
     )
     referenced_id = str(context_message_id or "").strip()
     if referenced_id:
         matches = query.filter(TenantCampaignRecipient.provider_message_id == referenced_id).limit(2).all()
         return matches[0] if len(matches) == 1 else None
-
-    from services.whatsapp_share_service import normalize_whatsapp_number
-    normalized_sender = normalize_whatsapp_number(sender)
-    if not normalized_sender:
-        return None
     cutoff = _now() - timedelta(days=30)
     candidates = query.filter(
         TenantCampaignRecipient.destination == normalized_sender,
@@ -308,15 +309,12 @@ def resolve_shared_campaign_opt_out_clients(*, phone_number_id: str, sender: str
     normalized_sender = normalize_whatsapp_number(sender)
     if not normalized_sender:
         return []
-    cutoff = _now() - timedelta(days=30)
     matches = (
         TenantCampaignRecipient.query
         .filter(
             TenantCampaignRecipient.channel == "whatsapp",
             TenantCampaignRecipient.status == "sent",
             TenantCampaignRecipient.destination == normalized_sender,
-            TenantCampaignRecipient.sent_at.isnot(None),
-            TenantCampaignRecipient.sent_at >= cutoff,
         )
         .with_entities(
             TenantCampaignRecipient.company_id,
