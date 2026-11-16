@@ -872,18 +872,35 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     if not enabled:
         return False, "Envío comercial deshabilitado."
+
+    # Prefer the already-authorized SuperAdmin Gmail mailbox. This uses the
+    # Gmail API over HTTPS rather than SMTP ports 465/587, which may be
+    # unavailable or filtered by the hosting network.
+    use_gmail_api = False
+    gmail_mailbox = ""
+    try:
+        from services.gmail_commercial_service import (
+            commercial_gmail_configuration_status,
+            send_commercial_message,
+        )
+        gmail_status = commercial_gmail_configuration_status()
+        use_gmail_api = bool(gmail_status.get("send_configured"))
+        gmail_mailbox = str(gmail_status.get("mailbox") or "").strip()
+    except Exception:
+        send_commercial_message = None
+
     host = _clean(current_app.config.get("SMTP_HOST"))
     user = _clean(current_app.config.get("SMTP_USER"))
     password = current_app.config.get("SMTP_PASSWORD") or ""
-    if not host or not user or not password:
-        return False, "SMTP comercial no configurado."
+    if not use_gmail_api and (not host or not user or not password):
+        return False, "No hay un proveedor de email configurado. Conectá Gmail o configurá SMTP."
 
     if not recipient.tracking_token:
         recipient.tracking_token = secrets.token_urlsafe(32)
 
     msg = EmailMessage()
     msg["Subject"] = render_merge(campaign.subject, recipient.lead)[:255]
-    msg["From"] = _clean(current_app.config.get("SMTP_FROM_EMAIL")) or user
+    msg["From"] = gmail_mailbox if use_gmail_api else (_clean(current_app.config.get("SMTP_FROM_EMAIL")) or user)
     msg["To"] = recipient.destination
     msg["Reply-To"] = msg["From"]
     unsub = _unsubscribe_url(recipient.lead)
@@ -909,6 +926,13 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
         )
     msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
+
+    if use_gmail_api:
+        try:
+            send_commercial_message(msg)
+            return True, "sent"
+        except Exception as exc:
+            return False, str(exc)[:240]
 
     try:
         preferred_port = int(current_app.config.get("SMTP_PORT") or 587)
