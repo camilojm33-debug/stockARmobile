@@ -51,13 +51,15 @@ def commercial_gmail_configuration_status() -> dict:
     topic_ready = bool(settings["topic_name"])
     pubsub_identity_ready = bool(settings["pubsub_service_account"])
     watch_ready = oauth_ready and refresh_ready and topic_ready
+    send_scope_confirmed = os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED", "").strip().lower() in {"1", "true", "yes", "on"}
     return {
         "oauth_configured": oauth_ready,
         "refresh_token_configured": refresh_ready,
         "watch_configured": watch_ready,
         "pubsub_auth_configured": pubsub_identity_ready,
         "pubsub_configured": watch_ready and pubsub_identity_ready,
-        "send_configured": oauth_ready and refresh_ready,
+        "send_scope_confirmed": send_scope_confirmed,
+        "send_configured": oauth_ready and refresh_ready and send_scope_confirmed,
         "mailbox": settings["mailbox"],
         "audience": settings["pubsub_audience"],
     }
