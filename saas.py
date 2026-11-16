@@ -2102,7 +2102,6 @@ def crm_email_reply():
     in_reply_to = str(
         message_metadata.get("rfc_message_id")
         or conversation_metadata.get("rfc_message_id")
-        or (latest_inbound.external_message_id if latest_inbound is not None else "")
         or ""
     ).strip()
     references = str(
