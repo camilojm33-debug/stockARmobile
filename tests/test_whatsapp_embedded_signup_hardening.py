@@ -251,3 +251,18 @@ def test_tenant_crm_campaigns_use_platform_shared_sender_and_separate_template_c
     assert "Crear / sincronizar plantilla del CRM de comercios" in settings
     assert "Los contactos, campañas, consentimientos, conversaciones y resultados siguen aislados por comercio" in wizard
     assert "Número compartido · Vendedor 24/7 StockARmobile" in detail
+
+
+
+def test_shared_vendedor247_unquoted_baja_is_routed_to_tenant_opt_out_resolver():
+    source = (ROOT / "whatsapp_agent.py").read_text(encoding="utf-8")
+    start = source.index("def _process_shared_tenant_campaign_reply")
+    end = source.index("\ndef ", start + 8)
+    handler = source[start:end]
+
+    assert "resolve_shared_campaign_opt_out_clients(" in handler
+    assert "record_whatsapp_consent(" in handler
+    assert 'source="whatsapp_reply"' in handler
+    assert 'status == "sent"' in (
+        ROOT / "services/ai_agent/tenant_campaign_service.py"
+    ).read_text(encoding="utf-8")
