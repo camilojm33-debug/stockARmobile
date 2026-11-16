@@ -19,7 +19,8 @@ def test_main_sidebar_has_fixed_header_scroll_navigation_and_footer():
     assert "app-sidebar-footer" not in sidebar[scroll_start:scroll_end]
 
     nav_markup = sidebar[nav_start:scroll_end]
-    assert len(re.findall(r'class="nav-link', nav_markup)) == 57
+    assert len(re.findall(r'class="nav-link', nav_markup)) == 58
+    assert "url_for('saas.whatsapp_master_templates')" in nav_markup
     assert "CRM · requiere IA PRO" in nav_markup
     assert "CRM · requiere permiso" in nav_markup
     assert "Precios mayoristas" in nav_markup
