@@ -56,7 +56,6 @@ SHARED_TENANT_CAMPAIGN_TEMPLATE = {
         "¡Hola, {{1}}! 👋\n\n"
         "Queremos compartirte novedades de {{2}}.\n\n"
         "{{3}}\n\n"
-        "Para dejar de recibir mensajes promocionales, respondé BAJA.\n\n"
         "¡Gracias!"
     ),
     "examples": [
