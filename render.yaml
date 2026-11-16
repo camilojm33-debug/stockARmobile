@@ -9,6 +9,10 @@ envVarGroups:
         value: "0"
       - key: AI_MARKETING_SEND_ENABLED
         value: "0"
+      - key: AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME
+        value: stockarmobile_vendedor247_marketing_es_ar
+      - key: AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_LANGUAGE
+        value: es_AR
 
 services:
   - type: web
