@@ -248,8 +248,10 @@
                 {% if gmail_oauth_configured %}
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_email_gmail_connect') }}"><i class="bi bi-google me-1"></i>{{ 'Reautorizar Gmail' if gmail_refresh_configured else 'Conectar Gmail' }}</a>
                 {% endif %}
+                {% if gmail_refresh_configured %}
                 <form method="post" action="{{ url_for('saas.crm_email_gmail_sync') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button></form>
                 <form method="post" action="{{ url_for('saas.crm_email_gmail_watch') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit"><i class="bi bi-broadcast me-1"></i>Renovar escucha</button></form>
+                {% endif %}
               </div>
             </div>
 
