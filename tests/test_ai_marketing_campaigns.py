@@ -546,9 +546,11 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         )
 
         resolved_sender_ids = []
+        resolved_sender_phone_ids = []
 
         def shared_connection(company, branch_id=None):
             resolved_sender_ids.append(company.id)
+            resolved_sender_phone_ids.append("stockarmobile-vendedor247-phone")
             assert company.id == platform.id
             assert branch_id is None
             return {
@@ -611,11 +613,11 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         assert detail == "sent"
         assert provider_id == "wamid.shared-vendedor247-test"
         assert sent["company_id"] == platform.id
-        assert sent["phone_number_id"] == "stockarmobile-vendedor247-phone"
         assert sent["template_name"] == "stockarmobile_vendedor247_marketing_es_ar"
         assert sent["template_name"] != "superadmin_acquisition_template"
         assert sent["branch_id"] is None
         assert resolved_sender_ids == [platform.id, platform.id]
+        assert resolved_sender_phone_ids == ["stockarmobile-vendedor247-phone", "stockarmobile-vendedor247-phone"]
         # Only the sender is shared. Campaign/recipient ownership remains tenant-scoped.
         assert Campaign.query.filter_by(id=campaign.id, company_id=tenant.id).count() == 1
         assert TenantCampaignRecipient.query.filter_by(company_id=tenant.id).count() == 1
