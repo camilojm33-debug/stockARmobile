@@ -6720,6 +6720,19 @@ def global_settings():
     return render_template("saas/settings.html", settings_snapshot=settings_snapshot)
 
 
+@bp.get("/whatsapp-plantillas-maestras")
+@superadmin_required
+def whatsapp_master_templates():
+    """Show the centrally managed WhatsApp template definitions used for tenant provisioning."""
+    _require_superadmin()
+    from services.ai_agent.whatsapp_master_template_service import list_master_templates
+
+    return render_template(
+        "saas/whatsapp_master_templates.html",
+        master_templates=list_master_templates(),
+    )
+
+
 def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
     """List approved platform templates with the same compatibility rules as tenant campaigns."""
     from services.ai_agent.whatsapp_campaign_template_service import list_approved_campaign_templates
