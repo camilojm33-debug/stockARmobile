@@ -1818,16 +1818,30 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
         if state == "waiting" and needs_reply:
             continue
 
+        latest_metadata = latest.metadata_json if latest is not None and isinstance(latest.metadata_json, dict) else {}
+        latest_subject = str(latest_metadata.get("subject") or "").strip()[:500]
         latest_text = str(latest.content or "").strip() if latest is not None else ""
+        if conversation.channel == "email_commercial":
+            latest_text = latest_text.replace("\\\\n", "\n").replace("\\n", "\n")
+            if latest_text.startswith("Asunto: "):
+                subject_line, separator, message_body = latest_text.partition("\n\n")
+                if separator:
+                    latest_subject = latest_subject or subject_line[len("Asunto: "):].strip()
+                    latest_text = message_body.strip()
+        raw_company_name = str(getattr(lead, "company_name", None) or "").strip()
+        is_new_contact = bool(conversation.channel == "email_commercial" and raw_company_name.lower() == "prospecto email")
         contact_name = (
-            getattr(lead, "contact_name", None)
+            email if is_new_contact
+            else getattr(lead, "contact_name", None)
             or getattr(lead, "company_name", None)
             or email
             or phone
             or "Prospecto"
         )
-        company_name = getattr(lead, "company_name", None) or (
-            email if conversation.channel == "email_commercial" else "Prospecto de WhatsApp"
+        company_name = (
+            "Nuevo contacto · completar ficha" if is_new_contact
+            else getattr(lead, "company_name", None)
+            or (email if conversation.channel == "email_commercial" else "Prospecto de WhatsApp")
         )
 
         searchable = " ".join(
@@ -1836,6 +1850,7 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
                 str(company_name or ""),
                 str(email or ""),
                 str(phone or ""),
+                latest_subject,
                 latest_text,
             ]
         ).lower()
@@ -1852,6 +1867,8 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
                 "email": email,
                 "phone": phone,
                 "latest_text": latest_text[:240],
+                "subject": latest_subject,
+                "is_new_contact": is_new_contact,
                 "latest_sender_type": getattr(latest, "sender_type", "") if latest is not None else "",
                 "latest_at": (
                     _format_admin_datetime_local(latest.created_at, "%d/%m %H:%M")
@@ -1884,7 +1901,21 @@ def crm_inbox():
         state = "all"
 
     all_rows = _crm_inbox_rows(company, q="", channel="all", state="all", limit=200)
-    rows = _crm_inbox_rows(company, q=q, channel=channel, state=state, limit=200)
+    rows = list(all_rows)
+    if channel == "email":
+        rows = [row for row in rows if row["channel"] == "email_commercial"]
+    elif channel == "whatsapp":
+        rows = [row for row in rows if row["channel"] == "whatsapp_commercial"]
+    if state == "pending":
+        rows = [row for row in rows if row["needs_reply"]]
+    elif state == "waiting":
+        rows = [row for row in rows if not row["needs_reply"]]
+    if q:
+        query = q.lower()
+        rows = [
+            row for row in rows
+            if query in " ".join(str(row.get(key) or "") for key in ("contact_name", "company_name", "email", "phone", "subject", "latest_text")).lower()
+        ]
 
     counts = {
         "total": len(all_rows),
@@ -1951,6 +1982,21 @@ def crm_inbox():
                 lead = SaaSLead.query.filter_by(id=int(participant.participant_id)).first()
 
         selected_email = str(metadata.get("sender_email") or getattr(lead, "email", None) or "")[:160]
+        selected_raw_company = str(getattr(lead, "company_name", None) or "").strip()
+        selected_is_new_contact = bool(selected.channel == "email_commercial" and selected_raw_company.lower() == "prospecto email")
+        selected_contact_name = (
+            selected_email if selected_is_new_contact
+            else getattr(lead, "contact_name", None)
+            or getattr(lead, "company_name", None)
+            or selected_email
+            or selected_phone
+            or "Prospecto"
+        )
+        selected_company_name = (
+            "Nuevo contacto · completar ficha" if selected_is_new_contact
+            else getattr(lead, "company_name", None)
+            or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp")
+        )
         selected_phone = ""
         if selected.channel == "whatsapp_commercial":
             selected_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
@@ -1961,26 +2007,49 @@ def crm_inbox():
                 commercial_conversation_attention(selected).get("pending") or selected_needs_reply
             )
 
+        selected_message_views = []
+        for msg in selected_messages:
+            msg_metadata = msg.metadata_json if isinstance(msg.metadata_json, dict) else {}
+            message_content = str(msg.content or "")
+            message_subject = str(msg_metadata.get("subject") or "").strip()[:500]
+            if selected.channel == "email_commercial":
+                message_content = message_content.replace("\\\\n", "\n").replace("\\n", "\n")
+                if message_content.startswith("Asunto: "):
+                    subject_line, separator, message_body = message_content.partition("\n\n")
+                    if separator:
+                        message_subject = message_subject or subject_line[len("Asunto: "):].strip()
+                        message_content = message_body.strip()
+            selected_message_views.append({
+                "id": msg.id,
+                "sender_type": msg.sender_type,
+                "sender_label": "Cliente" if msg.sender_type == "user" else ("Vos" if msg.sender_type == "human" else "Comercial IA"),
+                "content": message_content,
+                "subject": message_subject,
+                "preview": message_content.replace("\n", " ")[:120],
+                "created_at": _format_admin_datetime_local(msg.created_at, "%d/%m/%Y %H:%M"),
+            })
+
         selected_view = {
             "conversation_id": selected.id,
             "channel": selected.channel,
             "channel_label": "Gmail" if selected.channel == "email_commercial" else "WhatsApp",
-            "contact_name": getattr(lead, "contact_name", None) or getattr(lead, "company_name", None) or selected_email or selected_phone or "Prospecto",
-            "company_name": getattr(lead, "company_name", None) or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp"),
+            "contact_name": selected_contact_name,
+            "company_name": selected_company_name,
             "email": selected_email,
             "phone": selected_phone,
             "needs_reply": selected_needs_reply,
-            "messages": [
-                {
-                    "id": msg.id,
-                    "sender_type": msg.sender_type,
-                    "sender_label": "Cliente" if msg.sender_type == "user" else ("Vos" if msg.sender_type == "human" else "Comercial IA"),
-                    "content": str(msg.content or ""),
-                    "preview": str(msg.content or "").replace("\n", " ")[:120],
-                    "created_at": _format_admin_datetime_local(msg.created_at, "%d/%m/%Y %H:%M"),
-                }
-                for msg in selected_messages
-            ],
+            "subject": str(
+                next(
+                    (
+                        (msg.metadata_json or {}).get("subject")
+                        for msg in reversed(selected_messages)
+                        if isinstance(msg.metadata_json, dict) and (msg.metadata_json or {}).get("subject")
+                    ),
+                    metadata.get("subject") or "",
+                )
+            )[:500],
+            "is_new_contact": selected_is_new_contact,
+            "messages": selected_message_views,
         }
 
     return render_template(
