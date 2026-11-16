@@ -1057,6 +1057,18 @@ def test_preparation_revalidates_the_dedicated_shared_template_saved_in_the_draf
             "services.ai_agent.config_service.get_whatsapp_connection",
             lambda _company: connection,
         )
+        from services.ai_agent.tenant_campaign_service import (
+            _fetch_shared_campaign_template,
+            _shared_campaign_whatsapp,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            _shared_campaign_whatsapp,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
+            _fetch_shared_campaign_template,
+        )
         calls = []
 
         def revalidate(current_connection, *, selected_name=None, selected_language=None, allow_single_auto_select=True):
