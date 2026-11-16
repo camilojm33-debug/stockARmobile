@@ -1252,3 +1252,108 @@ def test_campaign_dispatch_blocks_when_cutoff_is_malformed(app, monkeypatch):
         result = dispatch_due_campaigns(db.session, company_id=1)
         assert result["disabled"] is True
         assert result["invalid_dispatch_cutoff"] is True
+
+
+def test_shared_campaign_reply_without_context_fails_closed_across_tenant_branches(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Branch, Campaign, Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        resolve_shared_campaign_reply,
+    )
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        tenant = Company(name="Tenant with two branches", active=True)
+        db.session.add_all([platform, tenant])
+        db.session.flush()
+        branch_main = Branch(
+            company_id=tenant.id, name="Casa central", code="MAIN",
+            active=True, is_default=True,
+        )
+        branch_second = Branch(
+            company_id=tenant.id, name="Sucursal", code="BR2",
+            active=True, is_default=False,
+        )
+        db.session.add_all([branch_main, branch_second])
+        db.session.flush()
+        user = User(
+            username="shared-branch-reply",
+            email="shared-branch-reply@example.com",
+            role="admin",
+            active=True,
+            company_id=tenant.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente en dos sucursales",
+            whatsapp="5493624000000",
+            company_id=tenant.id,
+            active=True,
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+        campaigns = []
+        for branch in (branch_main, branch_second):
+            campaign = CampaignService.create_draft(
+                company_id=tenant.id,
+                user_id=user.id,
+                title=f"Campaña {branch.code}",
+                objective="Novedades",
+                campaign_type="general",
+                content="Hola",
+                system_data={"branch_id": branch.id, "channel": "whatsapp"},
+                audience_segment="clientes activos",
+                audience_count=1,
+            )
+            campaigns.append(campaign)
+        now = datetime.utcnow()
+        recipient_main = TenantCampaignRecipient(
+            campaign_id=campaigns[0].id,
+            company_id=tenant.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="branch-main-reply",
+            status="sent",
+            provider_message_id="wamid.branch-main",
+            sent_at=now - timedelta(minutes=3),
+        )
+        recipient_second = TenantCampaignRecipient(
+            campaign_id=campaigns[1].id,
+            company_id=tenant.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="branch-second-reply",
+            status="sent",
+            provider_message_id="wamid.branch-second",
+            sent_at=now - timedelta(minutes=1),
+        )
+        db.session.add_all([recipient_main, recipient_second])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {"phone_number_id": "shared-vendedor-phone"},
+        )
+
+        # Same tenant and phone, but two branches: never guess without quoted context.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+        ) is None
+        # Quoted provider message identifies the exact original campaign and branch.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+            context_message_id="wamid.branch-second",
+        ).id == recipient_second.id
