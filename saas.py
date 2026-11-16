@@ -1994,6 +1994,8 @@ def crm_inbox():
         gmail_send_configured=(
             str(os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED") or "").strip().lower() in {"1", "true", "yes", "on"}
             and bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_ID"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_SECRET"))
         ),
     )
 
@@ -2055,7 +2057,7 @@ def crm_inbox_message_delete():
 @superadmin_required
 def crm_email_reply():
     """Send a reply from the authorized commercial Gmail mailbox in its original thread."""
-    from app import SaaSLead, db, record_audit
+    from app import SaaSLead, db, record_audit, utcnow
     from stockarmobile.models.conversations import Conversation, ConversationMessage
     from services.saas_commercial_whatsapp import get_commercial_company
 
@@ -2089,7 +2091,7 @@ def crm_email_reply():
     )
     recipient = str(
         conversation_metadata.get("sender_email")
-        or conversation.external_conversation_id.removeprefix("email:")
+        or str(conversation.external_conversation_id or "").removeprefix("email:")
         or ""
     ).strip().lower()
     thread_id = str(
