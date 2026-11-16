@@ -54,6 +54,41 @@
     <div class="alert alert-warning">Todavía no hay plantillas maestras configuradas.</div>
   {% endfor %}
 
+  <section class="card border-0 shadow-sm rounded-4 mb-4">
+    <div class="card-body p-4">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+          <h2 class="h5 fw-bold mb-1">Estado por comercio y sucursal</h2>
+          <p class="small text-muted mb-0">Último resultado registrado por StockARmobile al conectar o sincronizar WhatsApp.</p>
+        </div>
+        <span class="badge text-bg-secondary">{{ channel_rows|length }} canal(es)</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead>
+            <tr><th>Comercio</th><th>Sucursal</th><th>WhatsApp</th><th>Plantilla maestra</th><th>Última sincronización</th></tr>
+          </thead>
+          <tbody>
+            {% for row in channel_rows %}
+              <tr>
+                <td class="fw-semibold">{{ row.company }}</td>
+                <td>{{ row.branch }}</td>
+                <td>{{ row.phone }}</td>
+                <td>
+                  <span class="badge {% if row.status == 'Aprobada' %}text-bg-success{% elif 'Pendiente' in row.status or 'revisión' in row.status %}text-bg-warning{% elif 'Sin WhatsApp' in row.status %}text-bg-secondary{% else %}text-bg-danger{% endif %}">{{ row.status }}</span>
+                  {% if row.detail %}<div class="small text-muted mt-1">{{ row.detail }}</div>{% endif %}
+                </td>
+                <td class="small text-muted">{{ row.checked_at or 'Todavía no sincronizada' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">Todavía no hay comercios activos para mostrar.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <div class="small text-muted">
     La plantilla se crea automáticamente en la WABA de cada comercio al conectar WhatsApp o al sincronizar desde Vendedor IA.
     La copia queda disponible para campañas cuando Meta la aprueba. Los rechazos o conflictos se muestran en la pantalla de conexión del comercio.
