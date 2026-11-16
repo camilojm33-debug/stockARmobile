@@ -7209,7 +7209,6 @@ def whatsapp_tenant_crm_shared_template_provision():
     from app import db, record_audit
     from services.ai_agent.config_service import get_whatsapp_connection
     from services.ai_agent.whatsapp_master_template_service import (
-        SHARED_TENANT_CAMPAIGN_TEMPLATE,
         provision_shared_tenant_campaign_template,
         record_shared_tenant_campaign_template,
     )
