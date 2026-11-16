@@ -26,3 +26,11 @@ def test_campaign_wizard_explains_merchant_whatsapp_readiness_before_showing_ste
     assert "template_admin_url" in template
     assert "Configurar mi Vendedor IA" in template
     assert "{% if template %}" in template
+
+
+def test_tenant_campaign_wizard_discloses_shared_vendedor_sender_and_tenant_isolation():
+    template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
+    assert "Canal compartido listo" in template
+    assert "Vendedor 24/7 de StockARmobile" in template
+    assert "CRM de este comercio" in template
+    assert "número propio del comercio" not in template
