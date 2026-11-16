@@ -128,7 +128,7 @@
               <div class="col-12">
                 <div class="wa-muted-box">
                   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-                    <div><strong>Plantillas aprobadas en Meta</strong><div class="small text-muted">Sincronizá la WABA comercial y seleccioná la plantilla que utilizarán los CRM de los comercios.</div></div>
+                    <div><strong>Plantillas aprobadas en Meta</strong><div class="small text-muted">Sincronizá la WABA comercial y seleccioná la plantilla de captación que usa el CRM de SuperAdmin.</div></div>
                     <button type="button" id="commercial-template-refresh" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button>
                   </div>
                   <div class="row g-2 align-items-end">
@@ -173,6 +173,37 @@
             <div class="mt-1"><strong>Empresa interna:</strong> {{ company.name }}</div>
             <div class="mt-1"><strong>Agente:</strong> Comercial IA</div>
           </div>
+        </section>
+
+        <section class="wa-admin-card p-4 mt-4">
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+            <div>
+              <h2 class="h5 fw-bold mb-1">CRM de los comercios · Vendedor 24/7 compartido</h2>
+              <p class="small text-muted mb-0">Este emisor común es independiente de los datos y conversaciones de cada CRM. La plantilla también es independiente de la utilizada por el CRM de SuperAdmin.</p>
+            </div>
+            <span class="badge {{ 'text-bg-success' if tenant_campaign_template_state.get('status') == 'APPROVED' else 'text-bg-warning' }}">
+              {{ {'APPROVED':'Aprobada','PENDING':'En revisión','IN_APPEAL':'En revisión','CONFLICT':'Conflicto','ERROR':'Error'}.get(tenant_campaign_template_state.get('status'), 'Sin verificar') }}
+            </span>
+          </div>
+          <div class="border rounded-3 p-3 mb-3">
+            <div class="small text-muted">Plantilla exclusiva</div>
+            <div class="fw-bold wa-code">{{ tenant_campaign_template_name }}</div>
+            <div class="small text-muted mt-1">Español (Argentina) · MARKETING · {{ tenant_campaign_template_state.get('status', 'Sin verificar') }}</div>
+            <div class="small mt-2">Variables: <code>{{1}}</code> contacto · <code>{{2}}</code> comercio/producto · <code>{{3}}</code> mensaje de campaña.</div>
+            {% if tenant_campaign_template_state.get('message') %}
+              <div class="small mt-2">{{ tenant_campaign_template_state.get('message') }}</div>
+            {% endif %}
+            {% if tenant_campaign_template_state.get('checked_at') %}
+              <div class="small text-muted mt-2">Última verificación: {{ tenant_campaign_template_state.get('checked_at') }}</div>
+            {% endif %}
+          </div>
+          <form method="post" action="{{ url_for('saas.whatsapp_tenant_crm_shared_template_provision') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-primary w-100" type="submit" {% if not connection.enabled or not connection.phone_number_id or not token_configured %}disabled{% endif %}>
+              <i class="bi bi-cloud-arrow-up me-1"></i>Crear / sincronizar plantilla del CRM de comercios
+            </button>
+          </form>
+          <div class="small text-muted mt-2">La acción no envía mensajes. Solo crea la plantilla en la WABA compartida o consulta su estado en Meta. Las campañas permanecen bloqueadas hasta que figure APPROVED.</div>
         </section>
 
         <section class="wa-admin-card p-4">
