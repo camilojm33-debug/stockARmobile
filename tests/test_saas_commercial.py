@@ -1041,3 +1041,214 @@ def test_crm_campaign_preflight_uses_in_process_worker_not_legacy_worker_url(app
         worker_check = next(check for check in result["checks"] if check["code"] == "worker")
         assert worker_check["ok"] is True
         assert worker_check["detail"] == "Dispatcher interno iniciado."
+
+
+
+def test_dispatch_due_campaigns_can_target_only_the_requested_campaign(app, monkeypatch):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent, User, db
+    from services.saas_commercial_service import build_campaign_recipients, dispatch_due_campaigns
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        user = User(
+            username="targeted-dispatch-admin",
+            email="targeted-dispatch-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        campaigns = []
+        for suffix in ("older", "selected"):
+            lead = SaaSLead(
+                company_name=f"Target {suffix}",
+                contact_name=f"Contact {suffix}",
+                email=f"{suffix}@example.com",
+                email_status="valid",
+                email_consent_status="opted_in",
+                created_by_user_id=user.id,
+            )
+            db.session.add(lead)
+            db.session.flush()
+            db.session.add(SaaSLeadConsent(
+                lead_id=lead.id,
+                unsubscribe_token=f"target-token-{suffix}",
+                email_status="opted_in",
+            ))
+            campaign = SaaSCampaign(
+                name=f"Campaign {suffix}",
+                subject="Hola",
+                channel="email",
+                status="APROBADA",
+                body_html="<p>Hola</p>",
+                body_text="Hola",
+                created_by_user_id=user.id,
+            )
+            db.session.add(campaign)
+            db.session.flush()
+            build_campaign_recipients(db.session, campaign.id)
+            campaigns.append(campaign)
+        db.session.commit()
+
+        sent_campaign_ids = []
+
+        def fake_send_email(recipient, campaign):
+            sent_campaign_ids.append(campaign.id)
+            return True, "sent"
+
+        monkeypatch.setattr("services.saas_commercial_service._send_email", fake_send_email)
+        result = dispatch_due_campaigns(
+            db.session,
+            limit=1,
+            per_campaign=50,
+            campaign_id=campaigns[1].id,
+        )
+
+        db.session.refresh(campaigns[0])
+        db.session.refresh(campaigns[1])
+        older_recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[0].id).first()
+        selected_recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id).first()
+
+        assert result["sent"] == 1
+        assert sent_campaign_ids == [campaigns[1].id]
+        assert older_recipient.status == "pending"
+        assert selected_recipient.status == "sent"
+        assert campaigns[0].status == "APROBADA"
+        assert campaigns[1].status == "ENVIADA"
+
+
+def test_gmail_sync_follows_pagination_and_carries_reply_metadata(app, monkeypatch):
+    import base64
+    import services.gmail_commercial_service as gmail_module
+
+    captures = []
+    class Request:
+        def __init__(self, payload):
+            self.payload = payload
+        def execute(self):
+            return self.payload
+
+    class Messages:
+        def list(self, **kwargs):
+            if kwargs.get("pageToken") == "page-2":
+                return Request({"messages": [{"id": "gmail-2"}]})
+            return Request({"messages": [{"id": "gmail-1"}], "nextPageToken": "page-2"})
+        def get(self, *, userId, id, format):
+            headers = [
+                {"name": "From", "value": f"Contacto {id} <{id}@example.com>"},
+                {"name": "To", "value": "stockarmobile@gmail.com"},
+                {"name": "Subject", "value": f"Consulta {id}"},
+                {"name": "Message-ID", "value": f"<{id}@example.com>"},
+                {"name": "References", "value": "<root@example.com>"},
+            ]
+            encoded = base64.urlsafe_b64encode(f"Mensaje {id}".encode()).decode().rstrip("=")
+            return Request({
+                "id": id,
+                "threadId": f"thread-{id}",
+                "payload": {"headers": headers, "mimeType": "text/plain", "body": {"data": encoded}},
+            })
+    class Users:
+        def messages(self):
+            return Messages()
+    class FakeGmail:
+        def users(self):
+            return Users()
+
+    monkeypatch.setenv("GMAIL_COMMERCIAL_MAILBOX", "stockarmobile@gmail.com")
+    monkeypatch.setattr(gmail_module, "gmail_service", lambda: FakeGmail())
+    monkeypatch.setattr(
+        "services.saas_commercial_service.capture_inbound_email",
+        lambda **kwargs: captures.append(kwargs) or {"status": "received"},
+    )
+
+    result = gmail_module.sync_recent_messages(hours=48, max_pages=4)
+
+    assert result["found"] == 2
+    assert result["pages"] == 2
+    assert result["has_more"] is False
+    assert result["received"] == 2
+    assert [item["thread_id"] for item in captures] == ["thread-gmail-1", "thread-gmail-2"]
+    assert captures[0]["rfc_message_id"] == "<gmail-1@example.com>"
+    assert captures[0]["references"] == "<root@example.com>"
+
+
+def test_gmail_commercial_reply_preserves_thread_and_message_headers(monkeypatch):
+    import base64
+    from email import message_from_bytes
+    import services.gmail_commercial_service as gmail_module
+
+    captured = {}
+    class Request:
+        def execute(self):
+            return {"id": "sent-message-id", "threadId": "thread-123"}
+    class Messages:
+        def send(self, *, userId, body):
+            captured.update(body)
+            return Request()
+    class Users:
+        def messages(self):
+            return Messages()
+    class FakeGmail:
+        def users(self):
+            return Users()
+
+    monkeypatch.setenv("GMAIL_COMMERCIAL_MAILBOX", "stockarmobile@gmail.com")
+    monkeypatch.setattr(
+        gmail_module,
+        "_settings",
+        lambda: {"mailbox": "stockarmobile@gmail.com"},
+    )
+    monkeypatch.setattr(gmail_module, "gmail_service", lambda: FakeGmail())
+
+    result = gmail_module.send_commercial_reply(
+        recipient_email="prospect@example.com",
+        subject="Consulta de StockARmobile",
+        body="Gracias por escribirnos.",
+        thread_id="thread-123",
+        in_reply_to="<incoming@example.com>",
+        references="<root@example.com>",
+    )
+
+    raw = base64.urlsafe_b64decode(captured["raw"] + "=" * (-len(captured["raw"]) % 4))
+    message = message_from_bytes(raw)
+    assert captured["threadId"] == "thread-123"
+    assert result["message_id"] == "sent-message-id"
+    assert message["From"] == "stockarmobile@gmail.com"
+    assert message["To"] == "prospect@example.com"
+    assert message["Subject"] == "Re: Consulta de StockARmobile"
+    assert message["In-Reply-To"] == "<incoming@example.com>"
+    assert message["References"] == "<root@example.com> <incoming@example.com>"
+
+
+def test_gmail_configuration_requires_pubsub_identity_and_confirmed_send_scope(monkeypatch):
+    import services.gmail_commercial_service as gmail_module
+
+    for key, value in {
+        "GOOGLE_GMAIL_CLIENT_ID": "client-id",
+        "GOOGLE_GMAIL_CLIENT_SECRET": "client-secret",
+        "GMAIL_COMMERCIAL_REFRESH_TOKEN": "refresh-token",
+        "GMAIL_COMMERCIAL_PUBSUB_TOPIC": "projects/project/topics/gmail",
+        "GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT": "",
+        "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED": "0",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    state = gmail_module.commercial_gmail_configuration_status()
+    assert state["watch_configured"] is True
+    assert state["pubsub_configured"] is False
+    assert state["send_configured"] is False
+
+    monkeypatch.setenv("GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT", "pubsub@project.iam.gserviceaccount.com")
+    monkeypatch.setenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED", "1")
+    state = gmail_module.commercial_gmail_configuration_status()
+    assert state["pubsub_configured"] is True
+    assert state["send_configured"] is True
+
+
+def test_gmail_watch_worker_is_not_started_during_tests(app):
+    from services.gmail_commercial_service import start_gmail_watch_maintenance_worker
+
+    with app.app_context():
+        assert start_gmail_watch_maintenance_worker(app) is False
