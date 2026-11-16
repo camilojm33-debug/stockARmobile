@@ -117,19 +117,20 @@ def campaign_preflight(db_session, campaign) -> dict:
     detail = "No requerido."
     if whatsapp_channel:
         try:
-            from services.saas_commercial_whatsapp import commercial_whatsapp_summary
+            from services.saas_commercial_whatsapp import commercial_whatsapp_summary, validate_commercial_whatsapp_template
             connection = commercial_whatsapp_summary()
             template = str(campaign.whatsapp_template_name or connection.get("template_name") or "").strip()
-            whatsapp_ok = bool(connection.get("connected") and template)
             display_number = str(connection.get("display_phone_number") or "").strip()
             sender_label = display_number or ("número comercial conectado" if connection.get("connected") else "sin conexión")
-            detail = (
-                f"Emisor: {sender_label}. Plantilla: {template}."
-                if whatsapp_ok else "Falta conexión del número comercial o una plantilla aprobada configurada."
+            validation = validate_commercial_whatsapp_template(
+                template,
+                campaign.whatsapp_template_language or "es_AR",
             )
+            whatsapp_ok = bool(connection.get("connected") and validation.get("ok"))
+            detail = f"Emisor: {sender_label}. Plantilla: {template or 'sin configurar'}. {validation.get('detail') or ''}".strip()
         except Exception as exc:
             whatsapp_ok = False
-            detail = f"No se pudo validar WhatsApp: {str(exc)[:250]}"
+            detail = f"No se pudo validar WhatsApp con Meta: {str(exc)[:250]}"
     add("whatsapp_config", "WhatsApp", whatsapp_ok, detail)
 
     try:
