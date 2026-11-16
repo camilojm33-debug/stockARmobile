@@ -1658,3 +1658,122 @@ def test_campaign_attribution_respects_the_originating_tenant_branch(app):
         ).all()
         assert [row.conversation_id for row in conversation_attribution] == [conversation_main.id]
         assert [row.sale_id for row in sale_attribution] == [sale_main.id]
+
+
+
+def test_unquoted_shared_sender_reply_is_not_misattributed_when_superadmin_campaign_was_sent(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Client, Company, SaaSCampaign, SaaSCampaignRecipient, SaaSLead, User, db
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        resolve_shared_campaign_reply,
+    )
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        merchant = Company(name="Tenant recipient owner", active=True)
+        db.session.add_all([platform, merchant])
+        db.session.flush()
+        tenant_user = User(
+            username="ambiguous-tenant-admin",
+            email="ambiguous-tenant@example.com",
+            role="admin",
+            active=True,
+            company_id=merchant.id,
+        )
+        tenant_user.set_password("password123")
+        superadmin = User(
+            username="ambiguous-superadmin",
+            email="ambiguous-superadmin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        superadmin.set_password("password123")
+        db.session.add_all([tenant_user, superadmin])
+        db.session.flush()
+        client = Client(
+            name="Tenant contact",
+            whatsapp="5493624000000",
+            company_id=merchant.id,
+            active=True,
+        )
+        lead = SaaSLead(
+            company_name="SuperAdmin lead",
+            contact_name="Tenant contact",
+            phone="5493624000000",
+            whatsapp="5493624000000",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=superadmin.id,
+        )
+        db.session.add_all([client, lead])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=merchant.id,
+            user_id=tenant_user.id,
+            title="Tenant campaign",
+            objective="Novedades",
+            campaign_type="general",
+            content="Hola",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        saas_campaign = SaaSCampaign(
+            name="SuperAdmin campaign",
+            subject="StockARmobile",
+            channel="whatsapp",
+            status="ENVIADA",
+            body_html="<p>Promo</p>",
+            body_text="Promo",
+            whatsapp_template_name="superadmin_template",
+            created_by_user_id=superadmin.id,
+        )
+        db.session.add_all([campaign, saas_campaign])
+        db.session.flush()
+        sent_at = datetime.utcnow() - timedelta(minutes=2)
+        tenant_recipient = TenantCampaignRecipient(
+            campaign_id=campaign.id,
+            company_id=merchant.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="tenant-ambiguous",
+            status="sent",
+            provider_message_id="wamid.tenant-context",
+            sent_at=sent_at,
+        )
+        superadmin_recipient = SaaSCampaignRecipient(
+            campaign_id=saas_campaign.id,
+            lead_id=lead.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            status="sent",
+            provider_message_id="wamid.superadmin-context",
+            sent_at=sent_at,
+        )
+        db.session.add_all([tenant_recipient, superadmin_recipient])
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {"phone_number_id": "shared-vendedor-phone"},
+        )
+        # Free-form reply is ambiguous across the two CRMs and must not enter the tenant CRM.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+        ) is None
+        # Provider context is an exact, unique campaign recipient and remains routable.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+            context_message_id="wamid.tenant-context",
+        ).id == tenant_recipient.id
