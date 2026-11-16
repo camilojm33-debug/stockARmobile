@@ -67,7 +67,7 @@ def campaign_template_compatibility(template: dict) -> tuple[bool, str, str]:
     if not body_text or body_variables != _REQUIRED_BODY_VARIABLES:
         return (
             False,
-            "El cuerpo debe incluir {{1}} (cliente), {{2}} (producto) y {{3}} (mensaje), sin variables adicionales.",
+            "El cuerpo debe incluir exactamente {{1}}, {{2}} y {{3}} (cliente, contexto comercial y mensaje editable), sin variables adicionales.",
             body_text,
         )
 
