@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from services.ai_agent import whatsapp_master_template_service as service
 
+# Re-run all checks against the restored main base before production deployment.
+
 
 class FakeResponse:
     def __init__(self, payload, *, status_code=200):
