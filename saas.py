@@ -2123,7 +2123,16 @@ def crm_email_reply():
         return redirect(url_for("saas.crm_inbox", conversation_id=conversation.id))
 
     try:
-        from services.gmail_commercial_service import send_commercial_reply
+        from services.gmail_commercial_service import (
+            commercial_gmail_configuration_status,
+            send_commercial_reply,
+        )
+        if not commercial_gmail_configuration_status().get("send_configured"):
+            flash(
+                "Primero reautorizá Gmail con permiso de envío, actualizá el refresh token en Render y confirmá GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED=1.",
+                "warning",
+            )
+            return redirect(url_for("saas.crm_inbox", conversation_id=conversation.id))
         result = send_commercial_reply(
             recipient_email=recipient,
             subject=subject,
@@ -3264,8 +3273,14 @@ def crm_email_gmail_watch():
         current_app.logger.exception("Gmail watch renewal failed: %s", exc)
         flash(f"No se pudo activar la escucha de Gmail: {exc}", "danger")
         return redirect(url_for("saas.crm_panel"))
+    if result.get("status") != "renewed":
+        flash(
+            f"La escucha de Gmail sigue pendiente: {result.get('reason') or 'faltan datos de configuración.'}",
+            "warning",
+        )
+        return redirect(url_for("saas.crm_panel"))
     flash(
-        f"Gmail conectado. Watch activo hasta {result.get('expiration') or 'la fecha informada por Google'}.",
+        f"Escucha de Gmail renovada hasta {result.get('expiration') or 'la fecha informada por Google'}.",
         "success",
     )
     return redirect(url_for("saas.crm_panel"))
