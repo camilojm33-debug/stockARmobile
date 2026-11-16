@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import requests
@@ -59,6 +60,40 @@ def list_master_templates() -> list[dict]:
         }
         for item in MASTER_TEMPLATES
     ]
+
+
+def record_master_template_provisioning(company, results: list[dict], *, branch=None) -> dict:
+    """Persist the latest non-secret provisioning state for the SuperAdmin overview."""
+    safe_results = []
+    for item in results if isinstance(results, list) else []:
+        if not isinstance(item, dict):
+            continue
+        safe_results.append({
+            "key": str(item.get("key") or "")[:80],
+            "name": str(item.get("name") or "")[:120],
+            "language": str(item.get("language") or "")[:20],
+            "status": str(item.get("status") or "UNKNOWN").upper()[:30],
+            "created": bool(item.get("created")),
+            "message": str(item.get("message") or "")[:300],
+        })
+    state = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "templates": safe_results,
+    }
+
+    if branch is not None and not bool(getattr(branch, "is_default", False)):
+        from services.ai_agent.config_service import _branch_preferences, save_branch_preferences
+
+        prefs = _branch_preferences(branch)
+        whatsapp = prefs.get("whatsapp") if isinstance(prefs.get("whatsapp"), dict) else {}
+        whatsapp["master_template_sync"] = state
+        prefs["whatsapp"] = whatsapp
+        save_branch_preferences(branch, prefs)
+    else:
+        from services.ai_agent.config_service import update_ai_preferences
+
+        update_ai_preferences(company, whatsapp_updates={"master_template_sync": state})
+    return state
 
 
 def _graph_version() -> str:
