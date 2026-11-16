@@ -549,11 +549,9 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         resolved_sender_phone_ids = []
 
         def shared_connection(company, branch_id=None):
-            resolved_sender_ids.append(company.id)
-            resolved_sender_phone_ids.append("stockarmobile-vendedor247-phone")
             assert company.id == platform.id
             assert branch_id is None
-            return {
+            connection = {
                 "enabled": True,
                 "phone_number_id": "stockarmobile-vendedor247-phone",
                 "business_account_id": "stockarmobile-vendedor247-waba",
@@ -563,6 +561,9 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
                 "template_name": "superadmin_acquisition_template",
                 "template_language": "es_AR",
             }
+            resolved_sender_ids.append(company.id)
+            resolved_sender_phone_ids.append(connection["phone_number_id"])
+            return connection
 
         template_snapshot = {
             "name": "stockarmobile_vendedor247_marketing_es_ar",
