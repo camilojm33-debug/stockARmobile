@@ -262,3 +262,92 @@ def test_provisioning_state_is_saved_without_tokens_for_default_company_and_bran
     assert branch_state["templates"][0]["status"] == "PENDING"
     assert stored_branch["templates"][0]["language"] == "es_AR"
     assert "must-not-be-saved" not in branch.vendor_ai_json
+
+
+
+def test_shared_tenant_crm_template_is_provisioned_separately_from_merchant_master(monkeypatch):
+    calls = {"get": [], "post": []}
+
+    def fake_get(url, **kwargs):
+        calls["get"].append(url)
+        return FakeResponse({"data": []})
+
+    def fake_post(url, **kwargs):
+        calls["post"].append((url, kwargs))
+        return FakeResponse({"id": "shared-template-123", "status": "PENDING"})
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+    monkeypatch.setattr(service.requests, "post", fake_post)
+
+    result = service.provision_shared_tenant_campaign_template(_connection())
+
+    assert result["key"] == "tenant_crm_shared_vendedor247"
+    assert result["name"] == "stockarmobile_vendedor247_marketing_es_ar"
+    assert result["language"] == "es_AR"
+    assert result["status"] == "PENDING"
+    payload = calls["post"][0][1]["json"]
+    assert payload["category"] == "MARKETING"
+    body = payload["components"][0]["text"]
+    assert "{{1}}" in body and "{{2}}" in body and "{{3}}" in body
+    assert payload["components"][0]["example"]["body_text"] == [[
+        "María",
+        "Comercial Demo",
+        "Esta semana tenemos novedades y beneficios especiales para vos. ¡Escribinos para conocer más!",
+    ]]
+    assert service.MASTER_TEMPLATES[0]["name"] == "campana_marketing_es_ar"
+
+
+def test_shared_tenant_template_provisioning_is_idempotent_when_already_approved(monkeypatch):
+    template = service.SHARED_TENANT_CAMPAIGN_TEMPLATE
+    existing = {
+        "name": template["name"],
+        "language": template["language"],
+        "status": "APPROVED",
+        "category": "MARKETING",
+        "components": [
+            {"type": "BODY", "text": template["body_text"]},
+        ],
+    }
+    post_calls = []
+    monkeypatch.setattr(
+        service.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse({"data": [existing]}),
+    )
+    monkeypatch.setattr(
+        service.requests,
+        "post",
+        lambda *args, **kwargs: post_calls.append(args) or FakeResponse({}),
+    )
+
+    result = service.provision_shared_tenant_campaign_template(_connection())
+
+    assert result["status"] == "APPROVED"
+    assert result["created"] is False
+    assert "lista para campañas" in result["message"]
+    assert post_calls == []
+
+
+def test_shared_tenant_template_status_persistence_never_stores_credentials():
+    import json
+    from types import SimpleNamespace
+
+    company = SimpleNamespace(preferences_json="")
+    result = service.record_shared_tenant_campaign_template(
+        company,
+        {
+            "key": "tenant_crm_shared_vendedor247",
+            "name": "stockarmobile_vendedor247_marketing_es_ar",
+            "language": "es_AR",
+            "status": "PENDING",
+            "created": True,
+            "message": "Esperando revisión de Meta.",
+            "access_token": "must-not-be-stored",
+        },
+    )
+    payload = json.loads(company.preferences_json)
+    stored = payload["ai_agent"]["whatsapp"]["tenant_campaign_template"]
+    assert result["status"] == "PENDING"
+    assert stored["name"] == "stockarmobile_vendedor247_marketing_es_ar"
+    assert "access_token" not in json.dumps(stored)
+    assert "must-not-be-stored" not in company.preferences_json
