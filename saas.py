@@ -2431,6 +2431,8 @@ def crm_panel():
         gmail_send_configured=bool(
             os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED", "").strip().lower() in {"1", "true", "yes", "on"}
             and os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN")
+            and os.getenv("GOOGLE_GMAIL_CLIENT_ID")
+            and os.getenv("GOOGLE_GMAIL_CLIENT_SECRET")
         ),
     )
 
