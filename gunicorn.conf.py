@@ -116,9 +116,11 @@ def post_worker_init(worker) -> None:
     # process and duplicated initialization. Keep all dispatchers in this hook.
     from services.ai_agent.tenant_campaign_service import start_campaign_dispatch_worker
     from services.saas_commercial_service import start_crm_campaign_dispatch_worker
+    from services.gmail_commercial_service import start_gmail_watch_maintenance_worker
 
     start_campaign_dispatch_worker(flask_app)
     start_crm_campaign_dispatch_worker(flask_app)
+    start_gmail_watch_maintenance_worker(flask_app)
 
     if not _enabled():
         return
