@@ -1462,7 +1462,7 @@ def test_shared_vendedor247_baja_suppresses_matching_contacts_in_each_tenant(app
             name="Cliente A",
             whatsapp="5493624000000",
             company_id=merchant_a.id,
-            active=True,
+            active=False,
             whatsapp_marketing_consent="opted_in",
             **_consent_evidence(),
         )
