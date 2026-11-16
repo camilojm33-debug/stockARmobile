@@ -13,7 +13,6 @@ from services.ai_agent.tenant_campaign_service import (
 
 
 @pytest.fixture(autouse=True)
-@pytest.fixture(autouse=True)
 def _mock_shared_vendedor247_campaign_readiness(monkeypatch):
     """Keep campaign preparation tests deterministic and independent from Meta."""
     connection = {
@@ -1443,7 +1442,7 @@ def test_shared_campaign_reply_without_context_fails_closed_across_tenant_branch
 
 def test_shared_vendedor247_baja_suppresses_matching_contacts_in_each_tenant(app, monkeypatch):
     from datetime import datetime, timedelta
-    from app import Client, Company, db
+    from app import Client, Company, User, db
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignRecipient,
         resolve_shared_campaign_opt_out_clients,
@@ -1538,3 +1537,124 @@ def test_shared_vendedor247_baja_suppresses_matching_contacts_in_each_tenant(app
             phone_number_id="wrong-phone",
             sender="5493624000000",
         ) == []
+
+
+
+def test_campaign_attribution_respects_the_originating_tenant_branch(app):
+    from datetime import datetime, timedelta
+    from app import Branch, Client, Company, Sale, User, db
+    from stockarmobile.models.conversations import Conversation
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignAttribution,
+        TenantCampaignRecipient,
+        refresh_attribution,
+    )
+
+    with app.app_context():
+        company = Company(name="Branch attribution tenant", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch_main = Branch(
+            company_id=company.id, name="Casa central", code="MAIN",
+            active=True, is_default=True,
+        )
+        branch_second = Branch(
+            company_id=company.id, name="Sucursal", code="BR2",
+            active=True, is_default=False,
+        )
+        db.session.add_all([branch_main, branch_second])
+        db.session.flush()
+        user = User(
+            username="branch-attribution-admin",
+            email="branch-attribution@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente compartido",
+            whatsapp="5493624000000",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña sucursal principal",
+            objective="Novedades",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={"channel": "whatsapp", "branch_id": branch_main.id},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        sent_at = datetime.utcnow() - timedelta(hours=2)
+        recipient = TenantCampaignRecipient(
+            campaign_id=campaign.id,
+            company_id=company.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="branch-attribution-token",
+            status="sent",
+            provider_message_id="wamid.branch-attribution",
+            sent_at=sent_at,
+        )
+        conversation_main = Conversation(
+            company_id=company.id,
+            branch_id=branch_main.id,
+            channel="whatsapp",
+            external_conversation_id="5493624000000",
+            status="open",
+            created_at=sent_at + timedelta(minutes=10),
+        )
+        conversation_second = Conversation(
+            company_id=company.id,
+            branch_id=branch_second.id,
+            channel="whatsapp",
+            external_conversation_id="5493624000000",
+            status="open",
+            created_at=sent_at + timedelta(minutes=15),
+        )
+        sale_main = Sale(
+            company_id=company.id,
+            branch_id=branch_main.id,
+            client_id=client.id,
+            total_amount=1000,
+            status="confirmada",
+            date=sent_at + timedelta(minutes=30),
+        )
+        sale_second = Sale(
+            company_id=company.id,
+            branch_id=branch_second.id,
+            client_id=client.id,
+            total_amount=2500,
+            status="confirmada",
+            date=sent_at + timedelta(minutes=45),
+        )
+        db.session.add_all([
+            recipient,
+            conversation_main,
+            conversation_second,
+            sale_main,
+            sale_second,
+        ])
+        db.session.commit()
+
+        refresh_attribution(company_id=company.id)
+        db.session.flush()
+
+        conversation_attribution = TenantCampaignAttribution.query.filter_by(
+            campaign_id=campaign.id,
+            attribution_type="conversation",
+        ).all()
+        sale_attribution = TenantCampaignAttribution.query.filter_by(
+            campaign_id=campaign.id,
+            attribution_type="sale_window",
+        ).all()
+        assert [row.conversation_id for row in conversation_attribution] == [conversation_main.id]
+        assert [row.sale_id for row in sale_attribution] == [sale_main.id]
