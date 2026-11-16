@@ -339,7 +339,6 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     campaign_data["channel"] = "whatsapp"
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
-    campaign_branch_id = _campaign_branch_id(campaign)
     sender_company, connection = _shared_campaign_whatsapp()
     if (
         sender_company is None
@@ -348,8 +347,8 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         or not connection.get("access_token")
     ):
         raise ValueError(
-            "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado o habilitado. "
-            "Conectá el número propio del comercio desde Agentes IA → Vendedor IA."
+            "El número compartido Vendedor 24/7 de StockARmobile no está conectado o habilitado. "
+            "Contactá al administrador de StockARmobile para revisar el canal comercial."
         )
     stored_template = campaign_data.get("whatsapp_template")
     configured_name = str(connection.get("template_name") or "").strip()
@@ -465,7 +464,6 @@ def _fetch_campaign_template(
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     from services.ai_agent.whatsapp_service import WhatsAppService
 
-    campaign_branch_id = _campaign_branch_id(campaign)
     sender_company, connection = _shared_campaign_whatsapp()
     if (
         sender_company is None
