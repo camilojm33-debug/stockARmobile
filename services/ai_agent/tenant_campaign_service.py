@@ -70,6 +70,59 @@ def _campaign_branch_id(campaign):
     return value if value and value > 0 else None
 
 
+def _shared_campaign_whatsapp():
+    """Resolve the one StockARmobile Vendedor 24/7 sender shared by tenant CRM campaigns.
+
+    The sender identity is shared, but campaign records, contacts, recipients,
+    consent, conversations, attribution and reporting remain tenant scoped.
+    SuperAdmin acquisition CRM configuration and template selection are not
+    reused: tenant CRM campaigns have their own dedicated WABA template.
+    """
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+    from services.ai_agent.whatsapp_master_template_service import SHARED_TENANT_CAMPAIGN_TEMPLATE
+
+    sender_company = get_commercial_company()
+    if sender_company is None:
+        return None, {}
+
+    connection = get_whatsapp_connection(sender_company)
+    template_name = (
+        str(os.getenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME") or "").strip()
+        or SHARED_TENANT_CAMPAIGN_TEMPLATE["name"]
+    )
+    template_language = (
+        str(os.getenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_LANGUAGE") or "").strip()
+        or SHARED_TENANT_CAMPAIGN_TEMPLATE["language"]
+    )
+    # Do not inherit WHATSAPP_COMMERCIAL_TEMPLATE_NAME or a merchant's template.
+    # Those settings belong to other CRM/provider flows.
+    connection = dict(connection or {})
+    connection["template_name"] = template_name
+    connection["template_language"] = template_language
+    return sender_company, connection
+
+
+def _fetch_shared_campaign_template(connection: dict) -> dict:
+    """Validate the dedicated tenant-campaign template against the shared WABA."""
+    from services.ai_agent.whatsapp_master_template_service import SHARED_TENANT_CAMPAIGN_TEMPLATE
+
+    selected_name = (
+        str(os.getenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME") or "").strip()
+        or SHARED_TENANT_CAMPAIGN_TEMPLATE["name"]
+    )
+    selected_language = (
+        str(os.getenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_LANGUAGE") or "").strip()
+        or SHARED_TENANT_CAMPAIGN_TEMPLATE["language"]
+    )
+    return _fetch_campaign_template(
+        connection,
+        selected_name=selected_name,
+        selected_language=selected_language,
+        allow_single_auto_select=False,
+    )
+
+
 def _tenant_campaign_whatsapp(company_id: int, branch_id: int | None = None):
     """Resolve only the merchant's own Vendedor IA WhatsApp connection.
 
@@ -287,10 +340,7 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
     campaign_branch_id = _campaign_branch_id(campaign)
-    sender_company, connection = _tenant_campaign_whatsapp(
-        campaign.company_id,
-        branch_id=campaign_branch_id,
-    )
+    sender_company, connection = _shared_campaign_whatsapp()
     if (
         sender_company is None
         or not connection.get("enabled")
@@ -302,29 +352,18 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
             "Conectá el número propio del comercio desde Agentes IA → Vendedor IA."
         )
     stored_template = campaign_data.get("whatsapp_template")
+    configured_name = str(connection.get("template_name") or "").strip()
+    configured_language = str(connection.get("template_language") or "es_AR").strip()
     if isinstance(stored_template, dict) and stored_template.get("name"):
-        configured_name = str(connection.get("template_name") or "").strip()
-        configured_language = str(connection.get("template_language") or "es_AR").strip()
-        if configured_name and (
+        if (
             configured_name != str(stored_template.get("name") or "").strip()
             or configured_language != str(stored_template.get("language") or "").strip()
         ):
             raise ValueError(
-                "La plantilla oficial cambió desde que creaste el borrador. "
-                "Volvé a revisar la vista previa y guardá una nueva propuesta."
+                "La plantilla compartida Vendedor 24/7 cambió desde que creaste el borrador. "
+                "Volvé a validar la vista previa y guardá una nueva propuesta."
             )
-        if configured_name:
-            template = _fetch_campaign_template(connection)
-        else:
-            template = _fetch_campaign_template(
-                connection,
-                selected_name=str(stored_template.get("name") or ""),
-                selected_language=str(stored_template.get("language") or "es_AR"),
-                allow_single_auto_select=False,
-            )
-            template["auto_selected"] = True
-    else:
-        template = _fetch_campaign_template(connection)
+    template = _fetch_shared_campaign_template(connection)
     if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
@@ -427,10 +466,7 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     from services.ai_agent.whatsapp_service import WhatsAppService
 
     campaign_branch_id = _campaign_branch_id(campaign)
-    sender_company, connection = _tenant_campaign_whatsapp(
-        campaign.company_id,
-        branch_id=campaign_branch_id,
-    )
+    sender_company, connection = _shared_campaign_whatsapp()
     if (
         sender_company is None
         or not connection.get("enabled")
@@ -439,8 +475,8 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     ):
         return False, "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado.", ""
 
-    # Resolve and send through this merchant's own WABA. Never fall back to
-    # StockARmobile's SuperAdmin/commercial WhatsApp number.
+    # Tenant campaign records remain scoped to the merchant, while the outbound
+    # message uses the shared StockARmobile Vendedor 24/7 sender.
     template = _json(campaign).get("whatsapp_template") or {}
     template_name = str(template.get("name") or "").strip()
     language = str(template.get("language") or "").strip()
@@ -473,7 +509,9 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
             template_name=template_name,
             template_language=language,
             body_parameters=params,
-            branch_id=campaign_branch_id,
+            # Branch ownership is preserved in campaign metadata and inbound
+            # replies are routed to that branch; the shared sender has no tenant branch.
+            branch_id=None,
         )
     except requests.Timeout as exc:
         return False, f"Resultado incierto: Meta no respondió a tiempo ({exc}).", ""
