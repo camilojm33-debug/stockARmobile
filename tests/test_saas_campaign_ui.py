@@ -137,7 +137,7 @@ def test_superadmin_gmail_reply_flow_is_exposed_from_the_inbox():
     assert "url_for('saas.crm_email_reply')" in template
     assert "def crm_email_reply()" in source
     assert "send_commercial_reply(" in source
-    assert "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED" in template
+    assert "reautorizá Gmail con permiso de envío" in template
 
 
 
