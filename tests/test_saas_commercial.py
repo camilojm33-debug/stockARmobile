@@ -1096,6 +1096,8 @@ def test_dispatch_due_campaigns_can_target_only_the_requested_campaign(app, monk
             campaigns.append(campaign)
         db.session.commit()
 
+        selected_target_count = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id).count()
+        older_target_count = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[0].id).count()
         sent_campaign_ids = []
 
         def fake_send_email(recipient, campaign):
@@ -1115,8 +1117,10 @@ def test_dispatch_due_campaigns_can_target_only_the_requested_campaign(app, monk
         older_recipients = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[0].id).all()
         selected_recipients = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id).all()
 
-        assert len(selected_recipients) == 2
-        assert result["sent"] == len(selected_recipients)
+        assert selected_target_count > 0
+        assert len(older_recipients) == older_target_count
+        assert len(selected_recipients) == selected_target_count
+        assert result["sent"] == selected_target_count
         assert set(sent_campaign_ids) == {campaigns[1].id}
         assert len(sent_campaign_ids) == len(selected_recipients)
         assert all(recipient.status == "pending" for recipient in older_recipients)
