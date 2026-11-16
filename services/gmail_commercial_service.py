@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 import time
+from sqlalchemy import text
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -398,14 +399,15 @@ def start_gmail_watch_maintenance_worker(flask_app, *, initial_delay_seconds: in
     logger = logging.getLogger(__name__)
 
     def run_once() -> None:
-        from app import db
-        try:
-            with flask_app.app_context():
+        with flask_app.app_context():
+            from app import db
+
+            try:
                 if db.engine.dialect.name == "postgresql":
                     with db.engine.connect() as connection:
                         acquired = bool(
                             connection.execute(
-                                __import__("sqlalchemy").text("SELECT pg_try_advisory_lock(:key)"),
+                                text("SELECT pg_try_advisory_lock(:key)"),
                                 {"key": _GMAIL_WATCH_ADVISORY_LOCK_KEY},
                             ).scalar()
                         )
@@ -416,7 +418,7 @@ def start_gmail_watch_maintenance_worker(flask_app, *, initial_delay_seconds: in
                             result = renew_watch()
                         finally:
                             connection.execute(
-                                __import__("sqlalchemy").text("SELECT pg_advisory_unlock(:key)"),
+                                text("SELECT pg_advisory_unlock(:key)"),
                                 {"key": _GMAIL_WATCH_ADVISORY_LOCK_KEY},
                             )
                             connection.commit()
@@ -434,13 +436,10 @@ def start_gmail_watch_maintenance_worker(flask_app, *, initial_delay_seconds: in
                         result.get("status"),
                         result.get("reason"),
                     )
-        except Exception:
-            logger.exception("Gmail commercial watch renewal failed.")
-        finally:
-            try:
-                db.session.remove()
             except Exception:
-                pass
+                logger.exception("Gmail commercial watch renewal failed.")
+            finally:
+                db.session.remove()
 
     def worker() -> None:
         time.sleep(initial_delay)
