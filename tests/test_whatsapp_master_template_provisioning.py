@@ -219,7 +219,39 @@ def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
     assert "template_provision_url=url_for" in source
     assert "Instalar / sincronizar" in template
     assert "fetch(provisionUrl" in template
-    assert "Meta revisa cada copia de forma independiente" in template
+    assert "Meta revisa cada copia por separado" in template
     assert '@bp.get("/whatsapp-plantillas-maestras")' in superadmin_source
     assert "list_master_templates()" in superadmin_source
     assert "Biblioteca de plantillas maestras" in superadmin_template
+
+
+
+def test_provisioning_state_is_saved_without_tokens_for_default_company_and_branch():
+    import json
+    from types import SimpleNamespace
+
+    company = SimpleNamespace(preferences_json="")
+    results = [{
+        "key": "marketing_general",
+        "name": "campana_marketing_es_ar",
+        "language": "es_AR",
+        "status": "PENDING",
+        "created": True,
+        "message": "Pendiente de aprobación",
+        "access_token": "must-not-be-saved",
+    }]
+
+    company_state = service.record_master_template_provisioning(company, results)
+    company_payload = json.loads(company.preferences_json)
+    stored_company = company_payload["ai_agent"]["whatsapp"]["master_template_sync"]
+    assert company_state["templates"][0]["status"] == "PENDING"
+    assert stored_company["templates"][0]["name"] == "campana_marketing_es_ar"
+    assert "access_token" not in json.dumps(stored_company)
+
+    branch = SimpleNamespace(is_default=False, vendor_ai_json="")
+    branch_state = service.record_master_template_provisioning(company, results, branch=branch)
+    branch_payload = json.loads(branch.vendor_ai_json)
+    stored_branch = branch_payload["whatsapp"]["master_template_sync"]
+    assert branch_state["templates"][0]["status"] == "PENDING"
+    assert stored_branch["templates"][0]["language"] == "es_AR"
+    assert "must-not-be-saved" not in branch.vendor_ai_json
