@@ -1737,7 +1737,7 @@ COMMERCIAL_CRM_CHANNELS = {"email_commercial", "whatsapp_commercial"}
 
 def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = "all", limit: int = 100):
     """Return a unified, human-readable inbox for StockArMobile commercial conversations."""
-    from app import SaaSLead
+    from app import SaaSLead, db
     from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
     from services.saas_commercial_whatsapp import commercial_conversation_attention
 
@@ -1760,37 +1760,93 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
     state = state if state in {"all", "pending", "waiting"} else "all"
     rows = []
 
-    for conversation in conversations:
-        latest = (
-            ConversationMessage.query
+    # Load latest messages and related prospect records in bounded queries rather
+    # than issuing several additional SQL statements for each conversation.
+    conversation_ids = [int(conversation.id) for conversation in conversations]
+    metadata_by_conversation = {
+        int(conversation.id): conversation.metadata_json
+        if isinstance(conversation.metadata_json, dict) else {}
+        for conversation in conversations
+    }
+    latest_by_conversation = {}
+    lead_ids = {
+        int(metadata.get("lead_id"))
+        for metadata in metadata_by_conversation.values()
+        if str(metadata.get("lead_id") or "").isdigit()
+    }
+    if conversation_ids:
+        latest_message_ids = (
+            db.session.query(
+                ConversationMessage.conversation_id.label("conversation_id"),
+                db.func.max(ConversationMessage.id).label("latest_message_id"),
+            )
             .filter(
                 ConversationMessage.company_id == int(company.id),
-                ConversationMessage.conversation_id == int(conversation.id),
+                ConversationMessage.conversation_id.in_(conversation_ids),
             )
-            .order_by(ConversationMessage.id.desc())
-            .first()
+            .group_by(ConversationMessage.conversation_id)
+            .subquery()
         )
+        latest_messages = (
+            ConversationMessage.query
+            .join(latest_message_ids, ConversationMessage.id == latest_message_ids.c.latest_message_id)
+            .all()
+        )
+        latest_by_conversation = {int(message.conversation_id): message for message in latest_messages}
 
-        metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
-        lead = None
-        lead_id = metadata.get("lead_id")
-        if str(lead_id or "").isdigit():
-            lead = SaaSLead.query.filter_by(id=int(lead_id)).first()
+    leads_by_id = {}
+    if lead_ids:
+        leads_by_id = {
+            int(lead.id): lead
+            for lead in SaaSLead.query.filter(SaaSLead.id.in_(lead_ids)).all()
+        }
 
-        if lead is None:
-            participant = (
-                ConversationParticipant.query
-                .filter_by(
-                    company_id=int(company.id),
-                    conversation_id=int(conversation.id),
-                    participant_type="prospect",
-                )
-                .order_by(ConversationParticipant.id.desc())
-                .first()
+    conversations_without_lead = [
+        conversation_id
+        for conversation_id, metadata in metadata_by_conversation.items()
+        if not str(metadata.get("lead_id") or "").isdigit()
+        or int(metadata.get("lead_id")) not in leads_by_id
+    ]
+    participants_by_conversation = {}
+    if conversations_without_lead:
+        participants = (
+            ConversationParticipant.query
+            .filter(
+                ConversationParticipant.company_id == int(company.id),
+                ConversationParticipant.conversation_id.in_(conversations_without_lead),
+                ConversationParticipant.participant_type == "prospect",
             )
+            .order_by(ConversationParticipant.id.desc())
+            .all()
+        )
+        for participant in participants:
+            participants_by_conversation.setdefault(
+                int(participant.conversation_id),
+                participant,
+            )
+
+    participant_lead_ids = {
+        int(participant.participant_id)
+        for participant in participants_by_conversation.values()
+        if getattr(participant, "participant_id", None)
+    }
+    missing_participant_lead_ids = participant_lead_ids - set(leads_by_id)
+    if missing_participant_lead_ids:
+        leads_by_id.update({
+            int(lead.id): lead
+            for lead in SaaSLead.query.filter(SaaSLead.id.in_(missing_participant_lead_ids)).all()
+        })
+
+    for conversation in conversations:
+        latest = latest_by_conversation.get(int(conversation.id))
+        metadata = metadata_by_conversation.get(int(conversation.id), {})
+        lead_id = metadata.get("lead_id")
+        lead = leads_by_id.get(int(lead_id)) if str(lead_id or "").isdigit() else None
+        if lead is None:
+            participant = participants_by_conversation.get(int(conversation.id))
             participant_id = getattr(participant, "participant_id", None)
             if participant_id:
-                lead = SaaSLead.query.filter_by(id=int(participant_id)).first()
+                lead = leads_by_id.get(int(participant_id))
 
         raw_external = str(conversation.external_conversation_id or "")
         phone = ""
@@ -1818,16 +1874,30 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
         if state == "waiting" and needs_reply:
             continue
 
+        latest_metadata = latest.metadata_json if latest is not None and isinstance(latest.metadata_json, dict) else {}
+        latest_subject = str(latest_metadata.get("subject") or "").strip()[:500]
         latest_text = str(latest.content or "").strip() if latest is not None else ""
+        if conversation.channel == "email_commercial":
+            latest_text = latest_text.replace("\\\\n", "\n").replace("\\n", "\n")
+            if latest_text.startswith("Asunto: "):
+                subject_line, separator, message_body = latest_text.partition("\n\n")
+                if separator:
+                    latest_subject = latest_subject or subject_line[len("Asunto: "):].strip()
+                    latest_text = message_body.strip()
+        raw_company_name = str(getattr(lead, "company_name", None) or "").strip()
+        is_new_contact = bool(conversation.channel == "email_commercial" and raw_company_name.lower() == "prospecto email")
         contact_name = (
-            getattr(lead, "contact_name", None)
+            email if is_new_contact
+            else getattr(lead, "contact_name", None)
             or getattr(lead, "company_name", None)
             or email
             or phone
             or "Prospecto"
         )
-        company_name = getattr(lead, "company_name", None) or (
-            email if conversation.channel == "email_commercial" else "Prospecto de WhatsApp"
+        company_name = (
+            "Nuevo contacto · completar ficha" if is_new_contact
+            else getattr(lead, "company_name", None)
+            or (email if conversation.channel == "email_commercial" else "Prospecto de WhatsApp")
         )
 
         searchable = " ".join(
@@ -1836,6 +1906,7 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
                 str(company_name or ""),
                 str(email or ""),
                 str(phone or ""),
+                latest_subject,
                 latest_text,
             ]
         ).lower()
@@ -1852,6 +1923,8 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
                 "email": email,
                 "phone": phone,
                 "latest_text": latest_text[:240],
+                "subject": latest_subject,
+                "is_new_contact": is_new_contact,
                 "latest_sender_type": getattr(latest, "sender_type", "") if latest is not None else "",
                 "latest_at": (
                     _format_admin_datetime_local(latest.created_at, "%d/%m %H:%M")
@@ -1884,7 +1957,21 @@ def crm_inbox():
         state = "all"
 
     all_rows = _crm_inbox_rows(company, q="", channel="all", state="all", limit=200)
-    rows = _crm_inbox_rows(company, q=q, channel=channel, state=state, limit=200)
+    rows = list(all_rows)
+    if channel == "email":
+        rows = [row for row in rows if row["channel"] == "email_commercial"]
+    elif channel == "whatsapp":
+        rows = [row for row in rows if row["channel"] == "whatsapp_commercial"]
+    if state == "pending":
+        rows = [row for row in rows if row["needs_reply"]]
+    elif state == "waiting":
+        rows = [row for row in rows if not row["needs_reply"]]
+    if q:
+        query = q.lower()
+        rows = [
+            row for row in rows
+            if query in " ".join(str(row.get(key) or "") for key in ("contact_name", "company_name", "email", "phone", "subject", "latest_text")).lower()
+        ]
 
     counts = {
         "total": len(all_rows),
@@ -1954,6 +2041,21 @@ def crm_inbox():
         selected_phone = ""
         if selected.channel == "whatsapp_commercial":
             selected_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
+        selected_raw_company = str(getattr(lead, "company_name", None) or "").strip()
+        selected_is_new_contact = bool(selected.channel == "email_commercial" and selected_raw_company.lower() == "prospecto email")
+        selected_contact_name = (
+            selected_email if selected_is_new_contact
+            else getattr(lead, "contact_name", None)
+            or getattr(lead, "company_name", None)
+            or selected_email
+            or selected_phone
+            or "Prospecto"
+        )
+        selected_company_name = (
+            "Nuevo contacto · completar ficha" if selected_is_new_contact
+            else getattr(lead, "company_name", None)
+            or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp")
+        )
 
         selected_needs_reply = bool(selected_messages and selected_messages[-1].sender_type == "user")
         if selected.channel == "whatsapp_commercial":
@@ -1961,26 +2063,49 @@ def crm_inbox():
                 commercial_conversation_attention(selected).get("pending") or selected_needs_reply
             )
 
+        selected_message_views = []
+        for msg in selected_messages:
+            msg_metadata = msg.metadata_json if isinstance(msg.metadata_json, dict) else {}
+            message_content = str(msg.content or "")
+            message_subject = str(msg_metadata.get("subject") or "").strip()[:500]
+            if selected.channel == "email_commercial":
+                message_content = message_content.replace("\\\\n", "\n").replace("\\n", "\n")
+                if message_content.startswith("Asunto: "):
+                    subject_line, separator, message_body = message_content.partition("\n\n")
+                    if separator:
+                        message_subject = message_subject or subject_line[len("Asunto: "):].strip()
+                        message_content = message_body.strip()
+            selected_message_views.append({
+                "id": msg.id,
+                "sender_type": msg.sender_type,
+                "sender_label": "Cliente" if msg.sender_type == "user" else ("Vos" if msg.sender_type == "human" else "Comercial IA"),
+                "content": message_content,
+                "subject": message_subject,
+                "preview": message_content.replace("\n", " ")[:120],
+                "created_at": _format_admin_datetime_local(msg.created_at, "%d/%m/%Y %H:%M"),
+            })
+
         selected_view = {
             "conversation_id": selected.id,
             "channel": selected.channel,
             "channel_label": "Gmail" if selected.channel == "email_commercial" else "WhatsApp",
-            "contact_name": getattr(lead, "contact_name", None) or getattr(lead, "company_name", None) or selected_email or selected_phone or "Prospecto",
-            "company_name": getattr(lead, "company_name", None) or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp"),
+            "contact_name": selected_contact_name,
+            "company_name": selected_company_name,
             "email": selected_email,
             "phone": selected_phone,
             "needs_reply": selected_needs_reply,
-            "messages": [
-                {
-                    "id": msg.id,
-                    "sender_type": msg.sender_type,
-                    "sender_label": "Cliente" if msg.sender_type == "user" else ("Vos" if msg.sender_type == "human" else "Comercial IA"),
-                    "content": str(msg.content or ""),
-                    "preview": str(msg.content or "").replace("\n", " ")[:120],
-                    "created_at": _format_admin_datetime_local(msg.created_at, "%d/%m/%Y %H:%M"),
-                }
-                for msg in selected_messages
-            ],
+            "subject": str(
+                next(
+                    (
+                        (msg.metadata_json or {}).get("subject")
+                        for msg in reversed(selected_messages)
+                        if isinstance(msg.metadata_json, dict) and (msg.metadata_json or {}).get("subject")
+                    ),
+                    metadata.get("subject") or "",
+                )
+            )[:500],
+            "is_new_contact": selected_is_new_contact,
+            "messages": selected_message_views,
         }
 
     return render_template(
@@ -1991,6 +2116,11 @@ def crm_inbox():
         channel=channel,
         state=state,
         counts=counts,
+        gmail_sync_configured=(
+            bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_ID"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_SECRET"))
+        ),
         gmail_send_configured=(
             str(os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED") or "").strip().lower() in {"1", "true", "yes", "on"}
             and bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN"))
@@ -3292,18 +3422,29 @@ def crm_email_gmail_sync():
     from services.gmail_commercial_service import sync_recent_messages
 
     _require_superadmin()
+
+    def _sync_redirect():
+        if request.form.get("return_to_inbox") == "1":
+            conversation_id = request.form.get("conversation_id", type=int)
+            return redirect(
+                url_for("saas.crm_inbox", conversation_id=conversation_id)
+                if conversation_id
+                else url_for("saas.crm_inbox")
+            )
+        return redirect(url_for("saas.crm_panel"))
+
     try:
         result = sync_recent_messages(hours=48)
     except Exception as exc:
         current_app.logger.exception("Gmail manual sync failed: %s", exc)
         flash(f"No se pudo sincronizar Gmail: {exc}", "danger")
-        return redirect(url_for("saas.crm_panel"))
+        return _sync_redirect()
     flash(
         f"Gmail sincronizado: {result.get('received', 0)} nuevos, "
         f"{result.get('duplicates', 0)} duplicados.",
         "success",
     )
-    return redirect(url_for("saas.crm_panel"))
+    return _sync_redirect()
 
 
 @bp.post("/crm/email/gmail/pubsub")

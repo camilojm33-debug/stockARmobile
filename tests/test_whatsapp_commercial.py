@@ -513,7 +513,18 @@ def test_crm_email_message_delete_is_tenant_scoped_and_prevents_reimport(commerc
     row = next(item for item in rows if item["conversation_id"] == captured["conversation_id"])
     assert row["channel"] == "email_commercial"
     assert row["email"] == "prospect@example.com"
-    assert "Quiero conocer los planes." in row["latest_text"]
+    assert row["latest_text"] == "Quiero conocer los planes."
+    assert row["subject"] == "Consulta StockArMobile"
+    assert row["is_new_contact"] is True
+
+    message = ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=captured["conversation_id"],
+        external_message_id="<crm-delete-001@example.com>",
+    ).first()
+    assert message is not None
+    assert message.content == "Asunto: Consulta StockArMobile\n\nQuiero conocer los planes."
+    assert "\\n" not in message.content
 
     message = (
         ConversationMessage.query

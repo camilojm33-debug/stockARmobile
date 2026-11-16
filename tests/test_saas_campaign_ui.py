@@ -137,7 +137,7 @@ def test_superadmin_gmail_reply_flow_is_exposed_from_the_inbox():
     assert "url_for('saas.crm_email_reply')" in template
     assert "def crm_email_reply()" in source
     assert "send_commercial_reply(" in source
-    assert "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED" in template
+    assert "reconectá Gmail con permiso de envío" in template
 
 
 
@@ -151,3 +151,29 @@ def test_gmail_reply_route_fails_closed_until_send_scope_is_confirmed():
     source = open("saas.py", encoding="utf-8").read()
     assert 'if not commercial_gmail_configuration_status().get("send_configured"):' in source
     assert "GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED=1" in source
+
+
+def test_superadmin_inbox_has_conversation_first_layout_and_mobile_navigation():
+    template = (ROOT / "templates/saas/crm_inbox.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    service = (ROOT / "services/saas_commercial_service.py").read_text(encoding="utf-8")
+
+    assert "crm-list-heading" in template
+    assert "crm-message-scroll" in template
+    assert "crm-composer" in template
+    assert "crm-mobile-back" in template
+    assert "has-selection" in template
+    assert 'aria-label="Lista de conversaciones"' in template
+    assert "Se enviará en el mismo hilo de Gmail." in template
+    assert "latest_text = latest_text.replace(" in source
+    assert 'content = f"Asunto: {str(subject or ' in service
+
+
+def test_superadmin_inbox_can_sync_gmail_without_leaving_the_conversation():
+    template = (ROOT / "templates/saas/crm_inbox.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+
+    assert "Sincronizar Gmail" in template
+    assert 'name="return_to_inbox" value="1"' in template
+    assert 'if request.form.get("return_to_inbox") == "1":' in source
+    assert 'url_for("saas.crm_inbox", conversation_id=conversation_id)' in source
