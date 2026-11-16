@@ -1400,7 +1400,7 @@ def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "
             return {"status": "duplicate", "lead_id": lead.id, "conversation_id": conversation.id, "message_id": duplicate.id}
 
     body = (str(text or "").strip() or str(html or "").strip())[:20000] or "(Email sin contenido de texto)"
-    content = f"Asunto: {str(subject or '').strip()[:500]}\\n\\n{body}".strip()
+    content = f"Asunto: {str(subject or '').strip()[:500]}\n\n{body}".strip()
     message = ConversationMessage(company_id=company.id, conversation_id=conversation.id, sender_type="user", sender_id=None, role="user", content=content, content_type="email", external_message_id=message_id, idempotency_key=f"email-inbound:{message_id}" if message_id else None, metadata_json={
         "channel": "email_commercial",
         "sender_email": email,
