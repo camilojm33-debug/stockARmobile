@@ -3,11 +3,19 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
+import threading
+import time
+from sqlalchemy import text
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from email.utils import parseaddr
 
-GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+]
 COMMERCIAL_EMAIL = "stockarmobile@gmail.com"
 
 
@@ -22,6 +30,8 @@ def _settings():
         "refresh_token": os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN", "").strip(),
         "topic_name": os.getenv("GMAIL_COMMERCIAL_PUBSUB_TOPIC", "").strip(),
         "webhook_secret": os.getenv("GMAIL_COMMERCIAL_PUBSUB_SECRET", "").strip(),
+        "pubsub_service_account": os.getenv("GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT", "").strip().lower(),
+        "pubsub_audience": os.getenv("GMAIL_COMMERCIAL_PUBSUB_AUDIENCE", "https://www.stockarmobile.com/superadmin/crm/email/gmail/pubsub").strip(),
         "mailbox": os.getenv("GMAIL_COMMERCIAL_MAILBOX", COMMERCIAL_EMAIL).strip().lower(),
     }
 
@@ -31,6 +41,28 @@ def _require_client():
     if not settings["client_id"] or not settings["client_secret"]:
         raise RuntimeError("Faltan GOOGLE_GMAIL_CLIENT_ID y GOOGLE_GMAIL_CLIENT_SECRET.")
     return settings
+
+
+def commercial_gmail_configuration_status() -> dict:
+    """Return non-secret readiness signals for the SuperAdmin commercial mailbox."""
+    settings = _settings()
+    oauth_ready = bool(settings["client_id"] and settings["client_secret"])
+    refresh_ready = bool(settings["refresh_token"])
+    topic_ready = bool(settings["topic_name"])
+    pubsub_identity_ready = bool(settings["pubsub_service_account"])
+    watch_ready = oauth_ready and refresh_ready and topic_ready
+    send_scope_confirmed = os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED", "").strip().lower() in {"1", "true", "yes", "on"}
+    return {
+        "oauth_configured": oauth_ready,
+        "refresh_token_configured": refresh_ready,
+        "watch_configured": watch_ready,
+        "pubsub_auth_configured": pubsub_identity_ready,
+        "pubsub_configured": watch_ready and pubsub_identity_ready,
+        "send_scope_confirmed": send_scope_confirmed,
+        "send_configured": oauth_ready and refresh_ready and send_scope_confirmed,
+        "mailbox": settings["mailbox"],
+        "audience": settings["pubsub_audience"],
+    }
 
 
 def _credentials(refresh_token: str | None = None):
@@ -46,7 +78,7 @@ def _credentials(refresh_token: str | None = None):
         token_uri="https://oauth2.googleapis.com/token",
         client_id=settings["client_id"],
         client_secret=settings["client_secret"],
-        scopes=[GMAIL_SCOPE],
+        scopes=GMAIL_SCOPES,
     )
 
 
@@ -73,7 +105,7 @@ def authorization_url(state: str, code_verifier: str):
                 "redirect_uris": [settings["redirect_uri"]],
             }
         },
-        scopes=[GMAIL_SCOPE],
+        scopes=GMAIL_SCOPES,
         state=state,
         code_verifier=code_verifier,
         autogenerate_code_verifier=False,
@@ -104,7 +136,7 @@ def exchange_code(code: str, code_verifier: str):
                 "redirect_uris": [settings["redirect_uri"]],
             }
         },
-        scopes=[GMAIL_SCOPE],
+        scopes=GMAIL_SCOPES,
         state=None,
         code_verifier=verifier,
         autogenerate_code_verifier=False,
@@ -117,8 +149,9 @@ def exchange_code(code: str, code_verifier: str):
 
 def renew_watch() -> dict:
     settings = _settings()
-    if not settings["refresh_token"] or not settings["topic_name"]:
-        return {"status": "skipped", "reason": "Gmail watch no configurado."}
+    status = commercial_gmail_configuration_status()
+    if not status["watch_configured"]:
+        return {"status": "skipped", "reason": "Faltan OAuth, refresh token o topic de Gmail."}
     service = gmail_service()
     response = service.users().watch(
         userId="me",
@@ -177,40 +210,77 @@ def _message_date(message: dict) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def sync_recent_messages(hours: int = 48) -> dict:
+def sync_recent_messages(hours: int = 48, *, max_pages: int = 100) -> dict:
+    """Import recent inbound messages chronologically, following Gmail pagination."""
     from services.saas_commercial_service import capture_inbound_email
 
     service = gmail_service()
     settings = _settings()
-    query = f"in:anywhere newer_than:{max(1, int(hours / 24))}d -from:{settings['mailbox']}"
-    response = service.users().messages().list(
-        userId="me", q=query, maxResults=100
-    ).execute()
+    days = max(1, (max(1, int(hours)) + 23) // 24)
+    query = f"in:anywhere newer_than:{days}d -from:{settings['mailbox']}"
+    page_token = None
+    pages = 0
+    found = received = duplicates = deleted_ignored = skipped = 0
+    pending_messages = []
 
-    items = response.get("messages") or []
-    received = 0
-    duplicates = 0
-    deleted_ignored = 0
-    skipped = 0
-    for item in items:
-        message = service.users().messages().get(
-            userId="me", id=item["id"], format="full"
-        ).execute()
-        headers = _headers(message)
-        _, sender_email = parseaddr(headers.get("from", ""))
-        sender_email = sender_email.strip().lower()
-        if not sender_email or sender_email == settings["mailbox"]:
-            skipped += 1
-            continue
+    while pages < max(1, min(int(max_pages or 20), 100)):
+        kwargs = {"userId": "me", "q": query, "maxResults": 100}
+        if page_token:
+            kwargs["pageToken"] = page_token
+        response = service.users().messages().list(**kwargs).execute()
+        items = response.get("messages") or []
+        pages += 1
+        found += len(items)
 
-        plain, html = _extract_text(message.get("payload") or {})
+        for item in items:
+            gmail_message_id = str(item.get("id") or "").strip()
+            if not gmail_message_id:
+                skipped += 1
+                continue
+            message = service.users().messages().get(
+                userId="me", id=gmail_message_id, format="full"
+            ).execute()
+            headers = _headers(message)
+            _, sender_email = parseaddr(headers.get("from", ""))
+            sender_email = sender_email.strip().lower()
+            if not sender_email or sender_email == settings["mailbox"]:
+                skipped += 1
+                continue
+
+            plain, html = _extract_text(message.get("payload") or {})
+            internal_date = int(message.get("internalDate") or 0)
+            pending_messages.append((
+                internal_date,
+                {
+                    "sender_email": sender_email,
+                    "subject": headers.get("subject", ""),
+                    "body": (plain or html or "(Email sin contenido de texto)")[:12000],
+                    "external_message_id": str(headers.get("message-id") or "").strip() or gmail_message_id,
+                    "recipient_email": headers.get("to", settings["mailbox"]),
+                    "thread_id": str(message.get("threadId") or "").strip(),
+                    "rfc_message_id": str(headers.get("message-id") or "").strip(),
+                    "references": str(headers.get("references") or "").strip(),
+                },
+            ))
+
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    # Gmail list results are not guaranteed to arrive in chronological order.
+    # Sort on each message's internalDate before inserting so the newest inbound
+    # message remains the latest CRM message and the reply composer targets its thread.
+    pending_messages.sort(key=lambda item: item[0])
+    for _, item in pending_messages:
         result = capture_inbound_email(
-            sender_email=sender_email,
-            subject=headers.get("subject", ""),
-            text=plain,
-            html=html,
-            external_message_id=headers.get("message-id") or message.get("id", ""),
-            recipient_email=headers.get("to", settings["mailbox"]),
+            sender_email=item["sender_email"],
+            subject=item["subject"],
+            text=item["body"],
+            external_message_id=item["external_message_id"],
+            recipient_email=item["recipient_email"],
+            thread_id=item["thread_id"],
+            rfc_message_id=item["rfc_message_id"],
+            references=item["references"],
         )
         if result.get("status") == "duplicate":
             duplicates += 1
@@ -225,10 +295,80 @@ def sync_recent_messages(hours: int = 48) -> dict:
         "duplicates": duplicates,
         "deleted_ignored": deleted_ignored,
         "skipped": skipped,
-        "found": len(items),
+        "found": found,
+        "pages": pages,
+        "has_more": bool(page_token),
         "checked_hours": hours,
         "query": query,
     }
+
+
+def send_commercial_reply(
+    *,
+    recipient_email: str,
+    subject: str,
+    body: str,
+    thread_id: str,
+    in_reply_to: str = "",
+    references: str = "",
+) -> dict:
+    """Send a Gmail API reply in the original thread using the commercial mailbox."""
+    settings = _settings()
+    recipient = str(recipient_email or "").strip().lower()
+    thread = str(thread_id or "").strip()
+    content = str(body or "").strip()
+    if not recipient or "@" not in recipient:
+        raise ValueError("La conversación no tiene un email de destino válido.")
+    if not thread:
+        raise ValueError("Gmail no informó el identificador del hilo; sincronizá nuevamente el correo.")
+    if not content:
+        raise ValueError("La respuesta no puede estar vacía.")
+    if len(content) > 20000:
+        raise ValueError("La respuesta no puede superar 20.000 caracteres.")
+    if not settings["mailbox"]:
+        raise RuntimeError("No está configurada la casilla comercial de Gmail.")
+
+    message = EmailMessage()
+    message["From"] = settings["mailbox"]
+    message["To"] = recipient
+    original_subject = str(subject or "").strip()[:500] or "(sin asunto)"
+    message["Subject"] = original_subject if original_subject.lower().startswith("re:") else f"Re: {original_subject}"
+    if in_reply_to:
+        message["In-Reply-To"] = str(in_reply_to).strip()[:998]
+    reference_chain = " ".join(
+        part for part in (str(references or "").strip(), str(in_reply_to or "").strip()) if part
+    )
+    if reference_chain:
+        message["References"] = reference_chain[-900:]
+    message.set_content(content)
+
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    payload = {"raw": raw, "threadId": thread}
+    try:
+        response = gmail_service().users().messages().send(
+            userId="me",
+            body=payload,
+        ).execute()
+    except Exception as exc:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status in {401, 403}:
+            raise RuntimeError(
+                "Google no autorizó el envío. Volvé a conectar Gmail desde el CRM y guardá el nuevo refresh token en Render."
+            ) from exc
+        raise RuntimeError("No se pudo enviar la respuesta por Gmail. Revisá la conexión de la casilla comercial.") from exc
+
+    sent_id = str(response.get("id") or "").strip()
+    if not sent_id:
+        raise RuntimeError("Gmail no confirmó el identificador del mensaje enviado.")
+    return {
+        "message_id": sent_id,
+        "thread_id": str(response.get("threadId") or thread),
+        "recipient": recipient,
+        "subject": message["Subject"],
+    }
+
+
+
 
 def process_pubsub_notification(payload: dict) -> dict:
     settings = _settings()
@@ -250,4 +390,91 @@ def process_pubsub_notification(payload: dict) -> dict:
         result.get("deleted_ignored"),
         result.get("skipped"),
     )
+    logging.getLogger(__name__).info(
+        "Gmail Pub/Sub pagination pages=%s has_more=%s",
+        result.get("pages"),
+        result.get("has_more"),
+    )
     return result
+
+_GMAIL_WATCH_WORKER_LOCK = threading.Lock()
+_GMAIL_WATCH_WORKER_STARTED = False
+_GMAIL_WATCH_ADVISORY_LOCK_KEY = 918274646
+
+
+def start_gmail_watch_maintenance_worker(flask_app, *, initial_delay_seconds: int = 90, interval_seconds: int = 86400) -> bool:
+    """Renew Gmail push notifications daily from the web worker; no external cron required."""
+    if flask_app.testing or "pytest" in __import__("sys").modules:
+        return False
+
+    global _GMAIL_WATCH_WORKER_STARTED
+    with _GMAIL_WATCH_WORKER_LOCK:
+        if _GMAIL_WATCH_WORKER_STARTED:
+            return False
+        _GMAIL_WATCH_WORKER_STARTED = True
+
+    initial_delay = max(5, min(int(initial_delay_seconds or 90), 3600))
+    interval = max(3600, min(int(interval_seconds or 86400), 86400))
+    logger = logging.getLogger(__name__)
+
+    def run_once() -> None:
+        with flask_app.app_context():
+            from app import db
+
+            try:
+                if db.engine.dialect.name == "postgresql":
+                    with db.engine.connect() as connection:
+                        acquired = bool(
+                            connection.execute(
+                                text("SELECT pg_try_advisory_lock(:key)"),
+                                {"key": _GMAIL_WATCH_ADVISORY_LOCK_KEY},
+                            ).scalar()
+                        )
+                        if not acquired:
+                            logger.debug("Gmail watch renewal skipped; another web worker owns the lock.")
+                            return
+                        try:
+                            result = renew_watch()
+                        finally:
+                            connection.execute(
+                                text("SELECT pg_advisory_unlock(:key)"),
+                                {"key": _GMAIL_WATCH_ADVISORY_LOCK_KEY},
+                            )
+                            connection.commit()
+                else:
+                    result = renew_watch()
+
+                if result.get("status") == "renewed":
+                    logger.info(
+                        "Gmail commercial watch renewed expiration=%s",
+                        result.get("expiration") or "not-reported",
+                    )
+                else:
+                    logger.warning(
+                        "Gmail commercial watch not renewed status=%s reason=%s",
+                        result.get("status"),
+                        result.get("reason"),
+                    )
+            except Exception:
+                logger.exception("Gmail commercial watch renewal failed.")
+            finally:
+                db.session.remove()
+
+    def worker() -> None:
+        time.sleep(initial_delay)
+        while True:
+            run_once()
+            time.sleep(interval)
+
+    thread = threading.Thread(
+        target=worker,
+        name="stockarmobile-gmail-watch-maintenance",
+        daemon=True,
+    )
+    thread.start()
+    logger.info(
+        "Gmail commercial watch maintenance worker started (initial_delay=%ss interval=%ss)",
+        initial_delay,
+        interval,
+    )
+    return True

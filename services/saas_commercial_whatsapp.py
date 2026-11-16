@@ -103,6 +103,66 @@ def commercial_whatsapp_summary() -> dict:
         return {"connected": False, "display_phone_number": "", "template_name": ""}
 
 
+def validate_commercial_whatsapp_template(template_name: str, language: str = "es_AR") -> dict:
+    """Verify against Meta that a configured SuperAdmin template is approved for marketing."""
+    name = str(template_name or "").strip()
+    lang = str(language or "es_AR").strip()
+    company = get_commercial_company()
+    if company is None:
+        return {"ok": False, "status": "UNCONFIGURED", "detail": "No existe el canal comercial interno."}
+    try:
+        from services.ai_agent.config_service import get_whatsapp_connection
+        connection = get_whatsapp_connection(company)
+        name = name or str(connection.get("template_name") or "").strip()
+        if not name:
+            return {"ok": False, "status": "MISSING", "detail": "No hay una plantilla configurada."}
+        if not connection.get("enabled"):
+            return {"ok": False, "status": "DISCONNECTED", "detail": "WhatsApp Comercial no está habilitado."}
+        waba_id = str(connection.get("business_account_id") or "").strip()
+        access_token = str(connection.get("access_token") or "").strip()
+        if not waba_id or not access_token:
+            return {"ok": False, "status": "UNCONFIGURED", "detail": "Falta WABA ID o autorización de Meta."}
+        from services.ai_agent.whatsapp_master_template_service import _list_waba_templates
+        templates = _list_waba_templates(waba_id, access_token)
+        match = next(
+            (
+                item for item in templates
+                if str(item.get("name") or "").strip() == name
+                and str(item.get("language") or "").strip() == lang
+            ),
+            None,
+        )
+        if match is None:
+            return {
+                "ok": False,
+                "status": "NOT_FOUND",
+                "detail": f"Meta no encontró la plantilla {name} ({lang}) en la cuenta comercial.",
+            }
+        status = str(match.get("status") or "UNKNOWN").strip().upper()
+        category = str(match.get("category") or "").strip().upper()
+        approved = status == "APPROVED" and category == "MARKETING"
+        if status != "APPROVED":
+            detail = f"Meta informa el estado {status}; la plantilla debe estar APPROVED."
+        elif category != "MARKETING":
+            detail = f"La categoría de Meta es {category or 'desconocida'}; se requiere MARKETING."
+        else:
+            detail = "Plantilla MARKETING aprobada por Meta."
+        return {
+            "ok": approved,
+            "status": status,
+            "category": category,
+            "name": name,
+            "language": lang,
+            "detail": detail,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "UNVERIFIED",
+            "detail": f"No se pudo verificar la plantilla con Meta: {str(exc)[:240]}",
+        }
+
+
 def _default_model() -> str:
     provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
     if provider == "gemini":

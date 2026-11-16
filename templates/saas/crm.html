@@ -239,13 +239,19 @@
                 <div><div class="fw-semibold">Canales comerciales</div><div class="small text-muted">Estado de conexión.</div></div>
                 <i class="bi bi-broadcast-pin text-primary"></i>
               </div>
-              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_refresh_configured else 'warn' }}"></span><span class="small fw-semibold">Gmail</span></div><span class="badge {{ 'text-bg-success' if gmail_refresh_configured else 'text-bg-warning' }}">{{ 'Conectado' if gmail_refresh_configured else 'Revisar' }}</span></div>
-              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_pubsub_configured else 'off' }}"></span><span class="small fw-semibold">Escucha automática</span></div><span class="badge {{ 'text-bg-success' if gmail_pubsub_configured else 'text-bg-secondary' }}">{{ 'Activa' if gmail_pubsub_configured else 'Pendiente' }}</span></div>
+              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_oauth_configured and gmail_refresh_configured else 'warn' }}"></span><span class="small fw-semibold">Gmail</span></div><span class="badge {{ 'text-bg-success' if gmail_oauth_configured and gmail_refresh_configured else 'text-bg-warning' }}">{{ 'Conectado' if gmail_oauth_configured and gmail_refresh_configured else 'Requiere autorización' }}</span></div>
+              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_pubsub_configured else 'off' }}"></span><span class="small fw-semibold">Configuración de escucha</span></div><span class="badge {{ 'text-bg-success' if gmail_pubsub_configured else 'text-bg-secondary' }}">{{ 'Configurada' if gmail_pubsub_configured else 'Pendiente' }}</span></div>
+              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_send_configured else 'warn' }}"></span><span class="small fw-semibold">Respuestas desde CRM</span></div><span class="badge {{ 'text-bg-success' if gmail_send_configured else 'text-bg-warning' }}">{{ 'Habilitadas' if gmail_send_configured else 'Requiere reautorización' }}</span></div>
               <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if commercial_whatsapp.connected else 'warn' }}"></span><span class="small fw-semibold">WhatsApp comercial</span></div><span class="badge {{ 'text-bg-success' if commercial_whatsapp.connected else 'text-bg-warning' }}">{{ 'Conectado' if commercial_whatsapp.connected else 'Revisar' }}</span></div>
               {% if commercial_whatsapp.display_phone_number %}<div class="small text-muted mt-1">Número emisor: {{ commercial_whatsapp.display_phone_number }}</div>{% endif %}
               <div class="d-flex flex-wrap gap-2 mt-3">
+                {% if gmail_oauth_configured %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_email_gmail_connect') }}"><i class="bi bi-google me-1"></i>{{ 'Reautorizar Gmail' if gmail_refresh_configured else 'Conectar Gmail' }}</a>
+                {% endif %}
+                {% if gmail_refresh_configured %}
                 <form method="post" action="{{ url_for('saas.crm_email_gmail_sync') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button></form>
-                <form method="post" action="{{ url_for('saas.crm_email_gmail_watch') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit"><i class="bi bi-broadcast me-1"></i>Activar escucha</button></form>
+                <form method="post" action="{{ url_for('saas.crm_email_gmail_watch') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit"><i class="bi bi-broadcast me-1"></i>Renovar escucha</button></form>
+                {% endif %}
               </div>
             </div>
 

@@ -1991,6 +1991,12 @@ def crm_inbox():
         channel=channel,
         state=state,
         counts=counts,
+        gmail_send_configured=(
+            str(os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED") or "").strip().lower() in {"1", "true", "yes", "on"}
+            and bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_ID"))
+            and bool(os.getenv("GOOGLE_GMAIL_CLIENT_SECRET"))
+        ),
     )
 
 
@@ -2045,6 +2051,146 @@ def crm_inbox_message_delete():
         flash("No se pudo eliminar el mensaje. No se realizaron cambios.", "danger")
 
     return redirect(url_for("saas.crm_inbox", conversation_id=conversation_id) if conversation_id else url_for("saas.crm_inbox"))
+
+
+@bp.post("/crm/inbox/email/reply")
+@superadmin_required
+def crm_email_reply():
+    """Send a reply from the authorized commercial Gmail mailbox in its original thread."""
+    from app import SaaSLead, db, record_audit, utcnow
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    conversation_id = request.form.get("conversation_id", type=int)
+    body = (request.form.get("body") or "").strip()
+    if company is None or not conversation_id:
+        abort(404)
+
+    conversation = Conversation.query.filter_by(
+        id=conversation_id,
+        company_id=int(company.id),
+        channel="email_commercial",
+    ).first_or_404()
+    latest_inbound = (
+        ConversationMessage.query
+        .filter_by(
+            company_id=int(company.id),
+            conversation_id=int(conversation.id),
+            sender_type="user",
+        )
+        .order_by(ConversationMessage.id.desc())
+        .first()
+    )
+    conversation_metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+    message_metadata = (
+        latest_inbound.metadata_json
+        if latest_inbound is not None and isinstance(latest_inbound.metadata_json, dict)
+        else {}
+    )
+    recipient = str(
+        conversation_metadata.get("sender_email")
+        or str(conversation.external_conversation_id or "").removeprefix("email:")
+        or ""
+    ).strip().lower()
+    thread_id = str(
+        message_metadata.get("gmail_thread_id")
+        or conversation_metadata.get("gmail_thread_id")
+        or ""
+    ).strip()
+    in_reply_to = str(
+        message_metadata.get("rfc_message_id")
+        or conversation_metadata.get("rfc_message_id")
+        or ""
+    ).strip()
+    references = str(
+        message_metadata.get("references")
+        or conversation_metadata.get("references")
+        or ""
+    ).strip()
+    subject = str(
+        message_metadata.get("subject")
+        or conversation_metadata.get("subject")
+        or ""
+    ).strip()
+
+    if latest_inbound is None:
+        flash("No hay un correo recibido al que responder.", "warning")
+        return redirect(url_for("saas.crm_inbox", conversation_id=conversation.id))
+    if not body:
+        flash("Escribí una respuesta antes de enviarla.", "warning")
+        return redirect(url_for("saas.crm_inbox", conversation_id=conversation.id))
+
+    try:
+        from services.gmail_commercial_service import (
+            commercial_gmail_configuration_status,
+            send_commercial_reply,
+        )
+        if not commercial_gmail_configuration_status().get("send_configured"):
+            flash(
+                "Primero reautorizá Gmail con permiso de envío, actualizá el refresh token en Render y confirmá GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED=1.",
+                "warning",
+            )
+            return redirect(url_for("saas.crm_inbox", conversation_id=conversation.id))
+        result = send_commercial_reply(
+            recipient_email=recipient,
+            subject=subject,
+            body=body,
+            thread_id=thread_id,
+            in_reply_to=in_reply_to,
+            references=references,
+        )
+        outgoing = ConversationMessage(
+            company_id=int(company.id),
+            conversation_id=int(conversation.id),
+            sender_type="human",
+            sender_id=int(current_user.id),
+            role="assistant",
+            content=body[:20000],
+            content_type="email",
+            external_message_id=result["message_id"],
+            idempotency_key=f"gmail-outbound:{result['message_id']}",
+            metadata_json={
+                "channel": "email_commercial",
+                "gmail_thread_id": result["thread_id"],
+                "recipient_email": recipient,
+                "subject": result["subject"],
+                "provider": "gmail",
+            },
+            created_at=utcnow(),
+        )
+        db.session.add(outgoing)
+        conversation.updated_at = utcnow()
+        lead_id = conversation_metadata.get("lead_id")
+        if str(lead_id or "").isdigit():
+            lead = SaaSLead.query.filter_by(id=int(lead_id)).first()
+            if lead is not None:
+                lead.last_contacted_at = utcnow()
+                lead.last_contact_channel = "email"
+                lead.contact_count = int(lead.contact_count or 0) + 1
+        record_audit(
+            action="commercial_crm_email_reply",
+            entity="conversation",
+            entity_id=conversation.id,
+            company_id=company.id,
+            detail=f"Respuesta de Gmail enviada. provider_message_id={result['message_id']}.",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash("Respuesta enviada y registrada en la conversación de Gmail.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except RuntimeError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo responder desde el CRM a la conversación Gmail id=%s", conversation.id)
+        flash("No se pudo enviar la respuesta por Gmail. Revisá la conexión y los permisos de la casilla.", "danger")
+
+    return redirect(url_for("saas.crm_inbox", conversation_id=conversation.id))
 
 
 @bp.route("/crm", methods=["GET", "POST"])
@@ -2280,9 +2426,22 @@ def crm_panel():
         lead_page=page,
         lead_per_page=per_page,
         lead_pages=max(1, (lead_total + per_page - 1) // per_page),
+        gmail_status=__import__("services.gmail_commercial_service", fromlist=["commercial_gmail_configuration_status"]).commercial_gmail_configuration_status(),
         gmail_oauth_configured=bool(os.getenv("GOOGLE_GMAIL_CLIENT_ID") and os.getenv("GOOGLE_GMAIL_CLIENT_SECRET")),
         gmail_refresh_configured=bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN")),
-        gmail_pubsub_configured=bool(os.getenv("GMAIL_COMMERCIAL_PUBSUB_TOPIC") and os.getenv("GMAIL_COMMERCIAL_PUBSUB_SECRET")),
+        gmail_pubsub_configured=bool(
+            os.getenv("GMAIL_COMMERCIAL_PUBSUB_TOPIC")
+            and os.getenv("GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT")
+            and os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN")
+            and os.getenv("GOOGLE_GMAIL_CLIENT_ID")
+            and os.getenv("GOOGLE_GMAIL_CLIENT_SECRET")
+        ),
+        gmail_send_configured=bool(
+            os.getenv("GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED", "").strip().lower() in {"1", "true", "yes", "on"}
+            and os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN")
+            and os.getenv("GOOGLE_GMAIL_CLIENT_ID")
+            and os.getenv("GOOGLE_GMAIL_CLIENT_SECRET")
+        ),
     )
 
 
@@ -2853,7 +3012,7 @@ def crm_campaign_send_now(campaign_id):
     db.session.commit()
 
     try:
-        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50)
+        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50, campaign_id=campaign.id)
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Immediate commercial campaign dispatch failed")
@@ -2916,7 +3075,7 @@ def crm_campaign_retry_failed(campaign_id):
     db.session.commit()
 
     try:
-        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50)
+        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50, campaign_id=campaign.id)
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Commercial campaign retry failed")
@@ -3094,8 +3253,10 @@ def crm_email_gmail_callback():
         "<p>Guardá este refresh token como secreto de Render en "
         "<code>GMAIL_COMMERCIAL_REFRESH_TOKEN</code>. No lo publiques ni lo compartas.</p>"
         f"<textarea style='width:100%;height:120px'>{safe_token}</textarea>"
-        "<p>Después de cargarlo en Render, configurá el topic de Google Cloud Pub/Sub "
-        "y ejecutá la renovación de watch desde el CRM.</p>"
+        "<p>Esta autorización incluye lectura y envío de Gmail para responder desde la bandeja del CRM.</p>"
+        "<p>Después de cargar el nuevo token en Render, configurá el topic de Google Cloud Pub/Sub y "
+        "GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT. Confirmá el permiso de envío con "
+        "<code>GMAIL_COMMERCIAL_SEND_SCOPE_CONFIRMED=1</code> y renová la escucha desde el CRM.</p>"
     )
     return current_app.response_class(html, mimetype="text/html")
 
@@ -3112,8 +3273,14 @@ def crm_email_gmail_watch():
         current_app.logger.exception("Gmail watch renewal failed: %s", exc)
         flash(f"No se pudo activar la escucha de Gmail: {exc}", "danger")
         return redirect(url_for("saas.crm_panel"))
+    if result.get("status") != "renewed":
+        flash(
+            f"La escucha de Gmail sigue pendiente: {result.get('reason') or 'faltan datos de configuración.'}",
+            "warning",
+        )
+        return redirect(url_for("saas.crm_panel"))
     flash(
-        f"Gmail conectado. Watch activo hasta {result.get('expiration') or 'la fecha informada por Google'}.",
+        f"Escucha de Gmail renovada hasta {result.get('expiration') or 'la fecha informada por Google'}.",
         "success",
     )
     return redirect(url_for("saas.crm_panel"))

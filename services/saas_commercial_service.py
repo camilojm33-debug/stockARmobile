@@ -1089,22 +1089,26 @@ def _finalize_campaign_status(campaign, recipients) -> str | None:
     return status
 
 
-def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50) -> dict:
+def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50, campaign_id: int | None = None) -> dict:
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
     from flask import current_app
 
     now = utcnow()
     marketing_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
-    campaigns = SaaSCampaign.query.filter(
+    campaign_query = SaaSCampaign.query.filter(
         SaaSCampaign.status.in_({"APROBADA", "ENVIANDO"}),
         SaaSCampaign.scheduled_at.is_(None) | (SaaSCampaign.scheduled_at <= now),
-    ).order_by(SaaSCampaign.id.asc()).limit(limit).all()
+    )
+    if campaign_id is not None:
+        campaign_query = campaign_query.filter(SaaSCampaign.id == int(campaign_id))
+    campaigns = campaign_query.order_by(SaaSCampaign.id.asc()).limit(limit).all()
     summary = {
         "campaigns": 0,
         "sent": 0,
         "failed": 0,
         "skipped": 0,
         "disabled": 0,
+        "blocked": 0,
         "claimed": 0,
     }
 
@@ -1112,6 +1116,19 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
         if not marketing_enabled:
             summary["disabled"] += 1
             continue
+
+        if campaign.channel in {"whatsapp", "both"}:
+            try:
+                from services.saas_commercial_whatsapp import validate_commercial_whatsapp_template
+                template_check = validate_commercial_whatsapp_template(
+                    campaign.whatsapp_template_name,
+                    campaign.whatsapp_template_language or "es_AR",
+                )
+            except Exception as exc:
+                template_check = {"ok": False, "detail": str(exc)[:240]}
+            if not template_check.get("ok"):
+                summary["blocked"] += 1
+                continue
 
         campaign.status = "ENVIANDO"
         campaign.started_at = campaign.started_at or now
@@ -1314,7 +1331,7 @@ def campaign_metrics(db_session, campaign_id: int) -> dict:
 
 
 
-def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "", html: str = "", external_message_id: str = "", recipient_email: str = "") -> dict:
+def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "", html: str = "", external_message_id: str = "", recipient_email: str = "", thread_id: str = "", rfc_message_id: str = "", references: str = "") -> dict:
     """Register an inbound commercial email against the SaaS CRM and conversation."""
     from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
     from app import SaaSLead, SaaSLeadConsent, db
@@ -1343,10 +1360,22 @@ def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "
     external_conversation_id = f"email:{email}"
     conversation = (Conversation.query.filter_by(company_id=company.id, channel="email_commercial", external_conversation_id=external_conversation_id).order_by(Conversation.id.desc()).first())
     if conversation is None:
-        conversation = Conversation(company_id=company.id, agent_id=agent.id, channel="email_commercial", external_conversation_id=external_conversation_id, status="open", metadata_json={"lead_id": lead.id, "sender_email": email, "recipient_email": str(recipient_email or "")[:160]}, created_at=now, updated_at=now)
+        conversation = Conversation(company_id=company.id, agent_id=agent.id, channel="email_commercial", external_conversation_id=external_conversation_id, status="open", metadata_json={}, created_at=now, updated_at=now)
         db.session.add(conversation)
         db.session.flush()
         db.session.add(ConversationParticipant(conversation_id=conversation.id, company_id=company.id, participant_type="prospect", participant_id=lead.id, display_name=lead.contact_name or email, created_at=now))
+
+    conversation_metadata = dict(conversation.metadata_json or {})
+    conversation_metadata.update({
+        "lead_id": lead.id,
+        "sender_email": email,
+        "recipient_email": str(recipient_email or "")[:160],
+        "subject": str(subject or "")[:500],
+        "gmail_thread_id": str(thread_id or "").strip()[:255],
+        "rfc_message_id": str(rfc_message_id or "").strip()[:998],
+        "references": str(references or "").strip()[:2000],
+    })
+    conversation.metadata_json = conversation_metadata
 
     if message_id:
         metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
@@ -1356,11 +1385,31 @@ def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "
 
         duplicate = ConversationMessage.query.filter_by(company_id=company.id, conversation_id=conversation.id, external_message_id=message_id).first()
         if duplicate is not None:
+            duplicate_metadata = dict(duplicate.metadata_json or {})
+            duplicate_metadata.update({
+                "channel": "email_commercial",
+                "sender_email": email,
+                "recipient_email": str(recipient_email or "")[:160],
+                "subject": str(subject or "")[:500],
+                "gmail_thread_id": str(thread_id or "").strip()[:255],
+                "rfc_message_id": str(rfc_message_id or "").strip()[:998],
+                "references": str(references or "").strip()[:2000],
+            })
+            duplicate.metadata_json = duplicate_metadata
+            db.session.commit()
             return {"status": "duplicate", "lead_id": lead.id, "conversation_id": conversation.id, "message_id": duplicate.id}
 
     body = (str(text or "").strip() or str(html or "").strip())[:20000] or "(Email sin contenido de texto)"
     content = f"Asunto: {str(subject or '').strip()[:500]}\\n\\n{body}".strip()
-    message = ConversationMessage(company_id=company.id, conversation_id=conversation.id, sender_type="user", sender_id=None, role="user", content=content, content_type="email", external_message_id=message_id, idempotency_key=f"email-inbound:{message_id}" if message_id else None, metadata_json={"channel": "email_commercial", "sender_email": email, "recipient_email": str(recipient_email or "")[:160]}, created_at=now)
+    message = ConversationMessage(company_id=company.id, conversation_id=conversation.id, sender_type="user", sender_id=None, role="user", content=content, content_type="email", external_message_id=message_id, idempotency_key=f"email-inbound:{message_id}" if message_id else None, metadata_json={
+        "channel": "email_commercial",
+        "sender_email": email,
+        "recipient_email": str(recipient_email or "")[:160],
+        "subject": str(subject or "")[:500],
+        "gmail_thread_id": str(thread_id or "").strip()[:255],
+        "rfc_message_id": str(rfc_message_id or "").strip()[:998],
+        "references": str(references or "").strip()[:2000],
+    }, created_at=now)
     db.session.add(message)
     lead.last_contacted_at = now
     lead.last_contact_channel = "email"

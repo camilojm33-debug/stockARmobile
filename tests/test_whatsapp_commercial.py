@@ -616,3 +616,77 @@ def test_crm_message_delete_does_not_remove_recorded_ai_usage(commercial_databas
         )
 
     assert ConversationMessage.query.filter_by(id=message.id).first() is not None
+
+
+
+def test_gmail_inbound_capture_persists_original_thread_metadata(commercial_database):
+    from app import SaaSLead
+    from services.saas_commercial_service import capture_inbound_email
+
+    first = capture_inbound_email(
+        sender_email="prospect@gmail.com",
+        subject="Consulta comercial",
+        text="Quiero conocer los planes.",
+        external_message_id="<message-1@gmail.com>",
+        recipient_email="stockarmobile@gmail.com",
+    )
+    result = capture_inbound_email(
+        sender_email="prospect@gmail.com",
+        subject="Consulta comercial",
+        text="Quiero conocer los planes.",
+        external_message_id="<message-1@gmail.com>",
+        recipient_email="stockarmobile@gmail.com",
+        thread_id="gmail-thread-1",
+        rfc_message_id="<message-1@gmail.com>",
+        references="<root@gmail.com>",
+    )
+    conversation = Conversation.query.filter_by(
+        company_id=commercial_database["company"].id,
+        channel="email_commercial",
+        external_conversation_id="email:prospect@gmail.com",
+    ).first()
+    inbound = ConversationMessage.query.filter_by(
+        conversation_id=conversation.id,
+        external_message_id="<message-1@gmail.com>",
+    ).first()
+
+    assert first["status"] == "received"
+    assert result["status"] == "duplicate"
+    assert conversation.metadata_json["gmail_thread_id"] == "gmail-thread-1"
+    assert conversation.metadata_json["subject"] == "Consulta comercial"
+    assert inbound.metadata_json["rfc_message_id"] == "<message-1@gmail.com>"
+    assert inbound.metadata_json["references"] == "<root@gmail.com>"
+
+
+
+def test_commercial_template_validation_requires_meta_approved_marketing(commercial_database, monkeypatch):
+    from services.saas_commercial_whatsapp import validate_commercial_whatsapp_template
+
+    monkeypatch.setattr(
+        "services.ai_agent.config_service.get_whatsapp_connection",
+        lambda company: {
+            "enabled": True,
+            "phone_number_id": "COMMERCIAL_PHONE_QA",
+            "business_account_id": "COMMERCIAL_WABA_QA",
+            "access_token": "token-for-qa",
+            "display_phone_number": "+54 9 11 5555-1234",
+        },
+    )
+    monkeypatch.setattr(
+        "services.ai_agent.whatsapp_master_template_service._list_waba_templates",
+        lambda waba_id, access_token: [
+            {"name": "approved_marketing", "language": "es_AR", "status": "APPROVED", "category": "MARKETING"},
+            {"name": "pending_marketing", "language": "es_AR", "status": "PENDING", "category": "MARKETING"},
+            {"name": "approved_utility", "language": "es_AR", "status": "APPROVED", "category": "UTILITY"},
+        ],
+    )
+
+    approved = validate_commercial_whatsapp_template("approved_marketing", "es_AR")
+    pending = validate_commercial_whatsapp_template("pending_marketing", "es_AR")
+    utility = validate_commercial_whatsapp_template("approved_utility", "es_AR")
+
+    assert approved["ok"] is True
+    assert pending["ok"] is False
+    assert pending["status"] == "PENDING"
+    assert utility["ok"] is False
+    assert utility["category"] == "UTILITY"
