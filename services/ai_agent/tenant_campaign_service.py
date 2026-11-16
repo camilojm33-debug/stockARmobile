@@ -284,6 +284,64 @@ def resolve_shared_campaign_reply(*, phone_number_id: str, sender: str, context_
     return history[0]
 
 
+def resolve_shared_campaign_opt_out_clients(*, phone_number_id: str, sender: str):
+    """Resolve every tenant contact that must be suppressed after BAJA on the shared sender.
+
+    A free-form BAJA reply may not carry WhatsApp's quoted-message context.
+    Because every merchant campaign deliberately shares this sender number,
+    a phone that received recent campaign messages from multiple tenants must
+    be opted out in each matching tenant record. This changes only each
+    tenant's own consent rows; it never merges or exposes their CRM data.
+    """
+    from app import Client
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+    from services.whatsapp_share_service import normalize_whatsapp_number
+
+    platform_company = get_commercial_company()
+    if platform_company is None:
+        return []
+    platform_connection = get_whatsapp_connection(platform_company)
+    if str(platform_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
+        return []
+
+    normalized_sender = normalize_whatsapp_number(sender)
+    if not normalized_sender:
+        return []
+    cutoff = _now() - timedelta(days=30)
+    matches = (
+        TenantCampaignRecipient.query
+        .filter(
+            TenantCampaignRecipient.channel == "whatsapp",
+            TenantCampaignRecipient.status == "sent",
+            TenantCampaignRecipient.destination == normalized_sender,
+            TenantCampaignRecipient.sent_at.isnot(None),
+            TenantCampaignRecipient.sent_at >= cutoff,
+        )
+        .with_entities(
+            TenantCampaignRecipient.company_id,
+            TenantCampaignRecipient.client_id,
+        )
+        .distinct()
+        .all()
+    )
+    resolved = []
+    seen = set()
+    for company_id, client_id in matches:
+        key = (int(company_id), int(client_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        client = Client.query.filter_by(
+            id=int(client_id),
+            company_id=int(company_id),
+            active=True,
+        ).first()
+        if client is not None:
+            resolved.append(client)
+    return resolved
+
+
 def _client_phone(client):
     raw_phone = str(getattr(client, "whatsapp", None) or "").strip()
     from services.whatsapp_share_service import normalize_whatsapp_number
@@ -545,13 +603,19 @@ def refresh_attribution(company_id=None):
         tenant_id = recipient.company_id
         client = recipient.client
         phone = _client_phone(client)
+        campaign_branch_id = _campaign_branch_id(recipient.campaign) if recipient.campaign is not None else None
         if phone:
-            conversation = Conversation.query.filter(
+            conversation_query = Conversation.query.filter(
                 Conversation.company_id == tenant_id,
                 Conversation.external_conversation_id == phone,
                 Conversation.created_at >= recipient.sent_at,
                 Conversation.created_at <= _now(),
-            ).order_by(Conversation.id.asc()).first()
+            )
+            if campaign_branch_id is not None:
+                conversation_query = conversation_query.filter(
+                    Conversation.branch_id == campaign_branch_id
+                )
+            conversation = conversation_query.order_by(Conversation.id.asc()).first()
             if conversation is not None:
                 recipient.replied_at = recipient.replied_at or conversation.created_at
                 if not db.session.query(TenantCampaignAttribution).filter_by(
@@ -568,13 +632,16 @@ def refresh_attribution(company_id=None):
                         created_at=_now(),
                     ))
         if recipient.sent_at:
-            sales = Sale.query.filter(
+            sales_query = Sale.query.filter(
                 Sale.company_id == tenant_id,
                 Sale.client_id == client.id,
                 Sale.date >= recipient.sent_at,
                 Sale.date <= recipient.sent_at + timedelta(days=ATTRIBUTION_DAYS),
                 Sale.status.notin_(["cancelada", "anulada"]),
-            ).all()
+            )
+            if campaign_branch_id is not None:
+                sales_query = sales_query.filter(Sale.branch_id == campaign_branch_id)
+            sales = sales_query.all()
             for sale in sales:
                 if not db.session.query(TenantCampaignAttribution).filter_by(
                     campaign_id=recipient.campaign_id, sale_id=sale.id
