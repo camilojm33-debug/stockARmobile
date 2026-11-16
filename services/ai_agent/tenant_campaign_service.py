@@ -504,9 +504,10 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
 
     client = recipient.client
     try:
+        tenant_name = str(getattr(getattr(campaign, "company", None), "name", None) or "tu comercio").strip()
         params = [
             str(client.name or "Cliente")[:1024],
-            str(campaign.product.name if campaign.product else "Varios")[:1024],
+            tenant_name[:1024],
             _render_content(campaign, client),
         ]
     except ValueError as exc:
