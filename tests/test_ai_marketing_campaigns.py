@@ -668,6 +668,11 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         assert provider_id == "wamid.shared-vendedor247-test"
         assert sent["company_id"] == platform.id
         assert sent["template_name"] == "stockarmobile_vendedor247_marketing_es_ar"
+        assert sent["body_parameters"] == [
+            "Cliente autorizado",
+            "Comercio con CRM",
+            "Tenemos novedades para vos\n\nPara dejar de recibir mensajes, respondé BAJA.",
+        ]
         assert sent["template_name"] != "superadmin_acquisition_template"
         assert sent["branch_id"] is None
         assert resolved_sender_ids == [platform.id, platform.id]
