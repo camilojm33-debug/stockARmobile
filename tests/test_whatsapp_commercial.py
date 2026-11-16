@@ -623,6 +623,13 @@ def test_gmail_inbound_capture_persists_original_thread_metadata(commercial_data
     from app import SaaSLead
     from services.saas_commercial_service import capture_inbound_email
 
+    first = capture_inbound_email(
+        sender_email="prospect@gmail.com",
+        subject="Consulta comercial",
+        text="Quiero conocer los planes.",
+        external_message_id="<message-1@gmail.com>",
+        recipient_email="stockarmobile@gmail.com",
+    )
     result = capture_inbound_email(
         sender_email="prospect@gmail.com",
         subject="Consulta comercial",
@@ -643,7 +650,8 @@ def test_gmail_inbound_capture_persists_original_thread_metadata(commercial_data
         external_message_id="<message-1@gmail.com>",
     ).first()
 
-    assert result["status"] == "received"
+    assert first["status"] == "received"
+    assert result["status"] == "duplicate"
     assert conversation.metadata_json["gmail_thread_id"] == "gmail-thread-1"
     assert conversation.metadata_json["subject"] == "Consulta comercial"
     assert inbound.metadata_json["rfc_message_id"] == "<message-1@gmail.com>"
