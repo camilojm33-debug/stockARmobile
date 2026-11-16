@@ -33,3 +33,17 @@ def test_tenant_campaign_wizard_discloses_shared_vendedor_sender_and_tenant_isol
     assert "Vendedor 24/7 de StockARmobile" in template
     assert "CRM de este comercio" in template
     assert "número propio del comercio" not in template
+
+
+
+def test_tenant_marketing_campaigns_use_in_process_worker_not_render_cron():
+    from pathlib import Path
+
+    source = Path("render.yaml").read_text(encoding="utf-8")
+    worker = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
+    gunicorn = Path("gunicorn.conf.py").read_text(encoding="utf-8")
+
+    assert "stockarmobile-ai-campaigns" not in source
+    assert "start_campaign_dispatch_worker(flask_app)" in gunicorn
+    assert "poll=%ss" in worker
+    assert "AI_MARKETING_SEND_ENABLED" in worker
