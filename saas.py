@@ -1982,6 +1982,9 @@ def crm_inbox():
                 lead = SaaSLead.query.filter_by(id=int(participant.participant_id)).first()
 
         selected_email = str(metadata.get("sender_email") or getattr(lead, "email", None) or "")[:160]
+        selected_phone = ""
+        if selected.channel == "whatsapp_commercial":
+            selected_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
         selected_raw_company = str(getattr(lead, "company_name", None) or "").strip()
         selected_is_new_contact = bool(selected.channel == "email_commercial" and selected_raw_company.lower() == "prospecto email")
         selected_contact_name = (
@@ -1997,9 +2000,6 @@ def crm_inbox():
             else getattr(lead, "company_name", None)
             or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp")
         )
-        selected_phone = ""
-        if selected.channel == "whatsapp_commercial":
-            selected_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
 
         selected_needs_reply = bool(selected_messages and selected_messages[-1].sender_type == "user")
         if selected.channel == "whatsapp_commercial":
