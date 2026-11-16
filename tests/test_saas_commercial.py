@@ -1112,13 +1112,15 @@ def test_dispatch_due_campaigns_can_target_only_the_requested_campaign(app, monk
 
         db.session.refresh(campaigns[0])
         db.session.refresh(campaigns[1])
-        older_recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[0].id).first()
-        selected_recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id).first()
+        older_recipients = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[0].id).all()
+        selected_recipients = SaaSCampaignRecipient.query.filter_by(campaign_id=campaigns[1].id).all()
 
-        assert result["sent"] == 1
-        assert sent_campaign_ids == [campaigns[1].id]
-        assert older_recipient.status == "pending"
-        assert selected_recipient.status == "sent"
+        assert len(selected_recipients) == 2
+        assert result["sent"] == len(selected_recipients)
+        assert set(sent_campaign_ids) == {campaigns[1].id}
+        assert len(sent_campaign_ids) == len(selected_recipients)
+        assert all(recipient.status == "pending" for recipient in older_recipients)
+        assert all(recipient.status == "sent" for recipient in selected_recipients)
         assert campaigns[0].status == "APROBADA"
         assert campaigns[1].status == "ENVIADA"
 
