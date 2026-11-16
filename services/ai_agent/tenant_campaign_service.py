@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Index, UniqueConstraint, func
 
@@ -579,6 +579,23 @@ def refresh_attribution(company_id=None):
                     ))
 
 
+def _marketing_dispatch_not_before():
+    """Optional UTC safety cutoff that prevents legacy approved queues auto-sending after activation."""
+    raw = str(
+        os.getenv("AI_MARKETING_DISPATCH_NOT_BEFORE")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, limit=10, per_campaign=MAX_RECIPIENTS_PER_CYCLE):
     from flask import current_app
     from app import Campaign
@@ -586,6 +603,17 @@ def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, lim
 
     if not current_app.config.get("AI_MARKETING_SEND_ENABLED", False):
         return {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "uncertain": 0, "retry_scheduled": 0, "attributed_sales": 0, "disabled": True}
+
+    dispatch_not_before = _marketing_dispatch_not_before()
+    if dispatch_not_before is False:
+        current_app.logger.error(
+            "Marketing IA dispatch blocked: AI_MARKETING_DISPATCH_NOT_BEFORE must be a valid ISO-8601 UTC timestamp."
+        )
+        return {
+            "campaigns": 0, "sent": 0, "failed": 0, "skipped": 0,
+            "uncertain": 0, "retry_scheduled": 0, "attributed_sales": 0,
+            "disabled": True, "invalid_dispatch_cutoff": True,
+        }
 
     stale_query = TenantCampaignRecipient.query.filter(
         TenantCampaignRecipient.status == "sending",
@@ -635,6 +663,13 @@ def dispatch_due_campaigns(db_session, *, company_id=None, campaign_id=None, lim
         Campaign.status == "EN_PREPARACION",
         (Campaign.scheduled_at.is_(None) | (Campaign.scheduled_at <= _now())),
     )
+    if dispatch_not_before is not None:
+        # Once enabled in production, do not resume historical queues. New
+        # campaigns must receive a fresh explicit admin approval after cutoff.
+        query = query.filter(
+            Campaign.approved_at.isnot(None),
+            Campaign.approved_at >= dispatch_not_before,
+        )
     if company_id is not None:
         query = query.filter(Campaign.company_id == int(company_id))
     if campaign_id is not None:
