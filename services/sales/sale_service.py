@@ -90,6 +90,14 @@ class SaleService:
                 )
                 if early_quote is None:
                     raise ValueError("No se encontró el presupuesto de origen.")
+                # Preserve the seller-level authorization that the locked
+                # conversion path enforces below. An idempotent retry must not
+                # become a shortcut to another seller's converted sale.
+                if (
+                    getattr(current_user, "role", None) not in {"admin", "superadmin"}
+                    and int(early_quote.seller_id or 0) != int(getattr(current_user, "id", 0) or 0)
+                ):
+                    raise ValueError("No tenés permiso para convertir este presupuesto.")
                 if early_quote.converted_sale_id:
                     existing_sale = (
                         scope_query_to_company(Sale.query, Sale)
