@@ -7,6 +7,7 @@ envVarGroups:
     envVars:
       - key: SAAS_MARKETING_SEND_ENABLED
         value: "0"
+      # Keep tenant dispatch gated until the controlled first live-send test is completed.
       - key: AI_MARKETING_SEND_ENABLED
         value: "0"
 
@@ -84,6 +85,10 @@ services:
         sync: false
       - key: GMAIL_COMMERCIAL_MAILBOX
         value: stockarmobile@gmail.com
+      - key: TENANT_CRM_SHARED_WHATSAPP_TEMPLATE_NAME
+        value: campana_marketing_es_ar
+      - key: TENANT_CRM_SHARED_WHATSAPP_TEMPLATE_LANGUAGE
+        value: es_AR
       - key: SUPPORT_EMAIL
         value: stockarmobile@gmail.com
       - key: SUPPORT_WHATSAPP_DISPLAY
@@ -124,71 +129,8 @@ services:
           name: stockarmobile-prod
           property: connectionString
 
-  - type: cron
-    name: stockarmobile-commercial-campaigns
-    runtime: python
-    plan: starter
-    schedule: "*/15 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run_saas_campaigns.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: stockarmobile-prod
-          property: connectionString
-      - key: SAAS_CAMPAIGN_WORKER_URL
-        value: https://www.stockarmobile.com/internal/crm/campaign-worker
-      - key: SAAS_CAMPAIGN_WORKER_TOKEN
-        sync: false
-      - key: SECRET_KEY
-        generateValue: true
-      - key: APP_URL
-        value: https://www.stockarmobile.com
-      - fromGroup: stockarmobile-campaign-controls
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USE_TLS
-        value: "1"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
-
-
-  - type: cron
-    name: stockarmobile-ai-campaigns
-    runtime: python
-    plan: starter
-    schedule: "*/15 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run_ai_campaigns.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: stockarmobile-prod
-          property: connectionString
-      - key: SECRET_KEY
-        generateValue: true
-      - key: APP_URL
-        value: https://www.stockarmobile.com
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USE_TLS
-        value: "1"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
-      - fromGroup: stockarmobile-campaign-controls
-
+  # Both marketing campaign dispatchers run inside the Gunicorn web worker.
+  # There is intentionally no Cron service for SuperAdmin or tenant CRM campaigns.
 
   - type: cron
     name: stockarmobile-daily-backup
