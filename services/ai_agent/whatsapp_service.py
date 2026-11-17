@@ -86,9 +86,7 @@ class WhatsAppService:
             "type": "text",
             "text": {"preview_url": not is_mercado_pago_link, "body": body_text},
         }
-        return cls._post_message(
-            company, to=to, payload=payload, branch_id=branch_id, connection=connection,
-        )
+        return cls._post_message(company, to=to, payload=payload, branch_id=branch_id)
 
     @classmethod
     def send_template(
@@ -131,4 +129,6 @@ class WhatsAppService:
             "type": "template",
             "template": template,
         }
-        return cls._post_message(company, to=to, payload=payload, branch_id=branch_id)
+        return cls._post_message(
+            company, to=to, payload=payload, branch_id=branch_id, connection=connection,
+        )
