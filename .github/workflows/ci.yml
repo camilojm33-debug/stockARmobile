@@ -116,3 +116,5 @@ jobs:
           tests/test_persistent_storage.py
           tests/test_readiness_endpoint.py
           tests/test_followup_delivery_recovery.py
+      - name: Run PostgreSQL transaction concurrency regressions
+        run: pytest -q --tb=short tests/test_postgres_transaction_concurrency.py

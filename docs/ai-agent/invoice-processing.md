@@ -24,11 +24,13 @@ El flujo es:
 
 Las facturas no se guardan dentro de la conversación: sólo se almacena metadata temporal, extracción normalizada, hash y resultado. El texto del documento se considera DATA y nunca instrucciones del sistema.
 
-## Idempotencia y deuda de modelo
+## Idempotencia y concurrencia
 
-La implementación utiliza `company_id` y SHA-256 del archivo en `Conversation.metadata_json` para evitar reintentos secuenciales y confirmaciones duplicadas. Esta solución no puede imponer unicidad ante dos transacciones concurrentes porque `PurchaseOrder` no tiene columna de referencia externa ni hash único.
+Cada factura confirmada persiste el SHA-256 del archivo en `PurchaseOrder.source_document_hash`. La base de datos aplica un índice único compuesto por `company_id` y `source_document_hash`, por lo que dos solicitudes concurrentes del mismo archivo dentro de una empresa no pueden generar dos compras. El mismo archivo puede existir en empresas distintas sin colisión. Las compras manuales dejan este campo en `NULL`.
 
-Para una garantía SQL fuerte habría que agregar a `purchase_orders` una columna como `source_document_hash` o `external_reference`, un índice único compuesto por `company_id` y esa columna, y una migración Alembic con backfill/validación de duplicados existentes. No se crea esa migración en esta etapa.
+La confirmación exige una huella SHA-256 de 64 caracteres hexadecimales. Antes de modificar cantidades y costos se bloquean los productos involucrados en orden ascendente de ID y se refrescan sus valores desde la base de datos, para evitar cálculos sobre identidades ORM obsoletas. Los conflictos de unicidad revierten la transacción completa, incluidos proveedor nuevo, orden, detalle y movimientos de stock.
+
+El control de duplicados en metadata de conversaciones mejora la experiencia de reintento, pero la garantía de no duplicar compras descansa en el índice único SQL, no en esa metadata.
 
 `Supplier` no tiene `tax_id`; por eso el matching usa únicamente el nombre existente y no inventa un campo fiscal.
 

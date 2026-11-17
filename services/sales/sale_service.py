@@ -47,12 +47,6 @@ class SaleService:
                 len(items or {}),
                 json_response,
             )
-            cash_session = self._require_open_cash_session(json_response=json_response)
-            if cash_session is None:
-                return redirect(url_for("cash.index"))
-            if isinstance(cash_session, tuple):
-                return cash_session
-
             checkout_token = ValidationService.sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
             company_id = getattr(current_user, "company_id", None)
             quote_snapshot = None
@@ -86,6 +80,44 @@ class SaleService:
                     if json_response:
                         return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
                     return redirect(url_for("sales.success", sale_id=existing_sale.id))
+
+            if quote_id is not None:
+                from app import Quote
+                early_quote = (
+                    scope_query_to_company(Quote.query, Quote)
+                    .filter(Quote.id == int(quote_id))
+                    .first()
+                )
+                if early_quote is None:
+                    raise ValueError("No se encontró el presupuesto de origen.")
+                # Preserve the seller-level authorization that the locked
+                # conversion path enforces below. An idempotent retry must not
+                # become a shortcut to another seller's converted sale.
+                if (
+                    getattr(current_user, "role", None) not in {"admin", "superadmin"}
+                    and int(early_quote.seller_id or 0) != int(getattr(current_user, "id", 0) or 0)
+                ):
+                    raise ValueError("No tenés permiso para convertir este presupuesto.")
+                if early_quote.converted_sale_id:
+                    existing_sale = (
+                        scope_query_to_company(Sale.query, Sale)
+                        .filter(Sale.id == early_quote.converted_sale_id)
+                        .first()
+                    )
+                    if existing_sale is not None:
+                        if json_response:
+                            return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                        return redirect(url_for("sales.success", sale_id=existing_sale.id))
+                    raise ValueError("El presupuesto ya figura convertido pero no se encontró su venta.")
+
+            # Resolve completed idempotent requests before requiring mutable cash
+            # session state. Keep this before the locked quote read to preserve the
+            # established CashSession -> Quote lock order for new conversions.
+            cash_session = self._require_open_cash_session(json_response=json_response)
+            if cash_session is None:
+                return redirect(url_for("cash.index"))
+            if isinstance(cash_session, tuple):
+                return cash_session
 
             if quote_id is not None:
                 from app import Quote, QuoteItem
@@ -425,6 +457,46 @@ class SaleService:
         flash(f"Venta #{sale.id} realizada con exito. Total: ${final_total:.2f}", "success")
         return redirect(url_for("sales.success", sale_id=sale.id))
 
+    def _lock_sale_for_update(self, sale):
+        """Serialize lifecycle changes and reload the sale/items after acquiring the row lock."""
+        from app import Sale, SaleItem, db, scope_query_to_company
+
+        query = scope_query_to_company(
+            Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)),
+            Sale,
+        )
+        locked_sale = (
+            query.filter(Sale.id == int(sale.id))
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if locked_sale is None:
+            raise ValueError("La venta ya no existe o no pertenece a la empresa activa.")
+
+        # The collection may have been loaded by the route before the lock was
+        # acquired. Force its next access to read the rows committed by the
+        # previous lifecycle operation.
+        db.session.expire(locked_sale, ["items"])
+        return locked_sale
+
+    def _lock_products_for_sale_update(self, product_ids):
+        """Lock all products touched by an edit in stable order before changing stock."""
+        from app import Product, db, scope_query_to_company
+
+        normalized_ids = sorted({int(product_id) for product_id in (product_ids or []) if int(product_id) > 0})
+        if not normalized_ids:
+            return {}
+        rows = (
+            scope_query_to_company(db.session.query(Product), Product)
+            .filter(Product.id.in_(normalized_ids))
+            .order_by(Product.id.asc())
+            .with_for_update()
+            .populate_existing()
+            .all()
+        )
+        return {int(product.id): product for product in rows}
+
     def update_sale(
         self,
         *,
@@ -437,28 +509,61 @@ class SaleService:
     ):
         from app import CashMovement, Client, Product, SaleItem, SaleModificationHistory, db, record_audit, scope_query_to_company
 
+        # Validate cheap input before acquiring locks, then refresh and lock the
+        # authoritative sale row before reading its items or touching stock/cash.
+        ValidationService.validate_edit_reason(reason)
+        sale = self._lock_sale_for_update(sale)
+
         # A cancelled sale is immutable: editing it would reverse/reapply stock and
         # rewrite cash movements while leaving its cancelled status intact.
         sale_status = str(getattr(sale, "status", "") or "").strip().lower()
         if sale_status in {"anulada", "anulado", "cancelada", "cancelado", "cancelled", "canceled", "void", "voided"}:
             raise ValueError("No se puede editar una venta anulada.")
 
-        ValidationService.validate_edit_reason(reason)
-
         existing_line_discount_total = sum(self._to_decimal(item.discount or 0) for item in sale.items)
         sale_order_discount_default = max(self._to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
         previous_snapshot = sale_snapshot(sale)
-
-        def _resolve_product_for_sale_item(item):
-            return item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
-
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item, branch_id=getattr(sale, "branch_id", None), source_id=sale.id, user_id=getattr(current_user, "id", None))
 
         product_ids = form.getlist("product_id")
         quantities = form.getlist("quantity")
         prices = form.getlist("price")
         discounts = form.getlist("discount")
         row_deletes = form.getlist("remove_item")
+        product_id_values = []
+        for raw_value in product_ids:
+            raw_value = (raw_value or "").strip()
+            if raw_value:
+                product_id_values.append(int(raw_value))
+
+        # Pre-lock the union of old and new products in one deterministic order.
+        # Otherwise editing a sale to add a lower-ID product after restoring a
+        # higher-ID old product can invert locks and deadlock another checkout.
+        product_ids_to_lock = set(product_id_values)
+        product_ids_to_lock.update(
+            int(item.product_id) for item in sale.items if getattr(item, "product_id", None)
+        )
+        products_by_id = self._lock_products_for_sale_update(product_ids_to_lock)
+
+        existing_product_ids = {
+            int(item.product_id) for item in sale.items if getattr(item, "product_id", None)
+        }
+        missing_existing_products = sorted(existing_product_ids - set(products_by_id))
+        if missing_existing_products:
+            raise ValueError(
+                "No se puede editar la venta: uno o más productos no pertenecen a la empresa activa."
+            )
+
+        def _resolve_product_for_sale_item(item):
+            product_id = int(getattr(item, "product_id", 0) or 0)
+            return products_by_id.get(product_id)
+
+        InventoryService.reverse_stock(
+            sale_items=sale.items,
+            resolve_product_func=_resolve_product_for_sale_item,
+            branch_id=getattr(sale, "branch_id", None),
+            source_id=sale.id,
+            user_id=getattr(current_user, "id", None),
+        )
         order_discount = self._to_decimal(form.get("order_discount") or sale_order_discount_default or 0)
         discount_type = form.get("discount_type") or sale.discount_type
         discount_value = form.get("discount_value") or (order_discount if discount_type else None)
@@ -469,19 +574,6 @@ class SaleService:
         note = (form.get("note") or sale.note or "").strip() or None
         client_id = form.get("client_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
-
-        product_id_values = []
-        for raw_value in product_ids:
-            raw_value = (raw_value or "").strip()
-            if raw_value:
-                product_id_values.append(int(raw_value))
-
-        products_by_id = {}
-        if product_id_values:
-            products_by_id = {
-                product.id: product
-                for product in scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(product_id_values)).all()
-            }
 
         new_lines = InventoryService.build_edit_lines(
             product_ids=product_ids,
@@ -701,6 +793,7 @@ class SaleService:
     def cancel_sale(self, *, sale, detail):
         from app import db, record_audit
 
+        sale = self._lock_sale_for_update(sale)
         ValidationService.validate_cancel_status(getattr(sale, "status", None))
         from cash_treasury import reverse_sale_financial_movements
         reverse_sale_financial_movements(sale, reason="cancelación")
@@ -719,6 +812,7 @@ class SaleService:
         from app import CashMovement, db, record_audit
 
         ValidationService.validate_delete_role(getattr(current_user, "role", None))
+        sale = self._lock_sale_for_update(sale)
         ValidationService.validate_annul_status(
             getattr(sale, "status", None),
             comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
@@ -752,6 +846,7 @@ class SaleService:
         from app import CashMovement, db, record_audit
 
         ValidationService.validate_delete_role(getattr(current_user, "role", None))
+        sale = self._lock_sale_for_update(sale)
         if not ValidationService.can_hard_delete(getattr(sale, "status", None)):
             raise ValueError(
                 "Las ventas confirmadas no se eliminan físicamente. Deben anularse para conservar el historial."

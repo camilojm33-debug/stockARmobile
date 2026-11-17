@@ -25,7 +25,10 @@ class InventoryService:
             available = float(product.stock or 0)
             if branch_id is not None:
                 from stockarmobile.branch_inventory import available_stock
-                available = available_stock(product, branch_id)
+                # The checkout already holds the Product row lock. Refresh
+                # BranchStock too so a row loaded earlier in this request cannot
+                # make the stock check operate on an obsolete balance.
+                available = available_stock(product, branch_id, refresh=True)
             if available < qty:
                 raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 
@@ -47,19 +50,48 @@ class InventoryService:
 
     @staticmethod
     def reverse_stock(*, sale_items, resolve_product_func, branch_id=None, source_id=None, user_id=None):
-        for item in sale_items:
+        # Stable product ordering avoids deadlocks when concurrent sale edits or
+        # annulations restore overlapping multi-product carts.
+        ordered_items = sorted(
+            list(sale_items or []),
+            key=lambda item: int(getattr(item, "product_id", 0) or 0),
+        )
+        for item in ordered_items:
             product = resolve_product_func(item)
-            if product is not None:
-                if branch_id is not None:
-                    from stockarmobile.branch_inventory import adjust_branch_stock
-                    adjust_branch_stock(
-                        product, branch_id, item.quantity or 0,
-                        movement_type="sale_reversal", source_type="sale",
-                        source_id=source_id, user_id=user_id, allow_legacy_precision=True,
-                        allow_inactive=True,
+            if product is None:
+                raise ValueError(
+                    "No se pudo resolver un producto de la venta en la empresa activa; no se restauró el stock."
+                )
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import adjust_branch_stock
+                adjust_branch_stock(
+                    product, branch_id, item.quantity or 0,
+                    movement_type="sale_reversal", source_type="sale",
+                    source_id=source_id, user_id=user_id, allow_legacy_precision=True,
+                    allow_inactive=True,
+                )
+            else:
+                # Legacy single-balance tenants do not pass through
+                # branch_inventory.adjust_branch_stock. Lock and refresh the
+                # Product row here so a concurrent sale cannot be overwritten
+                # by a stale ORM object's absolute stock value.
+                from app import Product
+                if isinstance(product, Product):
+                    locked_product = (
+                        Product.query.filter_by(
+                            id=int(item.product_id),
+                            company_id=int(product.company_id),
+                        )
+                        .with_for_update()
+                        .populate_existing()
+                        .first()
                     )
-                else:
-                    product.stock = float(product.stock or 0) + float(item.quantity or 0)
+                    if locked_product is None:
+                        raise ValueError(
+                            "No se pudo restaurar el stock: el producto ya no pertenece a la empresa activa."
+                        )
+                    product = locked_product
+                product.stock = float(product.stock or 0) + float(item.quantity or 0)
 
     @staticmethod
     def apply_stock(*, lines, branch_id=None, source_type="sale", source_id=None, user_id=None,
@@ -127,7 +159,10 @@ class InventoryService:
             available = float(product.stock or 0)
             if branch_id is not None:
                 from stockarmobile.branch_inventory import available_stock
-                available = available_stock(product, branch_id, allow_inactive=allow_inactive)
+                # A prior reversal may have changed this balance in the same
+                # transaction; refresh still sees that uncommitted write after
+                # autoflush and avoids stale identity-map values.
+                available = available_stock(product, branch_id, allow_inactive=allow_inactive, refresh=True)
             if available < float(quantity):
                 raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 

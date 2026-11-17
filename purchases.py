@@ -147,23 +147,38 @@ def _recalculate_purchase_edit_values(
     return updated_stock, updated_cost
 
 
-def _apply_product_purchase_totals(product_totals, *, branch_id=None):
-    """Apply stock and moving-average cost while serializing concurrent purchases."""
+def _lock_purchase_products(company_id, product_ids):
+    """Lock and refresh tenant-owned products in a deterministic order."""
     from app import Product, db
 
+    normalized_ids = sorted({int(value) for value in (product_ids or ()) if int(value) > 0})
+    if not normalized_ids:
+        return {}
+    rows = (
+        db.session.query(Product)
+        .filter(Product.company_id == int(company_id), Product.id.in_(normalized_ids))
+        .order_by(Product.id.asc())
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
+    return {int(product.id): product for product in rows}
+
+
+def _apply_product_purchase_totals(product_totals, *, company_id, branch_id=None):
+    """Apply stock and moving-average cost while serializing concurrent purchases."""
     if not product_totals:
         return
 
     product_ids = sorted(int(product_id) for product_id in product_totals)
-    locked_products = {
-        int(product.id): product
-        for product in db.session.query(Product)
-        .filter(Product.id.in_(product_ids))
-        .with_for_update()
-        .populate_existing()
-        .all()
+    source_company_ids = {
+        int(getattr(values[0], "company_id", 0) or 0)
+        for values in product_totals.values()
     }
+    if source_company_ids != {int(company_id)}:
+        raise ValueError("La compra contiene productos de otra empresa o sin empresa asignada.")
 
+    locked_products = _lock_purchase_products(company_id, product_ids)
     if set(locked_products) != set(product_ids):
         missing = sorted(set(product_ids) - set(locked_products))
         raise ValueError(f"Productos no encontrados para actualizar stock: {missing}")
@@ -250,7 +265,7 @@ def index():
             db.session.flush()
             for product, line in resolved_lines:
                 db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=line["quantity"], unit_cost=line["unit_cost"]))
-            _apply_product_purchase_totals(product_totals, branch_id=branch_id)
+            _apply_product_purchase_totals(product_totals, company_id=company_id, branch_id=branch_id)
             record_audit(
                 action="purchase_create",
                 entity="purchase_order",
@@ -465,7 +480,16 @@ def edit_supplier_purchase(supplier_id, purchase_id):
     active_branch_id = get_active_branch_id()
     if active_branch_id is not None:
         purchase_query = purchase_query.filter(PurchaseOrder.branch_id == active_branch_id)
-    purchase = purchase_query.first_or_404()
+    from sqlalchemy.orm import selectinload
+    # Serialize edits of the same purchase and reload its authoritative item
+    # rows before reversing inventory contributions.
+    purchase = (
+        purchase_query
+        .options(selectinload(PurchaseOrder.items))
+        .with_for_update()
+        .populate_existing()
+        .first_or_404()
+    )
     products = _company_scope(Product.query.filter_by(active=True), Product, company_id).order_by(Product.name).all()
     if request.method == "POST":
         try:
@@ -503,6 +527,14 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                         )
 
             affected_ids = set(old_totals) | set(new_totals)
+            # Lock every affected product before changing any balance. This is
+            # required for legacy single-stock companies too, and prevents a
+            # concurrent checkout or purchase from overwriting a stale snapshot.
+            locked_products = _lock_purchase_products(company_id, affected_ids)
+            if set(locked_products) != affected_ids:
+                missing = sorted(affected_ids - set(locked_products))
+                raise ValueError(f"Productos no encontrados para actualizar stock: {missing}")
+
             for product_id in sorted(affected_ids):
                 old_qty = old_totals.get(product_id, [None, 0.0, 0.0])[1]
                 new_qty = new_totals.get(product_id, [None, 0.0, 0.0])[1]
@@ -513,11 +545,7 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                         Decimal(str(new_qty)) - Decimal(str(old_qty))
                     ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
                 new_value = new_totals.get(product_id, [None, 0.0, 0.0])[2]
-                product = (new_totals.get(product_id) or old_totals.get(product_id))[0]
-                if purchase.branch_id is not None:
-                    from stockarmobile.branch_inventory import lock_product_stock_row
-                    lock_product_stock_row(product)
-                    db.session.refresh(product, attribute_names=["stock", "cost_price"])
+                product = locked_products[product_id]
                 current_stock = float(product.stock or 0)
                 updated_stock, updated_cost = _recalculate_purchase_edit_values(
                     current_stock=current_stock,
@@ -585,6 +613,8 @@ def import_supplier_purchases(supplier_id):
     if not upload or not upload.filename.lower().endswith((".xlsx", ".xlsm")):
         flash("Selecciona un archivo Excel .xlsx válido.", "danger"); return redirect(url_for("purchases.supplier_purchases", supplier_id=supplier.id, company_id=company_id))
     try:
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
         wb = load_workbook(upload, read_only=True, data_only=True); ws = wb.active; rows = list(ws.iter_rows(values_only=True)); wb.close()
         if not rows: raise ValueError("El Excel está vacío.")
         headers = {str(v or "").strip().lower(): i for i, v in enumerate(rows[0])}
@@ -598,10 +628,15 @@ def import_supplier_purchases(supplier_id):
         if qcol is None or ccol is None or pcol is None: raise ValueError("Faltan columnas obligatorias: Producto, Cantidad y Costo unitario.")
         valid_lines = []
         totals = {}
-        for row in rows[1:]:
+        for row_number, row in enumerate(rows[1:], start=2):
             if not row or all(v in (None, "") for v in row):
                 continue
             raw_product = row[pcol]; quantity = _to_float(row[qcol]); unit_cost = _to_float(row[ccol])
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import validate_stock_quantity
+                quantity = float(validate_stock_quantity(
+                    quantity, label=f"La cantidad de la fila {row_number}"
+                ))
             product = None
             if str(raw_product).strip().isdigit():
                 product = _company_scope(db.session.query(Product), Product, company_id).filter(Product.id == int(raw_product), Product.active.is_(True)).first()
@@ -616,13 +651,11 @@ def import_supplier_purchases(supplier_id):
             totals[product.id][2] += quantity * unit_cost
         if not valid_lines: raise ValueError("No se encontraron filas válidas para importar.")
         subtotal = sum(quantity * unit_cost for _, quantity, unit_cost in valid_lines)
-        from stockarmobile.branch_context import get_active_branch_id
-        branch_id = get_active_branch_id()
         order = PurchaseOrder(supplier_id=supplier.id, company_id=company_id, branch_id=branch_id, date=utcnow(), status="recibida", subtotal=subtotal, total_amount=subtotal, note="Importada desde Excel")
         db.session.add(order); db.session.flush()
         for product, quantity, unit_cost in valid_lines:
             db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=quantity, unit_cost=unit_cost))
-        _apply_product_purchase_totals(totals, branch_id=branch_id)
+        _apply_product_purchase_totals(totals, company_id=company_id, branch_id=branch_id)
         record_audit(action="purchase_import_excel", entity="supplier", entity_id=supplier.id, detail=f"Compra importada desde Excel id={order.id} productos={len(valid_lines)} total={subtotal:.2f}")
         db.session.commit(); flash(f"Se importó la compra #{order.id} con {len(valid_lines)} producto(s).", "success")
     except ValueError as exc:

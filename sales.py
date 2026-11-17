@@ -416,7 +416,7 @@ def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None, b
     def _fetch_products(candidate_ids):
         product_query = scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(candidate_ids), Product.active.is_(True)).order_by(Product.id.asc())
         if lock_for_update:
-            product_query = product_query.with_for_update()
+            product_query = product_query.with_for_update().populate_existing()
         products = {product.id: product for product in product_query.all()}
         current_app.logger.info("[sales] productos recibidos para calcular lineas: product_ids=%s encontrados=%s", candidate_ids, len(products))
         return products
@@ -1767,7 +1767,9 @@ def delete_sale(sale_id):
         cart_key=_cart_key,
         to_decimal=to_decimal,
     )
-    resolve_product = lambda item: item.product or scope_query_to_company(
+    # Resolve the item product through the active tenant scope. Never trust
+    # the ORM relationship alone when repairing historical inventory rows.
+    resolve_product = lambda item: scope_query_to_company(
         db.session.query(Product), Product
     ).filter(Product.id == item.product_id).first()
 
