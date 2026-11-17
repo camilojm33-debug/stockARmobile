@@ -83,6 +83,11 @@ def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch
         first_preparation = prepare_recipients(campaign.id, company_id=company_a.id)
         second_preparation = prepare_recipients(campaign.id, company_id=company_a.id)
 
+        campaign_data = __import__("json").loads(campaign.system_data_json or "{}")
+        assert campaign_data["whatsapp_sender"]["company_id"] == company_a.id
+        assert campaign_data["whatsapp_sender"]["phone_number_id"] == f"merchant-phone-{company_a.id}"
+        assert campaign_data["whatsapp_sender"]["business_account_id"] == f"merchant-waba-{company_a.id}"
+
         rows = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
         assert first_preparation["added"] == 1
         assert second_preparation["added"] == 0
@@ -1110,11 +1115,20 @@ def test_tenant_campaign_sender_resolves_the_company_branch_connection(app, monk
                 "template_language": "es_AR",
             },
         }
+        def connection_for(company, branch_id=None):
+            requested.append((company.id, branch_id))
+            if (company.id, branch_id) in connections:
+                return connections[(company.id, branch_id)]
+            return {
+                "enabled": True,
+                "phone_number_id": "merchant-a-phone",
+                "business_account_id": "merchant-a-waba",
+                "access_token": "other-company-token",
+            }
+
         monkeypatch.setattr(
             "services.ai_agent.config_service.get_whatsapp_connection",
-            lambda company, branch_id=None: (
-                requested.append((company.id, branch_id)) or connections.get((company.id, branch_id), {})
-            ),
+            connection_for,
         )
         monkeypatch.setattr(
             "services.ai_agent.config_service.company_branch_for_whatsapp_phone_id",
