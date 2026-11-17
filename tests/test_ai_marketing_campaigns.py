@@ -200,11 +200,6 @@ def test_queued_campaign_can_be_cancelled(app):
         db.session.add(user)
         db.session.flush()
 
-        monkeypatch.setattr(
-            "services.ai_agent.branch_vendor_service.branch_vendor_access",
-            lambda _company, _branch: {"allowed": True, "reason": None},
-        )
-
         campaign = CampaignService.create_draft(
             company_id=company.id,
             user_id=user.id,
@@ -353,6 +348,11 @@ def test_whatsapp_campaign_requires_connection_before_queue(app, monkeypatch):
         user.set_password("password123")
         db.session.add(user)
         db.session.flush()
+
+        monkeypatch.setattr(
+            "services.ai_agent.branch_vendor_service.branch_vendor_access",
+            lambda _company, _branch: {"allowed": True, "reason": None},
+        )
 
         campaign = CampaignService.create_draft(
             company_id=company.id,
