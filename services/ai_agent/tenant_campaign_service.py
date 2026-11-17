@@ -1,7 +1,7 @@
 """Tenant-scoped Marketing IA delivery engine.
 
-Tenant campaigns use each merchant's own Vendedor IA WhatsApp Cloud connection.
-Campaigns, recipients, consent, conversations and attribution remain tenant scoped.
+Tenant CRM campaigns use StockARmobile's shared Vendedor 24/7 WhatsApp sender.
+Campaigns, recipients, consent, conversations, replies and attribution remain tenant scoped.
 """
 from __future__ import annotations
 
@@ -83,52 +83,6 @@ def _shared_campaign_whatsapp():
     if sender_company is None:
         return None, {}
     return sender_company, get_whatsapp_connection(sender_company)
-
-
-def _tenant_campaign_whatsapp(company_id: int, branch_id: int | None = None):
-    """Resolve only the merchant's own Vendedor IA WhatsApp connection.
-
-    The StockARmobile SuperAdmin/commercial sender is explicitly excluded. A
-    branch-bound campaign keeps using the exact branch number selected when the
-    draft was created; legacy drafts fall back to the merchant's default branch.
-    """
-    from app import Branch, Company
-    from services.ai_agent.config_service import get_whatsapp_connection
-    from services.saas_commercial_whatsapp import get_commercial_company
-    from stockarmobile.branch_context import get_default_branch_id
-
-    try:
-        tenant_id = int(company_id)
-    except (TypeError, ValueError):
-        return None, {}
-    company = Company.query.filter_by(id=tenant_id, active=True).first()
-    if company is None:
-        return None, {}
-
-    platform_company = get_commercial_company()
-    if platform_company is not None and int(platform_company.id) == int(company.id):
-        return None, {}
-
-    resolved_branch_id = int(branch_id) if branch_id else get_default_branch_id(company.id)
-    if resolved_branch_id:
-        branch = Branch.query.filter_by(
-            id=int(resolved_branch_id),
-            company_id=int(company.id),
-            active=True,
-        ).first()
-        if branch is None:
-            return company, {
-                "enabled": False,
-                "phone_number_id": "",
-                "business_account_id": "",
-                "display_phone_number": "",
-                "access_token": "",
-                "template_name": "",
-                "template_language": "es_AR",
-            }
-        return company, get_whatsapp_connection(company, branch_id=branch.id)
-
-    return company, get_whatsapp_connection(company)
 
 
 def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
@@ -426,7 +380,7 @@ def _fetch_campaign_template(
     selected_language: str | None = None,
     allow_single_auto_select: bool = True,
 ) -> dict:
-    """Resolve the approved campaign template from this merchant's connected WABA."""
+    """Resolve the approved campaign template from StockARmobile's shared WABA."""
     from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
 
     return get_campaign_template(
