@@ -423,8 +423,8 @@ def test_sale_lifecycle_lock_refreshes_authoritative_sale_state_and_items(app):
         assert stale_sale.status == "confirmada"
         assert stale_sale.items[0].quantity == 1
 
-        # Simulate another committed lifecycle request after this session
-        # initially loaded the row and its collection.
+        # Simulate a concurrent SQL update after this session initially
+        # loaded the row and its collection, leaving the ORM identity stale.
         db.session.execute(
             update(Sale)
             .where(Sale.id == sale.id)
@@ -479,8 +479,8 @@ def test_legacy_stock_reversal_locks_and_refreshes_product_before_increment(app)
         stale_product = Product.query.filter_by(id=product.id).first()
         assert stale_product.stock == 5
 
-        # Simulate another stock transaction committing after the ORM object
-        # was first read. The reversal must increment the persisted value (3),
+        # Simulate a SQL stock update after the ORM object was first read.
+        # The reversal must increment the persisted value (3),
         # not overwrite it with the stale value (5) plus the returned quantity.
         db.session.execute(
             update(Product)
@@ -501,6 +501,7 @@ def test_legacy_stock_reversal_locks_and_refreshes_product_before_increment(app)
         )
 
         assert stale_product.stock == 5
+
 
 def test_branch_stock_lock_refreshes_cached_row_after_another_stock_commit(app):
     from sqlalchemy import update
@@ -554,6 +555,7 @@ def test_branch_stock_lock_refreshes_cached_row_after_another_stock_commit(app):
 
         locked_stock = get_branch_stock(cached_product, branch.id, lock=True)
         assert locked_stock.stock == 2
+
 
 def test_sale_edit_product_lock_set_is_sorted_scoped_and_refreshed(app):
     from flask_login import login_user
