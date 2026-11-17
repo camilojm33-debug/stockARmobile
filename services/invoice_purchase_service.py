@@ -143,6 +143,11 @@ class InvoicePurchaseService:
             raise InvoicePurchaseError("Hay líneas sin cantidad o costo unitario.")
         currency, subtotal, tax, total = InvoicePurchaseService._prepare_invoice(invoice)
         InvoicePurchaseService._validate_line_subtotal(lines, subtotal)
+        document_hash = str(invoice.get("document_hash") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", document_hash):
+            raise InvoicePurchaseError(
+                "No se puede confirmar la factura: falta una huella SHA-256 válida del archivo. Volvé a cargarla."
+            )
 
         from app import AuditLog, Branch, Product, PurchaseItem, PurchaseOrder, Supplier, db
 
@@ -215,7 +220,7 @@ class InvoicePurchaseService:
                 subtotal=subtotal,
                 total_amount=total,
                 note=f"Carga de factura IA {invoice.get('invoice_number') or ''} · Moneda {currency}".strip(),
-                source_document_hash=invoice.get("document_hash"),
+                source_document_hash=document_hash,
             )
             db.session.add(order)
             try:
@@ -223,6 +228,25 @@ class InvoicePurchaseService:
             except IntegrityError as exc:
                 db.session.rollback()
                 raise InvoicePurchaseError("Esta factura ya fue confirmada por otra solicitud.") from exc
+
+            product_ids = sorted({int(line["product_id"]) for line in lines})
+            locked_products = {
+                int(product.id): product
+                for product in (
+                    db.session.query(Product)
+                    .filter(
+                        Product.company_id == int(company_id),
+                        Product.id.in_(product_ids),
+                        Product.active.is_(True),
+                    )
+                    .order_by(Product.id.asc())
+                    .with_for_update()
+                    .populate_existing()
+                    .all()
+                )
+            }
+            if set(locked_products) != set(product_ids):
+                raise InvoicePurchaseError("No se pudieron bloquear todos los productos de la factura.")
 
             applied = []
             result_items = []
@@ -233,12 +257,7 @@ class InvoicePurchaseService:
                     line.get("quantity"), f"La cantidad de la línea {index}", minimum=Decimal("0.000001")
                 )
                 unit_cost = InvoicePurchaseService._decimal(line.get("unit_cost"), f"El costo de la línea {index}")
-                product = (
-                    db.session.query(Product)
-                    .filter(Product.id == line.get("product_id"), Product.company_id == company_id, Product.active.is_(True))
-                    .with_for_update()
-                    .first()
-                )
+                product = locked_products.get(int(line.get("product_id") or 0))
                 if product is None:
                     raise InvoicePurchaseError("No se pudo bloquear el producto para aplicar la compra.")
 
