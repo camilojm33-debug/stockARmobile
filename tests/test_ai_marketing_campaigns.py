@@ -1154,6 +1154,83 @@ def test_tenant_campaign_sender_resolves_the_company_branch_connection(app, monk
             resolve_tenant_campaign_sender(other_merchant, other_branch.id)
 
 
+def test_prepared_tenant_campaign_sender_cannot_change_after_queue(app, monkeypatch):
+    from app import Branch, Company, User, db
+    from services.ai_agent.campaign_service import CampaignService
+    from services.ai_agent.tenant_campaign_service import prepare_recipients
+
+    with app.app_context():
+        company = Company(name="Immutable campaign sender", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch = Branch(
+            company_id=company.id,
+            name="Casa central",
+            code="CENTRAL",
+            active=True,
+            is_default=True,
+        )
+        db.session.add(branch)
+        db.session.flush()
+        user = User(
+            username="immutable-sender-admin",
+            email="immutable-sender@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña con remitente fijo",
+            objective="Probar bloqueo",
+            campaign_type="general",
+            content="Hola",
+            system_data={"channel": "whatsapp", "branch_id": branch.id},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
+
+        connection = {
+            "enabled": True,
+            "phone_number_id": "immutable-phone",
+            "business_account_id": "immutable-waba",
+            "access_token": "merchant-token",
+            "template_name": "approved_template",
+            "template_language": "es_AR",
+        }
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
+            lambda *_args, **_kwargs: (branch, connection),
+        )
+
+        prepare_recipients(campaign.id, company_id=company.id)
+        campaign.status = "EN_PREPARACION"
+        db.session.commit()
+
+        connection["phone_number_id"] = "replacement-phone"
+        connection["business_account_id"] = "replacement-waba"
+        with pytest.raises(ValueError, match="No puede cambiar de número durante el envío"):
+            prepare_recipients(campaign.id, company_id=company.id)
+
+
 def test_superadmin_commercial_company_is_rejected_by_tenant_campaign_sender(app, monkeypatch):
     from app import Branch, Company, db
     from services.ai_agent.tenant_campaign_service import resolve_tenant_campaign_sender
