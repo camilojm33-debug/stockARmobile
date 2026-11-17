@@ -15,14 +15,35 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
     assert "campaign_detail" in template
 
 
-def test_campaign_wizard_explains_merchant_whatsapp_readiness_before_showing_steps():
+def test_campaign_wizard_explains_shared_vendedor247_readiness_before_showing_steps():
     template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
 
-    assert "Canal del comercio listo" in template
-    assert "WhatsApp propio del comercio (Vendedor IA 24/7)" in template
-    assert "Nunca se utilizará el número de StockARmobile" in template
+    assert "Canal compartido listo" in template
+    assert "WhatsApp compartido · Vendedor 24/7 de StockARmobile" in template
+    assert "número compartido Vendedor 24/7 de StockARmobile" in template
     assert "Marketing IA todavía no está listo" in template
     assert "Asistente de campañas pausado" in template
-    assert "template_admin_url" in template
-    assert "Configurar mi Vendedor IA" in template
+    assert "CRM de este comercio" in template
     assert "{% if template %}" in template
+
+
+def test_tenant_campaign_wizard_discloses_shared_vendedor_sender_and_tenant_isolation():
+    template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
+    assert "Canal compartido listo" in template
+    assert "Vendedor 24/7 de StockARmobile" in template
+    assert "CRM de este comercio" in template
+    assert "número propio del comercio" not in template
+
+
+
+def test_tenant_marketing_campaigns_use_in_process_worker_not_render_cron():
+    from pathlib import Path
+
+    source = Path("render.yaml").read_text(encoding="utf-8")
+    worker = Path("services/ai_agent/tenant_campaign_service.py").read_text(encoding="utf-8")
+    gunicorn = Path("gunicorn.conf.py").read_text(encoding="utf-8")
+
+    assert "stockarmobile-ai-campaigns" not in source
+    assert "start_campaign_dispatch_worker(flask_app)" in gunicorn
+    assert "poll=%ss" in worker
+    assert "AI_MARKETING_SEND_ENABLED" in worker

@@ -9,7 +9,39 @@ from services.ai_agent.tenant_campaign_service import (
     dispatch_due_campaigns,
     prepare_recipients,
     refresh_attribution,
+    _fetch_shared_campaign_template as _REAL_FETCH_SHARED_CAMPAIGN_TEMPLATE,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mock_shared_vendedor247_campaign_readiness(monkeypatch):
+    """Keep campaign preparation tests deterministic and independent from Meta."""
+    connection = {
+        "enabled": True,
+        "phone_number_id": "stockarmobile-vendedor247-phone",
+        "business_account_id": "stockarmobile-vendedor247-waba",
+        "access_token": "test-platform-token",
+        "display_phone_number": "+54 9 362 420-2415",
+        "template_name": "stockarmobile_vendedor247_marketing_es_ar",
+        "template_language": "es_AR",
+    }
+    template = {
+        "name": "stockarmobile_vendedor247_marketing_es_ar",
+        "language": "es_AR",
+        "category": "MARKETING",
+        "status": "APPROVED",
+        "body_text": "¡Hola {{1}}! Novedades sobre {{2}}: {{3}}",
+        "campaign_compatible": True,
+        "auto_selected": False,
+    }
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+        lambda: (object(), dict(connection)),
+    )
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
+        lambda _connection: dict(template),
+    )
 
 
 def _consent_evidence():
@@ -22,14 +54,26 @@ def _consent_evidence():
 
 @pytest.fixture(autouse=True)
 def mock_approved_campaign_template(monkeypatch):
-    monkeypatch.setattr(
-        "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
-        lambda connection: {
-            "name": connection.get("template_name"),
-            "language": connection.get("template_language") or "es_AR",
+    def _approved(
+        connection,
+        *,
+        selected_name=None,
+        selected_language=None,
+        allow_single_auto_select=True,
+    ):
+        return {
+            "name": selected_name or connection.get("template_name"),
+            "language": selected_language or connection.get("template_language") or "es_AR",
+            "category": "MARKETING",
             "body_text": "Hola {{1}}, {{2}}. {{3}}",
             "status": "APPROVED",
-        },
+            "campaign_compatible": True,
+            "auto_selected": bool(not selected_name and allow_single_auto_select),
+        }
+
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+        _approved,
     )
 
 
@@ -283,7 +327,7 @@ def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monke
         assert campaign.target_count == 0
 
 
-def test_whatsapp_campaign_requires_connection_before_queue(app):
+def test_whatsapp_campaign_requires_connection_before_queue(app, monkeypatch):
     from app import Company, User, db
 
     with app.app_context():
@@ -326,7 +370,11 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
             user_id=user.id,
         )
 
-        with pytest.raises(ValueError, match="WhatsApp del Vendedor IA 24/7 de este comercio no está conectado"):
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (None, {}),
+        )
+        with pytest.raises(ValueError, match="número compartido Vendedor 24/7 de StockARmobile no está conectado"):
             prepare_recipients(campaign.id, company_id=company.id)
 
 
@@ -484,9 +532,13 @@ def test_campaign_dispatch_worker_does_not_start_during_tests(app):
 
 
 
-def test_tenant_crm_whatsapp_campaigns_use_merchant_vendedor_number(app, monkeypatch):
+def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data(app, monkeypatch):
     from app import Campaign, Client, Company, User, db
-    from services.ai_agent.tenant_campaign_service import _send_whatsapp
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        _send_whatsapp,
+        prepare_recipients,
+    )
 
     with app.app_context():
         tenant = Company(name="Comercio con CRM", active=True)
@@ -497,58 +549,125 @@ def test_tenant_crm_whatsapp_campaigns_use_merchant_vendedor_number(app, monkeyp
         )
         db.session.add_all([tenant, platform])
         db.session.flush()
-        user = User(username="merchant-sender-admin", email="merchant-sender@example.com", role="admin", active=True, company_id=tenant.id)
+        user = User(
+            username="shared-vendedor-tenant-admin",
+            email="shared-vendedor-tenant@example.com",
+            role="admin",
+            active=True,
+            company_id=tenant.id,
+        )
         user.set_password("password123")
-        client = Client(name="Cliente autorizado", phone="3624228396", whatsapp="3624228396", company_id=tenant.id, active=True, whatsapp_marketing_consent="opted_in", **_consent_evidence())
+        client = Client(
+            name="Cliente autorizado",
+            phone="3624228396",
+            whatsapp="3624228396",
+            company_id=tenant.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
         db.session.add_all([user, client])
         db.session.flush()
         campaign = CampaignService.create_draft(
-            company_id=tenant.id, user_id=user.id, title="Campaña del comercio",
-            objective="Informar una promoción", campaign_type="general",
-            content="Hola {{cliente}}",
-            system_data={"channel":"whatsapp","whatsapp_template":{"name":"merchant_campaign","language":"es_AR","category":"MARKETING","status":"APPROVED","body_text":"Hola {{1}} {{2}} {{3}}"}},
-            audience_segment="clientes activos", audience_count=1,
+            company_id=tenant.id,
+            user_id=user.id,
+            title="Campaña del comercio",
+            objective="Informar una promoción",
+            campaign_type="general",
+            content="Tenemos novedades para vos",
+            system_data={"channel": "whatsapp", "branch_id": None},
+            audience_segment="clientes activos",
+            audience_count=1,
         )
         db.session.commit()
-        CampaignService.transition(company_id=tenant.id,campaign_id=campaign.id,target_status="PENDIENTE_APROBACION",user_id=user.id)
-        CampaignService.transition(company_id=tenant.id,campaign_id=campaign.id,target_status="APROBADA",user_id=user.id)
-        requested_company_ids = []
+        CampaignService.transition(
+            company_id=tenant.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=tenant.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
 
-        def merchant_connection(company, branch_id=None):
-            requested_company_ids.append(company.id)
-            assert company.id == tenant.id
-            return {
-                "enabled": True,
-                "phone_number_id": "merchant-vendedor-phone",
-                "business_account_id": "merchant-waba",
-                "access_token": "merchant-token",
-                "display_phone_number": "+54 9 362 111 2222",
-                "template_name": "merchant_campaign",
-                "template_language": "es_AR",
-            }
+        send_connection = {
+            "enabled": True,
+            "phone_number_id": "stockarmobile-vendedor247-phone",
+            "business_account_id": "stockarmobile-vendedor247-waba",
+            "access_token": "platform-token",
+            "display_phone_number": "+54 9 362 420-2415",
+            "template_name": "superadmin_acquisition_template",
+            "template_language": "es_AR",
+        }
+        template_snapshot = {
+            "name": "stockarmobile_vendedor247_marketing_es_ar",
+            "language": "es_AR",
+            "category": "MARKETING",
+            "status": "APPROVED",
+            "body_text": "¡Hola {{1}}! Novedades de {{2}}: {{3}}",
+            "auto_selected": False,
+        }
+        monkeypatch.setenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME", "stockarmobile_vendedor247_marketing_es_ar")
+        monkeypatch.setenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_LANGUAGE", "es_AR")
+        # Use the shared platform company and connection explicitly. The
+        # template remains separate from the SuperAdmin acquisition template.
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (platform, send_connection),
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
+            lambda connection: dict(template_snapshot),
+        )
 
-        monkeypatch.setattr("services.saas_commercial_whatsapp.get_commercial_company",lambda: platform)
-        monkeypatch.setattr("services.ai_agent.config_service.get_whatsapp_connection",merchant_connection)
-        prepared=prepare_recipients(campaign.id,company_id=tenant.id)
-        recipient=TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id,channel="whatsapp").one()
+        prepared = prepare_recipients(campaign.id, company_id=tenant.id)
+        recipient = TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            channel="whatsapp",
+        ).one()
         assert prepared["added"] == 1
         assert recipient.company_id == tenant.id
         assert recipient.destination == "5493624228396"
-        sent={}
-        def fake_send_template(company,**kwargs):
-            sent["company_id"]=company.id
+        assert campaign.company_id == tenant.id
+        assert _json_campaign_template(campaign)["name"] == "stockarmobile_vendedor247_marketing_es_ar"
+
+        sent = {}
+
+        def fake_send_template(company, **kwargs):
+            sent["company"] = company
             sent.update(kwargs)
-            return {"messages":[{"id":"wamid.merchant-sender-test"}]}
-        monkeypatch.setattr("services.ai_agent.whatsapp_service.WhatsAppService.send_template",fake_send_template)
-        ok,detail,provider_id=_send_whatsapp(recipient,campaign)
-        assert ok is True and detail == "sent"
-        assert provider_id == "wamid.merchant-sender-test"
-        assert sent["company_id"] == tenant.id
-        assert sent["company_id"] != platform.id
-        assert sent["template_name"] == "merchant_campaign"
-        assert requested_company_ids == [tenant.id,tenant.id]
-        assert Campaign.query.filter_by(id=campaign.id,company_id=tenant.id).count() == 1
+            return {"messages": [{"id": "wamid.shared-vendedor247-test"}]}
+
+        monkeypatch.setattr(
+            "services.ai_agent.whatsapp_service.WhatsAppService.send_template",
+            staticmethod(fake_send_template),
+        )
+        ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+
+        assert ok, detail
+        assert detail == "sent"
+        assert provider_id == "wamid.shared-vendedor247-test"
+        assert sent["company"] is platform
+        assert sent["company"].id == platform.id
+        assert sent["template_name"] == "stockarmobile_vendedor247_marketing_es_ar"
+        assert sent["body_parameters"] == [
+            "Cliente autorizado",
+            "Comercio con CRM",
+            "Tenemos novedades para vos\n\nPara dejar de recibir mensajes, respondé BAJA.",
+        ]
+        assert sent["template_name"] != "superadmin_acquisition_template"
+        assert sent["branch_id"] is None
+        # Only the sender is shared. Campaign/recipient ownership remains tenant-scoped.
+        assert Campaign.query.filter_by(id=campaign.id, company_id=tenant.id).count() == 1
         assert TenantCampaignRecipient.query.filter_by(company_id=tenant.id).count() == 1
+
+
+def _json_campaign_template(campaign):
+    import json
+    return json.loads(campaign.system_data_json or "{}").get("whatsapp_template") or {}
 
 def test_shared_campaign_reply_resolution_fails_closed_when_contact_has_multiple_tenants(app, monkeypatch):
     from datetime import datetime, timedelta
@@ -856,13 +975,18 @@ def test_legacy_queued_tenant_email_recipient_is_skipped_never_sent(app, monkeyp
         assert campaign.status == "SIN_ENVIO"
 
 
-def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatch):
+def test_preparation_revalidates_the_dedicated_shared_template_saved_in_the_draft(app, monkeypatch):
     import json
     from app import Client, Company, User, db
 
     with app.app_context():
         company = Company(name="Template continuity", active=True)
-        db.session.add(company)
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        db.session.add_all([company, platform])
         db.session.flush()
         user = User(
             username="template-continuity-admin",
@@ -884,12 +1008,13 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
         db.session.flush()
 
         selected_template = {
-            "name": "the_template_seen_in_the_draft",
+            "name": "stockarmobile_vendedor247_marketing_es_ar",
             "language": "es_AR",
             "category": "MARKETING",
             "status": "APPROVED",
-            "body_text": "Hola {{1}}: {{3}}",
+            "body_text": "¡Hola {{1}}! Novedades sobre {{2}}: {{3}}",
             "campaign_compatible": True,
+            "auto_selected": False,
         }
         campaign = CampaignService.create_draft(
             company_id=company.id,
@@ -916,29 +1041,36 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
             user_id=user.id,
         )
 
+        connection = {
+            "enabled": True,
+            "phone_number_id": "stockarmobile-vendedor247-phone",
+            "business_account_id": "stockarmobile-vendedor247-waba",
+            "access_token": "platform-token",
+            "template_name": "stockarmobile_vendedor247_marketing_es_ar",
+            "template_language": "es_AR",
+        }
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
-            lambda *_args, **_kwargs: (
-                object(),
-                {
-                    "enabled": True,
-                    "phone_number_id": "merchant-phone",
-                    "access_token": "merchant-token",
-                    "template_name": "",
-                    "template_language": "es_AR",
-                },
-            ),
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
         )
-        calls = {}
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: connection,
+        )
+        from services.ai_agent.tenant_campaign_service import _shared_campaign_whatsapp
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            _shared_campaign_whatsapp,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
+            _REAL_FETCH_SHARED_CAMPAIGN_TEMPLATE,
+        )
+        calls = []
 
-        def revalidate(connection, *, selected_name=None, selected_language=None, allow_single_auto_select=True):
-            calls["name"] = selected_name
-            calls["language"] = selected_language
-            calls["allow_single_auto_select"] = allow_single_auto_select
-            return {
-                **selected_template,
-                "auto_selected": True,
-            }
+        def revalidate(current_connection, *, selected_name=None, selected_language=None, allow_single_auto_select=True):
+            calls.append((selected_name, selected_language, allow_single_auto_select))
+            return dict(selected_template)
 
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
@@ -950,17 +1082,17 @@ def test_preparation_revalidates_the_template_saved_in_the_draft(app, monkeypatc
         saved = json.loads(campaign.system_data_json)["whatsapp_template"]
 
         assert prepared["added"] == 1
-        assert calls == {
-            "name": "the_template_seen_in_the_draft",
-            "language": "es_AR",
-            "allow_single_auto_select": False,
-        }
-        assert saved["name"] == "the_template_seen_in_the_draft"
-        assert saved["auto_selected"] is True
+        assert calls == [(
+            "stockarmobile_vendedor247_marketing_es_ar",
+            "es_AR",
+            False,
+        )]
+        assert saved["name"] == "stockarmobile_vendedor247_marketing_es_ar"
+        assert saved["auto_selected"] is False
 
 
 
-def test_tenant_campaign_sender_uses_merchant_vendedor_connection_not_platform(app, monkeypatch):
+def test_legacy_merchant_sender_resolver_is_retained_for_inflight_replies(app, monkeypatch):
     from app import Company, db
     from services.ai_agent.tenant_campaign_service import _tenant_campaign_whatsapp
 
@@ -970,7 +1102,7 @@ def test_tenant_campaign_sender_uses_merchant_vendedor_connection_not_platform(a
             active=True,
             preferences_json='{"internal_channel":"whatsapp_commercial"}',
         )
-        merchant = Company(name="Merchant-owned WhatsApp", active=True)
+        merchant = Company(name="Merchant legacy WhatsApp", active=True)
         db.session.add_all([platform, merchant])
         db.session.commit()
 
@@ -1004,7 +1136,7 @@ def test_tenant_campaign_sender_uses_merchant_vendedor_connection_not_platform(a
         assert connection["phone_number_id"] == "merchant-phone-id"
         assert connection["access_token"] == "merchant-token"
 
-        # The platform/commercial company is explicitly refused as a tenant sender.
+        # This resolver stays available for legacy merchant-number replies only.
         sender_company, connection = _tenant_campaign_whatsapp(platform.id)
         assert sender_company is None
         assert connection == {}
@@ -1102,72 +1234,526 @@ def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app
         ) is None
 
 
-def test_tenant_campaign_send_uses_merchant_company_in_meta_request(app, monkeypatch):
-    from app import Client, Company, User, db
-    from services.ai_agent.campaign_service import CampaignService
-    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient, _send_whatsapp
+
+
+def test_campaign_dispatch_cutoff_leaves_preexisting_approved_queue_untouched(app, monkeypatch):
+    from datetime import datetime
+    from app import Campaign, Company, User, db
+    from services.ai_agent.tenant_campaign_service import dispatch_due_campaigns
 
     with app.app_context():
-        merchant = Company(name="Send from merchant", active=True)
-        db.session.add(merchant)
+        app.config["AI_MARKETING_SEND_ENABLED"] = True
+        company = Company(name="Dispatch cutoff tenant", active=True)
+        db.session.add(company)
         db.session.flush()
-        user = User(username="merchant-sender", email="merchant-sender@example.com", role="admin", active=True, company_id=merchant.id)
+        user = User(
+            username="dispatch-cutoff-admin",
+            email="dispatch-cutoff-admin@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
         user.set_password("password123")
-        client = Client(name="Cliente", whatsapp="5493624000000", company_id=merchant.id, active=True)
+        db.session.add(user)
+        db.session.flush()
+
+        old_campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Existing approved queue",
+            objective="Old queue",
+            campaign_type="general",
+            content="Old campaign",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        new_campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="New approved queue",
+            objective="New queue",
+            campaign_type="general",
+            content="New campaign",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        cutoff = datetime(2026, 11, 16, 23, 0, 0)
+        old_campaign.status = "EN_PREPARACION"
+        old_campaign.approved_at = datetime(2026, 11, 16, 22, 59, 59)
+        new_campaign.status = "EN_PREPARACION"
+        new_campaign.approved_at = datetime(2026, 11, 16, 23, 0, 1)
+        db.session.commit()
+        monkeypatch.setenv("AI_MARKETING_DISPATCH_NOT_BEFORE", "2026-11-16T23:00:00Z")
+
+        result = dispatch_due_campaigns(db.session, company_id=company.id)
+
+        db.session.refresh(old_campaign)
+        db.session.refresh(new_campaign)
+        assert result["campaigns"] == 1
+        assert old_campaign.status == "EN_PREPARACION"
+        # The new campaign had no recipients; being selected demonstrates the cutoff.
+        assert new_campaign.status == "SIN_ENVIO"
+
+
+def test_campaign_dispatch_blocks_when_cutoff_is_malformed(app, monkeypatch):
+    from app import Company, db
+    from services.ai_agent.tenant_campaign_service import dispatch_due_campaigns
+
+    with app.app_context():
+        app.config["AI_MARKETING_SEND_ENABLED"] = True
+        monkeypatch.setenv("AI_MARKETING_DISPATCH_NOT_BEFORE", "not-a-timestamp")
+        result = dispatch_due_campaigns(db.session, company_id=1)
+        assert result["disabled"] is True
+        assert result["invalid_dispatch_cutoff"] is True
+
+
+def test_shared_campaign_reply_without_context_fails_closed_across_tenant_branches(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Branch, Campaign, Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        resolve_shared_campaign_reply,
+    )
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        tenant = Company(name="Tenant with two branches", active=True)
+        db.session.add_all([platform, tenant])
+        db.session.flush()
+        branch_main = Branch(
+            company_id=tenant.id, name="Casa central", code="MAIN",
+            active=True, is_default=True,
+        )
+        branch_second = Branch(
+            company_id=tenant.id, name="Sucursal", code="BR2",
+            active=True, is_default=False,
+        )
+        db.session.add_all([branch_main, branch_second])
+        db.session.flush()
+        user = User(
+            username="shared-branch-reply",
+            email="shared-branch-reply@example.com",
+            role="admin",
+            active=True,
+            company_id=tenant.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente en dos sucursales",
+            whatsapp="5493624000000",
+            company_id=tenant.id,
+            active=True,
+        )
         db.session.add_all([user, client])
         db.session.flush()
-        campaign = CampaignService.create_draft(
-            company_id=merchant.id, user_id=user.id, title="Promo propia", objective="Venta",
-            campaign_type="general", content="Oferta exclusiva", system_data={
-                "channel": "whatsapp",
-                "whatsapp_template": {
-                    "name": "merchant_marketing",
-                    "language": "es_AR",
-                    "category": "MARKETING",
-                    "status": "APPROVED",
-                    "body_text": "Hola {{1}}: {{3}}",
-                    "auto_selected": False,
-                },
-            },
-            audience_segment="clientes activos", audience_count=1,
+        campaigns = []
+        for branch in (branch_main, branch_second):
+            campaign = CampaignService.create_draft(
+                company_id=tenant.id,
+                user_id=user.id,
+                title=f"Campaña {branch.code}",
+                objective="Novedades",
+                campaign_type="general",
+                content="Hola",
+                system_data={"branch_id": branch.id, "channel": "whatsapp"},
+                audience_segment="clientes activos",
+                audience_count=1,
+            )
+            campaigns.append(campaign)
+        now = datetime.utcnow()
+        recipient_main = TenantCampaignRecipient(
+            campaign_id=campaigns[0].id,
+            company_id=tenant.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="branch-main-reply",
+            status="sent",
+            provider_message_id="wamid.branch-main",
+            sent_at=now - timedelta(minutes=3),
         )
-        recipient = TenantCampaignRecipient(
-            campaign_id=campaign.id, company_id=merchant.id, client_id=client.id,
-            channel="whatsapp", destination="5493624000000", unsubscribe_token="send-merchant",
-            status="pending",
+        recipient_second = TenantCampaignRecipient(
+            campaign_id=campaigns[1].id,
+            company_id=tenant.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="branch-second-reply",
+            status="sent",
+            provider_message_id="wamid.branch-second",
+            sent_at=now - timedelta(minutes=1),
         )
-        db.session.add(recipient)
+        db.session.add_all([recipient_main, recipient_second])
         db.session.commit()
 
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
-            lambda company_id, branch_id=None: (
-                merchant,
-                {
-                    "enabled": True,
-                    "phone_number_id": "merchant-phone-id",
-                    "business_account_id": "merchant-waba",
-                    "access_token": "merchant-token",
-                    "template_name": "merchant_marketing",
-                    "template_language": "es_AR",
-                },
-            ),
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
         )
-        sent = {}
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {"phone_number_id": "shared-vendedor-phone"},
+        )
 
-        def fake_send_template(company, **kwargs):
-            sent["company_id"] = company.id
-            sent["kwargs"] = kwargs
-            return {"messages": [{"id": "wamid.sent-from-merchant"}]}
+        # Same tenant and phone, but two branches: never guess without quoted context.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+        ) is None
+        # Quoted provider message identifies the exact original campaign and branch.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+            context_message_id="wamid.branch-second",
+        ).id == recipient_second.id
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624999999",
+            context_message_id="wamid.branch-second",
+        ) is None
+
+
+
+def test_shared_vendedor247_baja_suppresses_matching_contacts_in_each_tenant(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        resolve_shared_campaign_opt_out_clients,
+    )
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        merchant_a = Company(name="Tenant A", active=True)
+        merchant_b = Company(name="Tenant B", active=True)
+        db.session.add_all([platform, merchant_a, merchant_b])
+        db.session.flush()
+        client_a = Client(
+            name="Cliente A",
+            whatsapp="5493624000000",
+            company_id=merchant_a.id,
+            active=False,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        client_b = Client(
+            name="Cliente B",
+            whatsapp="5493624000000",
+            company_id=merchant_b.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        db.session.add_all([client_a, client_b])
+        db.session.flush()
+        user_a = User(username="baja-a", email="baja-a@example.com", role="admin", active=True, company_id=merchant_a.id)
+        user_b = User(username="baja-b", email="baja-b@example.com", role="admin", active=True, company_id=merchant_b.id)
+        user_a.set_password("password123")
+        user_b.set_password("password123")
+        db.session.add_all([user_a, user_b])
+        db.session.flush()
+        campaign_a = CampaignService.create_draft(
+            company_id=merchant_a.id, user_id=user_a.id, title="A", objective="A",
+            campaign_type="general", content="Hola", system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos", audience_count=1,
+        )
+        campaign_b = CampaignService.create_draft(
+            company_id=merchant_b.id, user_id=user_b.id, title="B", objective="B",
+            campaign_type="general", content="Hola", system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos", audience_count=1,
+        )
+        db.session.flush()
+        sent_at = datetime.utcnow() - timedelta(days=120)
+        db.session.add_all([
+            TenantCampaignRecipient(
+                campaign_id=campaign_a.id,
+                company_id=merchant_a.id,
+                client_id=client_a.id,
+                channel="whatsapp",
+                destination="5493624000000",
+                unsubscribe_token="baja-a",
+                status="sent",
+                provider_message_id="wamid.baja-a",
+                sent_at=sent_at,
+            ),
+            TenantCampaignRecipient(
+                campaign_id=campaign_b.id,
+                company_id=merchant_b.id,
+                client_id=client_b.id,
+                channel="whatsapp",
+                destination="5493624000000",
+                unsubscribe_token="baja-b",
+                status="sent",
+                provider_message_id="wamid.baja-b",
+                sent_at=sent_at,
+            ),
+        ])
+        db.session.commit()
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {"phone_number_id": "shared-vendedor-phone"},
+        )
+
+        opted_out = resolve_shared_campaign_opt_out_clients(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+        )
+        assert {client.id for client in opted_out} == {client_a.id, client_b.id}
+        assert resolve_shared_campaign_opt_out_clients(
+            phone_number_id="wrong-phone",
+            sender="5493624000000",
+        ) == []
+
+
+
+def test_campaign_attribution_respects_the_originating_tenant_branch(app):
+    from datetime import datetime, timedelta
+    from app import Branch, Client, Company, Sale, User, db
+    from stockarmobile.models.conversations import Conversation
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignAttribution,
+        TenantCampaignRecipient,
+        refresh_attribution,
+    )
+
+    with app.app_context():
+        company = Company(name="Branch attribution tenant", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch_main = Branch(
+            company_id=company.id, name="Casa central", code="MAIN",
+            active=True, is_default=True,
+        )
+        branch_second = Branch(
+            company_id=company.id, name="Sucursal", code="BR2",
+            active=True, is_default=False,
+        )
+        db.session.add_all([branch_main, branch_second])
+        db.session.flush()
+        user = User(
+            username="branch-attribution-admin",
+            email="branch-attribution@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente compartido",
+            whatsapp="5493624000000",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña sucursal principal",
+            objective="Novedades",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={"channel": "whatsapp", "branch_id": branch_main.id},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        sent_at = datetime.utcnow() - timedelta(hours=2)
+        recipient = TenantCampaignRecipient(
+            campaign_id=campaign.id,
+            company_id=company.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="branch-attribution-token",
+            status="sent",
+            provider_message_id="wamid.branch-attribution",
+            sent_at=sent_at,
+        )
+        conversation_main = Conversation(
+            company_id=company.id,
+            branch_id=branch_main.id,
+            channel="whatsapp",
+            external_conversation_id="5493624000000",
+            status="open",
+            created_at=sent_at + timedelta(minutes=10),
+        )
+        conversation_second = Conversation(
+            company_id=company.id,
+            branch_id=branch_second.id,
+            channel="whatsapp",
+            external_conversation_id="5493624000000",
+            status="open",
+            created_at=sent_at + timedelta(minutes=15),
+        )
+        sale_main = Sale(
+            company_id=company.id,
+            branch_id=branch_main.id,
+            client_id=client.id,
+            total_amount=1000,
+            status="confirmada",
+            date=sent_at + timedelta(minutes=30),
+        )
+        sale_second = Sale(
+            company_id=company.id,
+            branch_id=branch_second.id,
+            client_id=client.id,
+            total_amount=2500,
+            status="confirmada",
+            date=sent_at + timedelta(minutes=45),
+        )
+        db.session.add_all([
+            recipient,
+            conversation_main,
+            conversation_second,
+            sale_main,
+            sale_second,
+        ])
+        db.session.commit()
+
+        refresh_attribution(company_id=company.id)
+        db.session.flush()
+
+        conversation_attribution = TenantCampaignAttribution.query.filter_by(
+            campaign_id=campaign.id,
+            attribution_type="conversation",
+        ).all()
+        sale_attribution = TenantCampaignAttribution.query.filter_by(
+            campaign_id=campaign.id,
+            attribution_type="sale_window",
+        ).all()
+        assert [row.conversation_id for row in conversation_attribution] == [conversation_main.id]
+        assert [row.sale_id for row in sale_attribution] == [sale_main.id]
+
+
+
+def test_unquoted_shared_sender_reply_is_not_misattributed_when_superadmin_campaign_was_sent(app, monkeypatch):
+    from datetime import datetime, timedelta
+    from app import Client, Company, SaaSCampaign, SaaSCampaignRecipient, SaaSLead, User, db
+    from services.ai_agent.tenant_campaign_service import (
+        TenantCampaignRecipient,
+        resolve_shared_campaign_reply,
+    )
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        merchant = Company(name="Tenant recipient owner", active=True)
+        db.session.add_all([platform, merchant])
+        db.session.flush()
+        tenant_user = User(
+            username="ambiguous-tenant-admin",
+            email="ambiguous-tenant@example.com",
+            role="admin",
+            active=True,
+            company_id=merchant.id,
+        )
+        tenant_user.set_password("password123")
+        superadmin = User(
+            username="ambiguous-superadmin",
+            email="ambiguous-superadmin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        superadmin.set_password("password123")
+        db.session.add_all([tenant_user, superadmin])
+        db.session.flush()
+        client = Client(
+            name="Tenant contact",
+            whatsapp="5493624000000",
+            company_id=merchant.id,
+            active=True,
+        )
+        lead = SaaSLead(
+            company_name="SuperAdmin lead",
+            contact_name="Tenant contact",
+            phone="5493624000000",
+            whatsapp="5493624000000",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=superadmin.id,
+        )
+        db.session.add_all([client, lead])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=merchant.id,
+            user_id=tenant_user.id,
+            title="Tenant campaign",
+            objective="Novedades",
+            campaign_type="general",
+            content="Hola",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        saas_campaign = SaaSCampaign(
+            name="SuperAdmin campaign",
+            subject="StockARmobile",
+            channel="whatsapp",
+            status="ENVIADA",
+            body_html="<p>Promo</p>",
+            body_text="Promo",
+            whatsapp_template_name="superadmin_template",
+            created_by_user_id=superadmin.id,
+        )
+        db.session.add_all([campaign, saas_campaign])
+        db.session.flush()
+        sent_at = datetime.utcnow() - timedelta(minutes=2)
+        tenant_recipient = TenantCampaignRecipient(
+            campaign_id=campaign.id,
+            company_id=merchant.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            unsubscribe_token="tenant-ambiguous",
+            status="sent",
+            provider_message_id="wamid.tenant-context",
+            sent_at=sent_at,
+        )
+        superadmin_recipient = SaaSCampaignRecipient(
+            campaign_id=saas_campaign.id,
+            lead_id=lead.id,
+            channel="whatsapp",
+            destination="5493624000000",
+            status="sent",
+            provider_message_id="wamid.superadmin-context",
+            sent_at=sent_at,
+        )
+        db.session.add_all([tenant_recipient, superadmin_recipient])
+        db.session.commit()
 
         monkeypatch.setattr(
-            "services.ai_agent.whatsapp_service.WhatsAppService.send_template",
-            staticmethod(fake_send_template),
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: platform,
         )
-
-        ok, detail, provider_id = _send_whatsapp(recipient, campaign)
-        assert ok is True
-        assert detail == "sent"
-        assert provider_id == "wamid.sent-from-merchant"
-        assert sent["company_id"] == merchant.id
-        assert sent["kwargs"]["template_name"] == "merchant_marketing"
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {"phone_number_id": "shared-vendedor-phone"},
+        )
+        # Free-form reply is ambiguous across the two CRMs and must not enter the tenant CRM.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+        ) is None
+        # Provider context is an exact, unique campaign recipient and remains routable.
+        assert resolve_shared_campaign_reply(
+            phone_number_id="shared-vendedor-phone",
+            sender="5493624000000",
+            context_message_id="wamid.tenant-context",
+        ).id == tenant_recipient.id

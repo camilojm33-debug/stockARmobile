@@ -691,11 +691,13 @@ def _process_shared_tenant_campaign_reply(
     *, phone_number_id: str, sender: str, external_id: str, text: str,
     context_message_id: str = "", message_type: str = "text",
 ) -> bool:
-    """Route campaign replies to the correct tenant CRM, using that tenant's own sender."""
+    """Route shared Vendedor 24/7 campaign replies into the correct tenant CRM without mixing data."""
     from app import Branch, Company
     from stockarmobile.branch_context import get_default_branch_id
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignAttribution,
+        _campaign_branch_id,
+        resolve_shared_campaign_opt_out_clients,
         resolve_shared_campaign_reply,
         resolve_tenant_campaign_reply,
     )
@@ -716,7 +718,8 @@ def _process_shared_tenant_campaign_reply(
         if str(sender_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
             return False
         company = Company.query.filter_by(id=int(recipient.company_id), active=True).first() if recipient else None
-        branch_id = get_default_branch_id(company.id) if company is not None else None
+        saved_branch_id = _campaign_branch_id(recipient.campaign) if recipient and recipient.campaign else None
+        branch_id = saved_branch_id or (get_default_branch_id(company.id) if company is not None else None)
         branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id and company else None
     else:
         recipient = resolve_tenant_campaign_reply(
@@ -733,8 +736,32 @@ def _process_shared_tenant_campaign_reply(
         branch_id = branch.id if branch is not None else None
 
     if recipient is None:
+        if is_platform_sender and _is_whatsapp_opt_out(text):
+            # BAJA without quoted-message context can be ambiguous across
+            # tenants/branches because the sender number is shared. Suppress
+            # this sender number in every tenant CRM that has sent to it.
+            opted_out_clients = resolve_shared_campaign_opt_out_clients(
+                phone_number_id=phone_number_id,
+                sender=sender,
+            )
+            if opted_out_clients:
+                from services.whatsapp_consent_service import record_whatsapp_consent
+                for opted_out_client in opted_out_clients:
+                    record_whatsapp_consent(
+                        opted_out_client,
+                        "opted_out",
+                        source="whatsapp_reply",
+                        evidence=(
+                            "El cliente respondió BAJA al número compartido Vendedor 24/7; "
+                            f"mensaje entrante ID {str(external_id or '')[:255]}."
+                        ),
+                    )
+                db.session.commit()
+                return True
         return False
     if _is_whatsapp_opt_out(text):
+        # Record BAJA immediately once a campaign recipient is identified.
+        # It must work even if the originating branch was deactivated later.
         from services.whatsapp_consent_service import record_whatsapp_consent
         record_whatsapp_consent(
             recipient.client,

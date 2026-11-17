@@ -7202,6 +7202,58 @@ def whatsapp_commercial_template_save():
     return jsonify({"success": True, "selected": {"name": match["name"], "language": match["language"]}})
 
 
+@bp.post("/whatsapp-comercial/plantillas-crm-comercios/provision")
+@superadmin_required
+def whatsapp_tenant_crm_shared_template_provision():
+    """Provision the dedicated Vendedor 24/7 template for tenant CRM campaigns."""
+    from app import db, record_audit
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.ai_agent.whatsapp_master_template_service import (
+        provision_shared_tenant_campaign_template,
+        record_shared_tenant_campaign_template,
+    )
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    if company is None:
+        flash("No está inicializada la empresa interna del número compartido Vendedor 24/7.", "danger")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+    try:
+        connection = get_whatsapp_connection(company)
+        result = provision_shared_tenant_campaign_template(connection)
+        safe_result = record_shared_tenant_campaign_template(company, result)
+        record_audit(
+            action="superadmin_tenant_crm_shared_whatsapp_template_checked",
+            entity="whatsapp_commercial",
+            entity_id=company.id,
+            company_id=company.id,
+            detail=(
+                f"Plantilla compartida para CRM de comercios verificada: "
+                f"{safe_result['name']} ({safe_result['language']}) status={safe_result['status']}."
+            ),
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        if safe_result["status"] == "APPROVED":
+            flash("La plantilla compartida del Vendedor 24/7 está aprobada y lista para los CRM de los comercios.", "success")
+        elif safe_result["status"] in {"PENDING", "IN_APPEAL"}:
+            flash("Meta recibió la plantilla exclusiva del Vendedor 24/7. Esperamos su aprobación antes de habilitar campañas.", "info")
+        elif safe_result["status"] == "CONFLICT":
+            flash("Hay una plantilla con ese nombre pero su contenido no coincide. No se modificó; revisá Meta antes de continuar.", "danger")
+        else:
+            flash(safe_result.get("message") or "Meta todavía no confirmó la plantilla compartida.", "warning")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Tenant CRM shared WhatsApp template provisioning failed.")
+        flash("No se pudo instalar o sincronizar la plantilla del Vendedor 24/7.", "danger")
+    return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+
 @bp.route("/whatsapp-comercial", methods=["GET", "POST"])
 @superadmin_required
 def whatsapp_commercial_settings():
@@ -7292,6 +7344,11 @@ def whatsapp_commercial_settings():
         commercial_templates_url=url_for("saas.whatsapp_commercial_templates"),
         commercial_template_save_url=url_for("saas.whatsapp_commercial_template_save"),
         commercial_template_env_locked=bool(str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip()),
+        tenant_campaign_template_state=(stored.get("tenant_campaign_template") if isinstance(stored.get("tenant_campaign_template"), dict) else {}),
+        tenant_campaign_template_name=(
+            str(os.getenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME") or "").strip()
+            or "stockarmobile_vendedor247_marketing_es_ar"
+        ),
     )
 
 

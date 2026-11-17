@@ -154,16 +154,33 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
             target_status="APROBADA",
             user_id=user.id,
         )
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        db.session.add(platform)
+        db.session.flush()
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._tenant_campaign_whatsapp",
-            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (platform, {
+                "enabled": True,
+                "phone_number_id": "stockarmobile-vendedor247-phone",
+                "business_account_id": "stockarmobile-vendedor247-waba",
+                "access_token": "platform-token",
+                "template_name": "stockarmobile_vendedor247_marketing_es_ar",
+                "template_language": "es_AR",
+            }),
         )
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+            "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
             lambda _connection: {
-                "name": "approved_template",
+                "name": "stockarmobile_vendedor247_marketing_es_ar",
                 "language": "es_AR",
-                "body_text": "Hola {{1}}: {{3}}",
+                "category": "MARKETING",
+                "status": "APPROVED",
+                "body_text": "Hola {{1}}: {{2}}. {{3}}",
+                "campaign_compatible": True,
             },
         )
         prepare_recipients(campaign.id, company_id=company.id)
