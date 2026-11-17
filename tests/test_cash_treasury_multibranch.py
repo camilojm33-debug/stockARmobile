@@ -199,9 +199,15 @@ def test_cash_transfer_lifecycle_deducts_and_adds_cash_exactly_once(app):
                 "description": "Reposición de efectivo",
                 "idempotency_key": "cash-transfer-qa-001",
             },
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        assert b"ya estaba registrada" in replay.data.lower()
+        assert replay.status_code == 302
+        with test_client.session_transaction() as browser_session:
+            replay_flashes = [
+                message for _category, message in browser_session.get("_flashes", [])
+            ]
+            browser_session.pop("_flashes", None)
+        assert any("ya estaba registrada" in message.lower() for message in replay_flashes)
         assert CashTransfer.query.filter_by(company_id=company.id).count() == 1
 
         # Reusing the same key for a different payload must be rejected rather
@@ -216,9 +222,18 @@ def test_cash_transfer_lifecycle_deducts_and_adds_cash_exactly_once(app):
                 "description": "Reposición de efectivo",
                 "idempotency_key": "cash-transfer-qa-001",
             },
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        assert b"clave de idempotencia ya fue utilizada" in conflict.data.lower()
+        assert conflict.status_code == 302
+        with test_client.session_transaction() as browser_session:
+            conflict_flashes = [
+                message for _category, message in browser_session.get("_flashes", [])
+            ]
+            browser_session.pop("_flashes", None)
+        assert any(
+            "clave de idempotencia ya fue utilizada" in message.lower()
+            for message in conflict_flashes
+        )
         db.session.expire_all()
         stored_transfer = CashTransfer.query.filter_by(
             company_id=company.id, idempotency_key="cash-transfer-qa-001"
@@ -240,9 +255,18 @@ def test_cash_transfer_lifecycle_deducts_and_adds_cash_exactly_once(app):
                 "description": "Reposición de efectivo",
                 "idempotency_key": "cash-transfer-qa-001",
             },
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        assert b"ya estaba registrada" in closed_session_replay.data.lower()
+        assert closed_session_replay.status_code == 302
+        with test_client.session_transaction() as browser_session:
+            closed_replay_flashes = [
+                message for _category, message in browser_session.get("_flashes", [])
+            ]
+            browser_session.pop("_flashes", None)
+        assert any(
+            "ya estaba registrada" in message.lower()
+            for message in closed_replay_flashes
+        )
         db.session.refresh(source_session)
         source_session.status = "abierta"
         db.session.commit()
