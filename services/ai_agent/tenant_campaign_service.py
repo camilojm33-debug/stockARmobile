@@ -85,6 +85,11 @@ def resolve_tenant_campaign_sender(company, branch_id=None, *, require_ready=Tru
 
     if company is None or not getattr(company, "id", None):
         raise ValueError("No se pudo identificar el comercio propietario de la campaña.")
+    from services.ai_agent.config_service import is_commercial_company
+    if is_commercial_company(company):
+        raise ValueError(
+            "El CRM comercial de SuperAdmin utiliza su propio motor de campañas y no puede enviar desde el CRM de un comercio."
+        )
 
     try:
         selected_branch_id = int(branch_id) if branch_id is not None else None
