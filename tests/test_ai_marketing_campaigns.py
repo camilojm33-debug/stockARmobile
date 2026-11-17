@@ -653,6 +653,23 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         assert campaign.company_id == tenant.id
         assert _json_campaign_template(campaign)["name"] == "stockarmobile_vendedor247_marketing_es_ar"
 
+        # The preparation step above exercised the real platform-company resolver.
+        # Pin the same trusted platform connection for the delivery assertion so
+        # this test isolates the WhatsAppService send call from Meta/config lookup.
+        send_connection = {
+            "enabled": True,
+            "phone_number_id": "stockarmobile-vendedor247-phone",
+            "business_account_id": "stockarmobile-vendedor247-waba",
+            "access_token": "platform-token",
+            "display_phone_number": "+54 9 362 420-2415",
+            "template_name": "stockarmobile_vendedor247_marketing_es_ar",
+            "template_language": "es_AR",
+        }
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
+            lambda: (platform, send_connection),
+        )
+
         sent = {}
 
         def fake_send_template(company, **kwargs):
@@ -679,8 +696,8 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         ]
         assert sent["template_name"] != "superadmin_acquisition_template"
         assert sent["branch_id"] is None
-        assert resolved_sender_ids == [platform.id, platform.id]
-        assert resolved_sender_phone_ids == ["stockarmobile-vendedor247-phone", "stockarmobile-vendedor247-phone"]
+        assert resolved_sender_ids == [platform.id]
+        assert resolved_sender_phone_ids == ["stockarmobile-vendedor247-phone"]
         # Only the sender is shared. Campaign/recipient ownership remains tenant-scoped.
         assert Campaign.query.filter_by(id=campaign.id, company_id=tenant.id).count() == 1
         assert TenantCampaignRecipient.query.filter_by(company_id=tenant.id).count() == 1
