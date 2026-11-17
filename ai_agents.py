@@ -1436,7 +1436,7 @@ def campaign_detail(campaign_id):
         _sender_branch, sender_connection = resolve_tenant_campaign_sender(
             _current_active_company(),
             _campaign_branch_id(campaign),
-            require_ready=False,
+            require_ready=True,
         )
     except ValueError:
         sender_connection = {}
