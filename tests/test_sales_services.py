@@ -678,3 +678,77 @@ def test_stock_reversal_fails_closed_when_product_cannot_be_resolved():
             resolve_product_func=lambda _item: None,
         )
 
+
+def test_converted_quote_retry_does_not_bypass_seller_authorization(app):
+    from flask_login import login_user
+    from app import Company, Quote, Sale, User, db
+
+    with app.app_context():
+        company = Company(name="Quote retry authorization", active=True)
+        db.session.add(company)
+        db.session.flush()
+        owner = User(
+            username="quote-owner",
+            email="quote-owner@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        other_seller = User(
+            username="quote-other-seller",
+            email="quote-other-seller@example.test",
+            password_hash="test-hash",
+            role="user",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([owner, other_seller])
+        db.session.flush()
+        sale = Sale(
+            customer="Cliente del propietario",
+            company_id=company.id,
+            seller_id=owner.id,
+            client_txn_id="quote-cart-placeholder",
+            status="confirmada",
+            total_amount=100,
+        )
+        db.session.add(sale)
+        db.session.flush()
+        quote = Quote(
+            company_id=company.id,
+            created_by_user_id=owner.id,
+            seller_id=owner.id,
+            number="Q-RETRY-AUTH-001",
+            status="CONVERTIDO",
+            converted_sale_id=sale.id,
+            total_amount=100,
+        )
+        db.session.add(quote)
+        db.session.commit()
+
+        cash_lookups = []
+        def unexpected_cash_lookup(*, json_response=False):
+            cash_lookups.append(True)
+            raise AssertionError("Unauthorized quote retries must be rejected before cash validation.")
+
+        service = SaleService(
+            require_open_cash_session=unexpected_cash_lookup,
+            calculate_lines=lambda items, lock_for_update=False, discount_overrides=None, branch_id=None: [],
+            mark_quote_as_converted=lambda checkout_token, sale_id: None,
+            cart_key=lambda: "cart_test",
+            to_decimal=lambda value: Decimal("0.00"),
+        )
+        with app.test_request_context("/"):
+            login_user(other_seller)
+            response, status = service.create_sale_from_items(
+                items={},
+                data={"quote_id": quote.id, "checkout_token": f"quote-cart-{quote.id}"},
+                json_response=True,
+            )
+
+        assert status == 400
+        assert "No tenés permiso" in response.get_json()["error"]
+        assert "sale_id" not in response.get_json()
+        assert cash_lookups == []
+
