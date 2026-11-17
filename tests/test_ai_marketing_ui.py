@@ -26,3 +26,13 @@ def test_campaign_wizard_explains_merchant_whatsapp_readiness_before_showing_ste
     assert "template_admin_url" in template
     assert "número compartido de Vendedor 24/7 de StockARmobile" in template
     assert "{% if template %}" in template
+
+
+def test_tenant_campaigns_and_vendor_onboarding_disclose_shared_sender_without_merging_crm_data():
+    campaigns = Path("templates/ai_agents/campaigns.html").read_text(encoding="utf-8")
+    onboarding = Path("templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+
+    assert "número compartido de StockARmobile" in campaigns
+    assert "separados por comercio y sucursal" in campaigns
+    assert "no desde este número propio del Vendedor IA" in onboarding
+    assert "campañas, destinatarios, consentimientos, respuestas, bajas y métricas permanecen aislados" in onboarding
