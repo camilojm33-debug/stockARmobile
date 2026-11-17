@@ -86,7 +86,9 @@ class WhatsAppService:
             "type": "text",
             "text": {"preview_url": not is_mercado_pago_link, "body": body_text},
         }
-        return cls._post_message(company, to=to, payload=payload, branch_id=branch_id)
+        return cls._post_message(
+            company, to=to, payload=payload, branch_id=branch_id, connection=connection,
+        )
 
     @classmethod
     def send_template(
@@ -98,6 +100,7 @@ class WhatsAppService:
         template_language: str = "es_AR",
         body_parameters: Iterable[str] | None = None,
         branch_id: int | None = None,
+        connection: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Send an approved WhatsApp template with optional text body parameters."""
         name = str(template_name or "").strip()
