@@ -189,16 +189,87 @@ def test_cash_transfer_lifecycle_deducts_and_adds_cash_exactly_once(app):
 
         # Repeating the request with the same idempotency key does not create
         # a second transfer request or a cash movement.
-        test_client.post(
+        replay = test_client.post(
             "/caja/tesoreria/transferencias/crear",
             data={
                 "source_session_id": str(source_session_id),
                 "target_branch_id": str(target_branch_id),
                 "target_register_id": str(target_register_id),
                 "amount": "40.00",
+                "description": "Reposición de efectivo",
                 "idempotency_key": "cash-transfer-qa-001",
             },
+            follow_redirects=False,
         )
+        assert replay.status_code == 302
+        with test_client.session_transaction() as browser_session:
+            replay_flashes = [
+                message for _category, message in browser_session.get("_flashes", [])
+            ]
+            browser_session.pop("_flashes", None)
+        assert any("ya estaba registrada" in message.lower() for message in replay_flashes)
+        assert CashTransfer.query.filter_by(company_id=company.id).count() == 1
+
+        # Reusing the same key for a different payload must be rejected rather
+        # than silently treating a different amount as the original request.
+        conflict = test_client.post(
+            "/caja/tesoreria/transferencias/crear",
+            data={
+                "source_session_id": str(source_session_id),
+                "target_branch_id": str(target_branch_id),
+                "target_register_id": str(target_register_id),
+                "amount": "41.00",
+                "description": "Reposición de efectivo",
+                "idempotency_key": "cash-transfer-qa-001",
+            },
+            follow_redirects=False,
+        )
+        assert conflict.status_code == 302
+        with test_client.session_transaction() as browser_session:
+            conflict_flashes = [
+                message for _category, message in browser_session.get("_flashes", [])
+            ]
+            browser_session.pop("_flashes", None)
+        assert any(
+            "clave de idempotencia ya fue utilizada" in message.lower()
+            for message in conflict_flashes
+        )
+        db.session.expire_all()
+        stored_transfer = CashTransfer.query.filter_by(
+            company_id=company.id, idempotency_key="cash-transfer-qa-001"
+        ).one()
+        assert Decimal(str(stored_transfer.amount)) == Decimal("40.00")
+        assert CashTransfer.query.filter_by(company_id=company.id).count() == 1
+
+        # A retry after the source session was closed still resolves to the
+        # original idempotent request; no new cash validation or mutation runs.
+        source_session.status = "cerrada"
+        db.session.commit()
+        closed_session_replay = test_client.post(
+            "/caja/tesoreria/transferencias/crear",
+            data={
+                "source_session_id": str(source_session_id),
+                "target_branch_id": str(target_branch_id),
+                "target_register_id": str(target_register_id),
+                "amount": "40.00",
+                "description": "Reposición de efectivo",
+                "idempotency_key": "cash-transfer-qa-001",
+            },
+            follow_redirects=False,
+        )
+        assert closed_session_replay.status_code == 302
+        with test_client.session_transaction() as browser_session:
+            closed_replay_flashes = [
+                message for _category, message in browser_session.get("_flashes", [])
+            ]
+            browser_session.pop("_flashes", None)
+        assert any(
+            "ya estaba registrada" in message.lower()
+            for message in closed_replay_flashes
+        )
+        db.session.refresh(source_session)
+        source_session.status = "abierta"
+        db.session.commit()
         assert CashTransfer.query.filter_by(company_id=company.id).count() == 1
 
         dispatched = test_client.post(
