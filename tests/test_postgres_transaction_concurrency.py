@@ -122,9 +122,9 @@ def test_concurrent_ai_invoice_confirmation_creates_only_one_purchase(app):
                         conversation=None,
                         branch_id=None,
                     )
-                    return ("applied", result)
+                    return ("duplicate" if result.get("duplicate") else "applied", result)
                 except InvoicePurchaseError as exc:
-                    return ("duplicate", str(exc))
+                    return ("unexpected-conflict", str(exc))
                 finally:
                     db.session.remove()
 
@@ -134,6 +134,7 @@ def test_concurrent_ai_invoice_confirmation_creates_only_one_purchase(app):
 
         assert sum(result[0] == "applied" for result in results) == 1
         assert sum(result[0] == "duplicate" for result in results) == 1
+        assert all(result[0] != "unexpected-conflict" for result in results)
 
         db.session.expire_all()
         persisted = Product.query.filter_by(id=product_id, company_id=company_id).one()
