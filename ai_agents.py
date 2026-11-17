@@ -1583,7 +1583,7 @@ def campaign_wizard():
         branch, connection = resolve_tenant_campaign_sender(
             company,
             campaign_branch_id,
-            require_ready=False,
+            require_ready=True,
         )
         if (
             not connection.get("enabled")
