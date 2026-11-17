@@ -889,6 +889,7 @@ def test_ai_invoice_purchase_and_ai_sale_reject_excess_branch_precision(app):
 
         invoice = {
             "status": "LISTA_PARA_CONFIRMAR",
+            "document_hash": "b" * 64,
             "currency": "ARS",
             "subtotal": "6.1725",
             "tax": "0",
