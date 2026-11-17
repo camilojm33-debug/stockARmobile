@@ -1,5 +1,6 @@
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from services.ai_agent.campaign_service import CampaignService
 from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient, dispatch_due_campaigns, prepare_recipients
@@ -155,8 +156,19 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
             user_id=user.id,
         )
         monkeypatch.setattr(
-            "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
-            lambda *_args, **_kwargs: (object(), {"enabled": True, "phone_number_id": "merchant-phone", "access_token": "merchant-token", "template_name": "approved_template"}),
+            "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
+            lambda company, branch_id=None, require_ready=True: (
+                SimpleNamespace(id=branch_id or 1, is_default=True),
+                {
+                    "enabled": True,
+                    "phone_number_id": "merchant-phone",
+                    "business_account_id": "merchant-waba",
+                    "access_token": "merchant-token",
+                    "template_name": "approved_template",
+                    "template_language": "es_AR",
+                    "display_phone_number": "+54 9 362 400-0000",
+                },
+            ),
         )
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
