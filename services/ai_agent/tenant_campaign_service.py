@@ -78,6 +78,7 @@ def resolve_tenant_campaign_sender(company, branch_id=None, *, require_ready=Tru
     """
     from app import Branch
     from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
     from services.ai_agent.config_service import (
         company_branch_for_whatsapp_phone_id,
         get_whatsapp_connection,
@@ -107,6 +108,13 @@ def resolve_tenant_campaign_sender(company, branch_id=None, *, require_ready=Tru
     )
     if branch is None:
         raise ValueError("La campaña no tiene una sucursal activa válida. Seleccioná una sucursal e intentá nuevamente.")
+
+    access = branch_vendor_access(company, branch)
+    if not access.get("allowed"):
+        raise ValueError(
+            access.get("reason")
+            or "Esta sucursal necesita Vendedor IA activo para utilizar su número en campañas."
+        )
 
     connection = get_whatsapp_connection(company, branch_id=branch.id)
     if not require_ready:
