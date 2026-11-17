@@ -47,12 +47,6 @@ class SaleService:
                 len(items or {}),
                 json_response,
             )
-            cash_session = self._require_open_cash_session(json_response=json_response)
-            if cash_session is None:
-                return redirect(url_for("cash.index"))
-            if isinstance(cash_session, tuple):
-                return cash_session
-
             checkout_token = ValidationService.sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
             company_id = getattr(current_user, "company_id", None)
             quote_snapshot = None
@@ -86,6 +80,36 @@ class SaleService:
                     if json_response:
                         return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
                     return redirect(url_for("sales.success", sale_id=existing_sale.id))
+
+            if quote_id is not None:
+                from app import Quote
+                early_quote = (
+                    scope_query_to_company(Quote.query, Quote)
+                    .filter(Quote.id == int(quote_id))
+                    .first()
+                )
+                if early_quote is None:
+                    raise ValueError("No se encontró el presupuesto de origen.")
+                if early_quote.converted_sale_id:
+                    existing_sale = (
+                        scope_query_to_company(Sale.query, Sale)
+                        .filter(Sale.id == early_quote.converted_sale_id)
+                        .first()
+                    )
+                    if existing_sale is not None:
+                        if json_response:
+                            return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                        return redirect(url_for("sales.success", sale_id=existing_sale.id))
+                    raise ValueError("El presupuesto ya figura convertido pero no se encontró su venta.")
+
+            # Resolve completed idempotent requests before requiring mutable cash
+            # session state. Keep this before the locked quote read to preserve the
+            # established CashSession -> Quote lock order for new conversions.
+            cash_session = self._require_open_cash_session(json_response=json_response)
+            if cash_session is None:
+                return redirect(url_for("cash.index"))
+            if isinstance(cash_session, tuple):
+                return cash_session
 
             if quote_id is not None:
                 from app import Quote, QuoteItem
