@@ -628,14 +628,14 @@ def import_supplier_purchases(supplier_id):
         if qcol is None or ccol is None or pcol is None: raise ValueError("Faltan columnas obligatorias: Producto, Cantidad y Costo unitario.")
         valid_lines = []
         totals = {}
-        for row in rows[1:]:
+        for row_number, row in enumerate(rows[1:], start=2):
             if not row or all(v in (None, "") for v in row):
                 continue
             raw_product = row[pcol]; quantity = _to_float(row[qcol]); unit_cost = _to_float(row[ccol])
             if branch_id is not None:
                 from stockarmobile.branch_inventory import validate_stock_quantity
                 quantity = float(validate_stock_quantity(
-                    quantity, label=f"La cantidad de la fila {len(valid_lines) + 2}"
+                    quantity, label=f"La cantidad de la fila {row_number}"
                 ))
             product = None
             if str(raw_product).strip().isdigit():
