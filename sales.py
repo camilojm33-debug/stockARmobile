@@ -416,7 +416,7 @@ def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None, b
     def _fetch_products(candidate_ids):
         product_query = scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(candidate_ids), Product.active.is_(True)).order_by(Product.id.asc())
         if lock_for_update:
-            product_query = product_query.with_for_update()
+            product_query = product_query.with_for_update().populate_existing()
         products = {product.id: product for product in product_query.all()}
         current_app.logger.info("[sales] productos recibidos para calcular lineas: product_ids=%s encontrados=%s", candidate_ids, len(products))
         return products
