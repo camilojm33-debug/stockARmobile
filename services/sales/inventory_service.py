@@ -25,7 +25,10 @@ class InventoryService:
             available = float(product.stock or 0)
             if branch_id is not None:
                 from stockarmobile.branch_inventory import available_stock
-                available = available_stock(product, branch_id)
+                # The checkout already holds the Product row lock. Refresh
+                # BranchStock too so a row loaded earlier in this request cannot
+                # make the stock check operate on an obsolete balance.
+                available = available_stock(product, branch_id, refresh=True)
             if available < qty:
                 raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 
