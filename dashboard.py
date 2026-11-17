@@ -413,6 +413,13 @@ def confirm_invoice(upload_id):
     try:
         duplicate_result = _already_applied_invoice(upload_id, company_id, (upload.get("invoice") or {}).get("document_hash"))
         if duplicate_result is not None:
+            invoice = upload.get("invoice") or {}
+            invoice["status"] = "APLICADA"
+            invoice["result"] = duplicate_result
+            upload["invoice"] = invoice
+            upload["status"] = "APLICADA"
+            upload["result"] = duplicate_result
+            _save_invoice(conversation, metadata, uploads, index, upload)
             return jsonify({"success": True, "status": "APLICADA", "result": duplicate_result, "duplicate": True})
         invoice = upload.get("invoice") or {}
         if _invoice_ready_for_confirmation(invoice):
@@ -428,7 +435,12 @@ def confirm_invoice(upload_id):
         upload["status"] = "APLICADA"
         upload["result"] = result
         _save_invoice(conversation, metadata, uploads, index, upload)
-        return jsonify({"success": True, "status": "APLICADA", "result": result})
+        return jsonify({
+            "success": True,
+            "status": "APLICADA",
+            "result": result,
+            "duplicate": bool((result or {}).get("duplicate")),
+        })
     except InvoicePurchaseError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 409
