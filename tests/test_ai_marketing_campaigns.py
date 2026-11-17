@@ -1196,6 +1196,67 @@ def test_tenant_campaign_sender_resolves_the_company_branch_connection(app, monk
             resolve_tenant_campaign_sender(other_merchant, other_branch.id)
 
 
+def test_tenant_campaign_send_rejects_recipient_owned_by_another_company(app, monkeypatch):
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient, _send_whatsapp
+
+    with app.app_context():
+        owner = Company(name="Campaign owner", active=True)
+        foreign = Company(name="Foreign recipient owner", active=True)
+        db.session.add_all([owner, foreign])
+        db.session.flush()
+        user = User(
+            username="recipient-isolation-owner",
+            email="recipient-isolation-owner@example.com",
+            role="admin",
+            active=True,
+            company_id=owner.id,
+        )
+        user.set_password("password123")
+        foreign_client = Client(
+            name="Cliente de otra empresa",
+            whatsapp="5493624999999",
+            company_id=foreign.id,
+            active=True,
+        )
+        db.session.add_all([user, foreign_client])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=owner.id,
+            user_id=user.id,
+            title="Campaña aislada",
+            objective="Verificar tenant scope",
+            campaign_type="general",
+            content="Hola",
+            system_data={"channel": "whatsapp"},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        recipient = TenantCampaignRecipient(
+            campaign_id=campaign.id,
+            company_id=foreign.id,
+            client_id=foreign_client.id,
+            channel="whatsapp",
+            destination="5493624999999",
+            unsubscribe_token="foreign-recipient",
+            status="pending",
+        )
+        db.session.add(recipient)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("A foreign recipient must be rejected before resolving any WhatsApp credentials.")
+            ),
+        )
+        ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+
+        assert ok is False
+        assert "no pertenece a la campaña y al comercio" in detail
+        assert provider_id == ""
+
+
 def test_prepared_tenant_campaign_sender_cannot_change_after_queue(app, monkeypatch):
     from app import Branch, Company, User, db
     from services.ai_agent.campaign_service import CampaignService
