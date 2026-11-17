@@ -613,6 +613,8 @@ def import_supplier_purchases(supplier_id):
     if not upload or not upload.filename.lower().endswith((".xlsx", ".xlsm")):
         flash("Selecciona un archivo Excel .xlsx válido.", "danger"); return redirect(url_for("purchases.supplier_purchases", supplier_id=supplier.id, company_id=company_id))
     try:
+        from stockarmobile.branch_context import get_active_branch_id
+        branch_id = get_active_branch_id()
         wb = load_workbook(upload, read_only=True, data_only=True); ws = wb.active; rows = list(ws.iter_rows(values_only=True)); wb.close()
         if not rows: raise ValueError("El Excel está vacío.")
         headers = {str(v or "").strip().lower(): i for i, v in enumerate(rows[0])}
@@ -630,6 +632,11 @@ def import_supplier_purchases(supplier_id):
             if not row or all(v in (None, "") for v in row):
                 continue
             raw_product = row[pcol]; quantity = _to_float(row[qcol]); unit_cost = _to_float(row[ccol])
+            if branch_id is not None:
+                from stockarmobile.branch_inventory import validate_stock_quantity
+                quantity = float(validate_stock_quantity(
+                    quantity, label=f"La cantidad de la fila {len(valid_lines) + 2}"
+                ))
             product = None
             if str(raw_product).strip().isdigit():
                 product = _company_scope(db.session.query(Product), Product, company_id).filter(Product.id == int(raw_product), Product.active.is_(True)).first()
@@ -644,8 +651,6 @@ def import_supplier_purchases(supplier_id):
             totals[product.id][2] += quantity * unit_cost
         if not valid_lines: raise ValueError("No se encontraron filas válidas para importar.")
         subtotal = sum(quantity * unit_cost for _, quantity, unit_cost in valid_lines)
-        from stockarmobile.branch_context import get_active_branch_id
-        branch_id = get_active_branch_id()
         order = PurchaseOrder(supplier_id=supplier.id, company_id=company_id, branch_id=branch_id, date=utcnow(), status="recibida", subtotal=subtotal, total_amount=subtotal, note="Importada desde Excel")
         db.session.add(order); db.session.flush()
         for product, quantity, unit_cost in valid_lines:
