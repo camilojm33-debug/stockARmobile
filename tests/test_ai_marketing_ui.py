@@ -18,11 +18,11 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
 def test_campaign_wizard_explains_merchant_whatsapp_readiness_before_showing_steps():
     template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
 
-    assert "Canal del comercio listo" in template
-    assert "WhatsApp propio del comercio (Vendedor IA 24/7)" in template
-    assert "Nunca se utilizará el número de StockARmobile" in template
+    assert "Canal compartido listo" in template
+    assert "WhatsApp compartido de StockARmobile" in template
+    assert "La audiencia, los consentimientos, las conversaciones y las métricas permanecen aislados" in template
     assert "Marketing IA todavía no está listo" in template
     assert "Asistente de campañas pausado" in template
     assert "template_admin_url" in template
-    assert "Configurar mi Vendedor IA" in template
+    assert "número compartido de Vendedor 24/7 de StockARmobile" in template
     assert "{% if template %}" in template
