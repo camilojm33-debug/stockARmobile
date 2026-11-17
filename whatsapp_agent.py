@@ -691,11 +691,12 @@ def _process_shared_tenant_campaign_reply(
     *, phone_number_id: str, sender: str, external_id: str, text: str,
     context_message_id: str = "", message_type: str = "text",
 ) -> bool:
-    """Route campaign replies to the correct tenant CRM, using that tenant's own sender."""
+    """Route shared Vendedor 24/7 campaign replies back to the originating tenant CRM."""
     from app import Branch, Company
     from stockarmobile.branch_context import get_default_branch_id
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignAttribution,
+        _campaign_branch_id,
         resolve_shared_campaign_reply,
         resolve_tenant_campaign_reply,
     )
@@ -704,8 +705,9 @@ def _process_shared_tenant_campaign_reply(
 
     is_platform_sender = is_commercial_phone_number_id(phone_number_id)
     if is_platform_sender:
-        # Backward-compatible routing for campaigns already sent before the
-        # merchant-owned sender correction. New sends never use this path.
+        # The shared StockARmobile number is the sender for current tenant CRM
+        # campaigns. Resolve the provider message ID to the exact tenant recipient
+        # before attributing the reply; ambiguous contacts remain unattributed.
         recipient = resolve_shared_campaign_reply(
             phone_number_id=phone_number_id,
             sender=sender,
@@ -716,8 +718,28 @@ def _process_shared_tenant_campaign_reply(
         if str(sender_connection.get("phone_number_id") or "").strip() != str(phone_number_id or "").strip():
             return False
         company = Company.query.filter_by(id=int(recipient.company_id), active=True).first() if recipient else None
-        branch_id = get_default_branch_id(company.id) if company is not None else None
-        branch = Branch.query.filter_by(id=branch_id, company_id=company.id, active=True).first() if branch_id and company else None
+        campaign_branch_id = _campaign_branch_id(recipient.campaign) if recipient and recipient.campaign else None
+        if company is None:
+            branch = None
+            branch_id = None
+        elif campaign_branch_id is not None:
+            # A campaign created from a specific branch must return to that
+            # branch. Never fall back to another branch if it was removed.
+            branch = Branch.query.filter_by(
+                id=int(campaign_branch_id),
+                company_id=int(company.id),
+                active=True,
+            ).first()
+            branch_id = branch.id if branch is not None else None
+        else:
+            # Legacy campaigns without branch metadata belong to the default
+            # branch, as in the original shared-number rollout.
+            branch_id = get_default_branch_id(company.id)
+            branch = Branch.query.filter_by(
+                id=branch_id,
+                company_id=company.id,
+                active=True,
+            ).first() if branch_id else None
     else:
         recipient = resolve_tenant_campaign_reply(
             phone_number_id=phone_number_id,
