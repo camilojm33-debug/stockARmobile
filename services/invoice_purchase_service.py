@@ -75,6 +75,41 @@ _register_invoice_mutation_guard()
 
 class InvoicePurchaseService:
     @staticmethod
+    def _existing_purchase_result(*, company_id: int, document_hash: str, currency: str):
+        """Return a committed purchase for this tenant/document after a retry or unique-key race."""
+        from sqlalchemy.orm import selectinload
+        from app import PurchaseItem, PurchaseOrder, db
+
+        order = (
+            db.session.query(PurchaseOrder)
+            .options(selectinload(PurchaseOrder.items).selectinload(PurchaseItem.product))
+            .filter(
+                PurchaseOrder.company_id == int(company_id),
+                PurchaseOrder.source_document_hash == document_hash,
+            )
+            .first()
+        )
+        if order is None:
+            return None
+        return {
+            "status": "APLICADA",
+            "purchase_order_id": order.id,
+            "currency": currency,
+            "duplicate": True,
+            "items": [
+                {
+                    "line_number": None,
+                    "product_id": item.product_id,
+                    "product_code": item.product.barcode if item.product is not None else None,
+                    "quantity": float(item.quantity or 0),
+                    "unit_cost": str(item.unit_cost or 0),
+                    "sale_price": str(item.product.price or 0) if item.product is not None else None,
+                }
+                for item in (order.items or [])
+            ],
+        }
+
+    @staticmethod
     def _decimal(value, field: str, *, minimum: Decimal = Decimal("0")) -> Decimal:
         try:
             result = Decimal(str(value))
@@ -148,6 +183,14 @@ class InvoicePurchaseService:
             raise InvoicePurchaseError(
                 "No se puede confirmar la factura: falta una huella SHA-256 válida del archivo. Volvé a cargarla."
             )
+
+        existing_result = InvoicePurchaseService._existing_purchase_result(
+            company_id=company_id, document_hash=document_hash, currency=currency,
+        )
+        if existing_result is not None:
+            invoice["status"] = "APLICADA"
+            invoice["result"] = existing_result
+            return existing_result
 
         from app import AuditLog, Branch, Product, PurchaseItem, PurchaseOrder, Supplier, db
 
@@ -227,7 +270,17 @@ class InvoicePurchaseService:
                 db.session.flush()
             except IntegrityError as exc:
                 db.session.rollback()
-                raise InvoicePurchaseError("Esta factura ya fue confirmada por otra solicitud.") from exc
+                # A concurrent confirmation may have committed between the
+                # initial lookup and this INSERT. Resolve that winner and return
+                # its purchase rather than surfacing a permanent retry conflict.
+                existing_result = InvoicePurchaseService._existing_purchase_result(
+                    company_id=company_id, document_hash=document_hash, currency=currency,
+                )
+                if existing_result is not None:
+                    invoice["status"] = "APLICADA"
+                    invoice["result"] = existing_result
+                    return existing_result
+                raise InvoicePurchaseError("No se pudo confirmar la factura por un conflicto de integridad.") from exc
 
             product_ids = sorted({int(line["product_id"]) for line in lines})
             locked_products = {
