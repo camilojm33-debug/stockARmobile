@@ -14,16 +14,37 @@ def get_current_company_id(current_user_obj):
 
 
 def scope_query_to_company(query, model, *, current_user_obj, company_id=None):
-    if not getattr(current_user_obj, "is_authenticated", False):
-        return query
-    if is_superadmin(current_user_obj):
-        return query
+    """Constrain tenant-owned queries to the active tenant, failing closed.
+
+    The optional company_id is retained for compatibility, but it may not
+    widen an authenticated tenant user's scope. SuperAdmin keeps its
+    explicitly privileged, unscoped behavior. Models without company_id are
+    shared/system models and cannot be tenant-filtered here.
+    """
     if not hasattr(model, "company_id"):
         return query
-    effective_company_id = company_id if company_id is not None else get_current_company_id(current_user_obj)
-    if effective_company_id is None:
-        # Fail-closed: tenant users without company context must not read cross-tenant data.
+    if not getattr(current_user_obj, "is_authenticated", False):
         return query.filter(false())
+    if is_superadmin(current_user_obj):
+        return query
+
+    effective_company_id = get_current_company_id(current_user_obj)
+    if effective_company_id is None:
+        # Fail-closed: tenant users without company context must not read
+        # cross-tenant data.
+        return query.filter(false())
+
+    if company_id is not None:
+        try:
+            requested_company_id = int(company_id)
+            active_company_id = int(effective_company_id)
+        except (TypeError, ValueError, OverflowError):
+            return query.filter(false())
+        if requested_company_id != active_company_id:
+            # A caller-supplied tenant ID must never override the authenticated
+            # user's active membership.
+            return query.filter(false())
+
     return query.filter(model.company_id == effective_company_id)
 
 

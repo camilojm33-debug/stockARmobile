@@ -107,17 +107,59 @@ def test_tenant_helpers_scope_and_context():
     assert get_current_company_id(superadmin) is None
     assert get_current_company_id(anon) is None
 
-    fake_query = _FakeQuery()
     fake_model = SimpleNamespace(company_id=_ExprField())
+
+    fake_query = _FakeQuery()
     result = scope_query_to_company(fake_query, fake_model, current_user_obj=user)
     assert result is fake_query
     assert fake_query.filtered_with == ("eq", 10)
 
+    # An explicit company id can confirm the active tenant, never widen it.
+    same_tenant_query = _FakeQuery()
+    scope_query_to_company(
+        same_tenant_query, fake_model, current_user_obj=user, company_id="10"
+    )
+    assert same_tenant_query.filtered_with == ("eq", 10)
+
+    cross_tenant_query = _FakeQuery()
+    scope_query_to_company(
+        cross_tenant_query, fake_model, current_user_obj=user, company_id=11
+    )
+    assert str(cross_tenant_query.filtered_with).lower() == "false"
+
+    malformed_tenant_query = _FakeQuery()
+    scope_query_to_company(
+        malformed_tenant_query, fake_model, current_user_obj=user, company_id="invalid"
+    )
+    assert str(malformed_tenant_query.filtered_with).lower() == "false"
+
+    anonymous_query = _FakeQuery()
+    scope_query_to_company(anonymous_query, fake_model, current_user_obj=anon)
+    assert str(anonymous_query.filtered_with).lower() == "false"
+
     fake_query_no_company = _FakeQuery()
     user_without_company = SimpleNamespace(is_authenticated=True, role=ROLE_ADMIN, company_id=None)
-    scope_query_to_company(fake_query_no_company, fake_model, current_user_obj=user_without_company)
-    assert fake_query_no_company.filtered_with is not None
+    scope_query_to_company(
+        fake_query_no_company, fake_model, current_user_obj=user_without_company
+    )
+    assert str(fake_query_no_company.filtered_with).lower() == "false"
 
+    # SuperAdmin is the only authenticated role that intentionally bypasses
+    # tenant scoping; preserve that established privileged behavior.
+    superadmin_query = _FakeQuery()
+    scope_query_to_company(
+        superadmin_query, fake_model, current_user_obj=superadmin, company_id=10
+    )
+    assert superadmin_query.filtered_with is None
+
+    # Shared/system models have no company_id and are not tenant-filterable.
+    shared_model_query = _FakeQuery()
+    scope_query_to_company(
+        shared_model_query,
+        SimpleNamespace(id=_ExprField()),
+        current_user_obj=anon,
+    )
+    assert shared_model_query.filtered_with is None
 
 def test_response_helpers_json_shape():
     app = Flask(__name__)
