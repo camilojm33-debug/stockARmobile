@@ -27,3 +27,6 @@ def test_campaign_wizard_explains_shared_stockarmobile_whatsapp_readiness():
     assert "Marketing IA todavía no está listo" in template
     assert "{% if template %}" in template
     assert "WhatsApp compartido StockARmobile · Vendedor 24/7" in detail
+    assert "el comercio no necesita conectar otro número" in template.lower()
+    assert "número emisor compartido detectado" in template.lower()
+    assert "número emisor del comercio detectado" not in template.lower()
