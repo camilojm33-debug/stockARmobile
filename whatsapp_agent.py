@@ -691,7 +691,7 @@ def _process_shared_tenant_campaign_reply(
     *, phone_number_id: str, sender: str, external_id: str, text: str,
     context_message_id: str = "", message_type: str = "text",
 ) -> bool:
-    """Route shared Vendedor 24/7 campaign replies back to the originating tenant CRM."""
+    """Route tenant campaign replies to their CRM, preserving legacy shared-number attribution."""
     from app import Branch, Company
     from stockarmobile.branch_context import get_default_branch_id
     from services.ai_agent.tenant_campaign_service import (
@@ -705,9 +705,10 @@ def _process_shared_tenant_campaign_reply(
 
     is_platform_sender = is_commercial_phone_number_id(phone_number_id)
     if is_platform_sender:
-        # The shared StockARmobile number is the sender for current tenant CRM
-        # campaigns. Resolve the provider message ID to the exact tenant recipient
-        # before attributing the reply; ambiguous contacts remain unattributed.
+        # SuperAdmin's number is reserved for its own CRM. This branch remains
+        # only to attribute replies to legacy tenant campaigns sent from the
+        # shared platform number before each merchant had its own campaign sender.
+        # Resolve provider message IDs exactly; ambiguous contacts stay unattributed.
         recipient = resolve_shared_campaign_reply(
             phone_number_id=phone_number_id,
             sender=sender,
