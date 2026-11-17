@@ -326,7 +326,7 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
             user_id=user.id,
         )
 
-        with pytest.raises(ValueError, match="WhatsApp del Vendedor IA 24/7 de este comercio no está conectado"):
+        with pytest.raises(ValueError, match="número compartido de Vendedor 24/7 de StockARmobile no está conectado o habilitado"):
             prepare_recipients(campaign.id, company_id=company.id)
 
 
