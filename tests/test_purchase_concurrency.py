@@ -104,7 +104,7 @@ def test_purchase_product_lock_refreshes_stock_and_scopes_to_company(app):
 def test_ai_invoice_purchase_refreshes_locked_product_and_requires_sha256(app):
     import pytest
     from sqlalchemy import update
-    from app import Company, Product, Supplier, db
+    from app import Company, Product, Supplier, User, db
     from services.invoice_purchase_service import InvoicePurchaseError, InvoicePurchaseService
 
     with app.app_context():
@@ -112,14 +112,22 @@ def test_ai_invoice_purchase_refreshes_locked_product_and_requires_sha256(app):
         db.session.add(company)
         db.session.flush()
         supplier = Supplier(name="Proveedor IA lock", company_id=company.id, active=True)
+        user = User(
+            username="ai-invoice-lock-admin",
+            email="ai-invoice-lock-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
         product = Product(
             company_id=company.id, barcode="AI-INV-LOCK-001", name="Producto factura",
             stock=5, cost_price=10, price=20, active=True,
         )
-        db.session.add_all([supplier, product])
+        db.session.add_all([supplier, product, user])
         db.session.commit()
 
-        product_id, supplier_id = product.id, supplier.id
+        product_id, supplier_id, user_id = product.id, supplier.id, user.id
         stale_product = db.session.get(Product, product_id)
         db.session.execute(
             update(Product).where(Product.id == product_id)
@@ -147,7 +155,7 @@ def test_ai_invoice_purchase_refreshes_locked_product_and_requires_sha256(app):
         }
         result = InvoicePurchaseService.confirm(
             company_id=company.id,
-            user_id=1,
+            user_id=user_id,
             invoice=invoice,
             conversation=None,
             branch_id=None,
@@ -164,7 +172,7 @@ def test_ai_invoice_purchase_refreshes_locked_product_and_requires_sha256(app):
         with pytest.raises(InvoicePurchaseError, match="SHA-256"):
             InvoicePurchaseService.confirm(
                 company_id=company.id,
-                user_id=1,
+                user_id=user_id,
                 invoice=no_hash_invoice,
                 conversation=None,
                 branch_id=None,
