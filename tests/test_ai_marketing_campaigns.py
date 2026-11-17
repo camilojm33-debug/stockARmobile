@@ -621,6 +621,8 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
             "body_text": "¡Hola {{1}}! Novedades de {{2}}: {{3}}",
             "auto_selected": False,
         }
+        monkeypatch.setenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_NAME", "stockarmobile_vendedor247_marketing_es_ar")
+        monkeypatch.setenv("AI_MARKETING_SHARED_WHATSAPP_TEMPLATE_LANGUAGE", "es_AR")
         monkeypatch.setattr(
             "services.saas_commercial_whatsapp.get_commercial_company",
             lambda: platform,
@@ -654,7 +656,7 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         sent = {}
 
         def fake_send_template(company, **kwargs):
-            sent["company_id"] = company.id
+            sent["company"] = company
             sent.update(kwargs)
             return {"messages": [{"id": "wamid.shared-vendedor247-test"}]}
 
@@ -667,7 +669,8 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         assert ok, detail
         assert detail == "sent"
         assert provider_id == "wamid.shared-vendedor247-test"
-        assert sent["company_id"] == platform.id
+        assert sent["company"] is platform
+        assert sent["company"].id == platform.id
         assert sent["template_name"] == "stockarmobile_vendedor247_marketing_es_ar"
         assert sent["body_parameters"] == [
             "Cliente autorizado",
