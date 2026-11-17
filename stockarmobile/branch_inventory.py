@@ -56,7 +56,7 @@ def lock_product_stock_row(product):
     return product_id
 
 
-def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inactive=False):
+def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inactive=False, refresh=False):
     branch_query = Branch.query.filter_by(id=int(branch_id), company_id=int(product.company_id))
     if not allow_inactive:
         branch_query = branch_query.filter_by(active=True)
@@ -65,7 +65,11 @@ def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inac
         raise ValueError("La sucursal no pertenece a la empresa del producto o está inactiva.")
     query = BranchStock.query.filter_by(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id))
     if lock:
-        query = query.with_for_update()
+        # A locking SELECT can still return an already-cached ORM identity.
+        # Refresh it after the product lock has serialized all stock writers.
+        query = query.with_for_update().populate_existing()
+    elif refresh:
+        query = query.populate_existing()
     row = query.first()
     if row is None and create:
         row = BranchStock(company_id=int(product.company_id), branch_id=int(branch_id), product_id=int(product.id),
@@ -75,8 +79,8 @@ def get_branch_stock(product, branch_id, *, lock=False, create=False, allow_inac
     return row
 
 
-def available_stock(product, branch_id, *, allow_inactive=False):
-    row = get_branch_stock(product, branch_id, allow_inactive=allow_inactive)
+def available_stock(product, branch_id, *, allow_inactive=False, refresh=False):
+    row = get_branch_stock(product, branch_id, allow_inactive=allow_inactive, refresh=refresh)
     return float(row.stock or 0) if row is not None else 0.0
 
 
