@@ -482,6 +482,15 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     if company is None:
         return False, "El comercio propietario de la campaña no existe o está inactivo.", ""
 
+    client = recipient.client
+    if (
+        int(getattr(recipient, "company_id", 0) or 0) != int(company.id)
+        or int(getattr(recipient, "campaign_id", 0) or 0) != int(campaign.id)
+        or client is None
+        or int(getattr(client, "company_id", 0) or 0) != int(company.id)
+    ):
+        return False, "El destinatario no pertenece a la campaña y al comercio que solicita el envío.", ""
+
     try:
         branch, connection = resolve_tenant_campaign_sender(
             company,
@@ -526,7 +535,6 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     ):
         return False, "La plantilla aprobada cambió desde que se preparó la campaña; volvé a validar y aprobar.", ""
 
-    client = recipient.client
     try:
         params = [
             str(client.name or "Cliente")[:1024],
