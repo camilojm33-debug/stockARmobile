@@ -70,6 +70,21 @@ def _campaign_branch_id(campaign):
     return value if value and value > 0 else None
 
 
+def _shared_campaign_whatsapp():
+    """Resolve StockARmobile's dedicated Vendedor 24/7 sender for all tenant CRM campaigns.
+
+    Only the sender connection is shared. Campaigns, clients, recipients,
+    consent, conversations, replies and attribution remain scoped to the tenant.
+    """
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    sender_company = get_commercial_company()
+    if sender_company is None:
+        return None, {}
+    return sender_company, get_whatsapp_connection(sender_company)
+
+
 def _tenant_campaign_whatsapp(company_id: int, branch_id: int | None = None):
     """Resolve only the merchant's own Vendedor IA WhatsApp connection.
 
@@ -286,11 +301,10 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     campaign_data["channel"] = "whatsapp"
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
-    campaign_branch_id = _campaign_branch_id(campaign)
-    sender_company, connection = _tenant_campaign_whatsapp(
-        campaign.company_id,
-        branch_id=campaign_branch_id,
-    )
+    # Campaign sender is the dedicated StockARmobile Vendedor 24/7 number.
+    # campaign_branch_id is still stored on the campaign for tenant-side CRM
+    # reply routing; it never selects a tenant-owned WhatsApp sender.
+    sender_company, connection = _shared_campaign_whatsapp()
     if (
         sender_company is None
         or not connection.get("enabled")
@@ -298,8 +312,8 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         or not connection.get("access_token")
     ):
         raise ValueError(
-            "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado o habilitado. "
-            "Conectá el número propio del comercio desde Agentes IA → Vendedor IA."
+            "El WhatsApp compartido de StockARmobile (Vendedor 24/7) no está configurado. "
+            "El equipo de StockARmobile debe revisar la conexión comercial."
         )
     stored_template = campaign_data.get("whatsapp_template")
     if isinstance(stored_template, dict) and stored_template.get("name"):
@@ -426,21 +440,18 @@ def _fetch_campaign_template(
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     from services.ai_agent.whatsapp_service import WhatsAppService
 
-    campaign_branch_id = _campaign_branch_id(campaign)
-    sender_company, connection = _tenant_campaign_whatsapp(
-        campaign.company_id,
-        branch_id=campaign_branch_id,
-    )
+    sender_company, connection = _shared_campaign_whatsapp()
     if (
         sender_company is None
         or not connection.get("enabled")
         or not connection.get("phone_number_id")
         or not connection.get("access_token")
     ):
-        return False, "El WhatsApp del Vendedor IA 24/7 de este comercio no está conectado.", ""
+        return False, "El WhatsApp compartido de StockARmobile (Vendedor 24/7) no está configurado.", ""
 
-    # Resolve and send through this merchant's own WABA. Never fall back to
-    # StockARmobile's SuperAdmin/commercial WhatsApp number.
+    # All tenant CRM campaigns use the same platform-owned Vendedor 24/7 WABA.
+    # The recipient and campaign records remain tenant-scoped; branch_id only
+    # determines which tenant CRM receives the reply.
     template = _json(campaign).get("whatsapp_template") or {}
     template_name = str(template.get("name") or "").strip()
     language = str(template.get("language") or "").strip()
@@ -473,7 +484,6 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
             template_name=template_name,
             template_language=language,
             body_parameters=params,
-            branch_id=campaign_branch_id,
         )
     except requests.Timeout as exc:
         return False, f"Resultado incierto: Meta no respondió a tiempo ({exc}).", ""
