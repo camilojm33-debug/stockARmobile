@@ -1767,7 +1767,9 @@ def delete_sale(sale_id):
         cart_key=_cart_key,
         to_decimal=to_decimal,
     )
-    resolve_product = lambda item: item.product or scope_query_to_company(
+    # Resolve the item product through the active tenant scope. Never trust
+    # the ORM relationship alone when repairing historical inventory rows.
+    resolve_product = lambda item: scope_query_to_company(
         db.session.query(Product), Product
     ).filter(Product.id == item.product_id).first()
 
