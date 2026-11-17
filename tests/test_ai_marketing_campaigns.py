@@ -200,6 +200,11 @@ def test_queued_campaign_can_be_cancelled(app):
         db.session.add(user)
         db.session.flush()
 
+        monkeypatch.setattr(
+            "services.ai_agent.branch_vendor_service.branch_vendor_access",
+            lambda _company, _branch: {"allowed": True, "reason": None},
+        )
+
         campaign = CampaignService.create_draft(
             company_id=company.id,
             user_id=user.id,
@@ -322,7 +327,7 @@ def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monke
         assert campaign.target_count == 0
 
 
-def test_whatsapp_campaign_requires_connection_before_queue(app):
+def test_whatsapp_campaign_requires_connection_before_queue(app, monkeypatch):
     from app import Branch, Company, User, db
 
     with app.app_context():
@@ -374,7 +379,7 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
             user_id=user.id,
         )
 
-        with pytest.raises(ValueError, match="(sucursal|WhatsApp propio|WhatsApp del comercio)"):
+        with pytest.raises(ValueError, match="(sucursal|WhatsApp propio|WhatsApp del comercio|WhatsApp Business)"):
             prepare_recipients(campaign.id, company_id=company.id)
 
 
@@ -1142,6 +1147,10 @@ def test_tenant_campaign_sender_resolves_the_company_branch_connection(app, monk
         monkeypatch.setattr(
             "services.ai_agent.config_service.company_branch_for_whatsapp_phone_id",
             lambda phone_id: (merchant, branch) if phone_id == "merchant-a-phone" else (None, None),
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.branch_vendor_service.branch_vendor_access",
+            lambda _company, _branch: {"allowed": True, "reason": None},
         )
 
         resolved_branch, connection = resolve_tenant_campaign_sender(merchant, branch.id)
