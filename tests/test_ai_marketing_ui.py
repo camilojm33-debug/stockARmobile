@@ -21,7 +21,7 @@ def test_campaign_wizard_explains_merchant_owned_whatsapp_readiness():
 
     assert "WhatsApp propio conectado" in wizard
     assert "WhatsApp del comercio · Vendedor IA 24/7" in wizard
-    assert "cuenta WhatsApp Business conectada por este comercio" in wizard
+    assert "cuenta WhatsApp Business del comercio" in wizard
     assert "Meta Embedded Signup" in wizard
     assert "número emisor del comercio detectado" in wizard.lower()
     assert "Esta campaña saldrá exclusivamente desde el número" in wizard
