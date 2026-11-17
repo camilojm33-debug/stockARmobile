@@ -425,6 +425,29 @@ class SaleService:
         flash(f"Venta #{sale.id} realizada con exito. Total: ${final_total:.2f}", "success")
         return redirect(url_for("sales.success", sale_id=sale.id))
 
+    def _lock_sale_for_update(self, sale):
+        """Serialize lifecycle changes and reload the sale/items after acquiring the row lock."""
+        from app import Sale, SaleItem, db, scope_query_to_company
+
+        query = scope_query_to_company(
+            Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)),
+            Sale,
+        )
+        locked_sale = (
+            query.filter(Sale.id == int(sale.id))
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if locked_sale is None:
+            raise ValueError("La venta ya no existe o no pertenece a la empresa activa.")
+
+        # The collection may have been loaded by the route before the lock was
+        # acquired. Force its next access to read the rows committed by the
+        # previous lifecycle operation.
+        db.session.expire(locked_sale, ["items"])
+        return locked_sale
+
     def update_sale(
         self,
         *,
@@ -437,13 +460,16 @@ class SaleService:
     ):
         from app import CashMovement, Client, Product, SaleItem, SaleModificationHistory, db, record_audit, scope_query_to_company
 
+        # Validate cheap input before acquiring locks, then refresh and lock the
+        # authoritative sale row before reading its items or touching stock/cash.
+        ValidationService.validate_edit_reason(reason)
+        sale = self._lock_sale_for_update(sale)
+
         # A cancelled sale is immutable: editing it would reverse/reapply stock and
         # rewrite cash movements while leaving its cancelled status intact.
         sale_status = str(getattr(sale, "status", "") or "").strip().lower()
         if sale_status in {"anulada", "anulado", "cancelada", "cancelado", "cancelled", "canceled", "void", "voided"}:
             raise ValueError("No se puede editar una venta anulada.")
-
-        ValidationService.validate_edit_reason(reason)
 
         existing_line_discount_total = sum(self._to_decimal(item.discount or 0) for item in sale.items)
         sale_order_discount_default = max(self._to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
@@ -701,6 +727,7 @@ class SaleService:
     def cancel_sale(self, *, sale, detail):
         from app import db, record_audit
 
+        sale = self._lock_sale_for_update(sale)
         ValidationService.validate_cancel_status(getattr(sale, "status", None))
         from cash_treasury import reverse_sale_financial_movements
         reverse_sale_financial_movements(sale, reason="cancelación")
@@ -719,6 +746,7 @@ class SaleService:
         from app import CashMovement, db, record_audit
 
         ValidationService.validate_delete_role(getattr(current_user, "role", None))
+        sale = self._lock_sale_for_update(sale)
         ValidationService.validate_annul_status(
             getattr(sale, "status", None),
             comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
@@ -752,6 +780,7 @@ class SaleService:
         from app import CashMovement, db, record_audit
 
         ValidationService.validate_delete_role(getattr(current_user, "role", None))
+        sale = self._lock_sale_for_update(sale)
         if not ValidationService.can_hard_delete(getattr(sale, "status", None)):
             raise ValueError(
                 "Las ventas confirmadas no se eliminan físicamente. Deben anularse para conservar el historial."
