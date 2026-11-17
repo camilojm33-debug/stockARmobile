@@ -63,33 +63,35 @@ class InventoryService:
                     "No se pudo resolver un producto de la venta en la empresa activa; no se restauró el stock."
                 )
             if branch_id is not None:
-                    from stockarmobile.branch_inventory import adjust_branch_stock
-                    adjust_branch_stock(
-                        product, branch_id, item.quantity or 0,
-                        movement_type="sale_reversal", source_type="sale",
-                        source_id=source_id, user_id=user_id, allow_legacy_precision=True,
-                        allow_inactive=True,
-                    )
-                else:
-                    # Legacy single-balance tenants do not pass through
-                    # branch_inventory.adjust_branch_stock. Lock and refresh the
-                    # Product row here so a concurrent sale cannot be overwritten
-                    # by a stale ORM object's absolute stock value.
-                    from app import Product
-                    if isinstance(product, Product):
-                        locked_product = (
-                            Product.query.filter_by(
-                                id=int(item.product_id),
-                                company_id=int(product.company_id),
-                            )
-                            .with_for_update()
-                            .populate_existing()
-                            .first()
+                from stockarmobile.branch_inventory import adjust_branch_stock
+                adjust_branch_stock(
+                    product, branch_id, item.quantity or 0,
+                    movement_type="sale_reversal", source_type="sale",
+                    source_id=source_id, user_id=user_id, allow_legacy_precision=True,
+                    allow_inactive=True,
+                )
+            else:
+                # Legacy single-balance tenants do not pass through
+                # branch_inventory.adjust_branch_stock. Lock and refresh the
+                # Product row here so a concurrent sale cannot be overwritten
+                # by a stale ORM object's absolute stock value.
+                from app import Product
+                if isinstance(product, Product):
+                    locked_product = (
+                        Product.query.filter_by(
+                            id=int(item.product_id),
+                            company_id=int(product.company_id),
                         )
-                        if locked_product is None:
-                            continue
-                        product = locked_product
-                    product.stock = float(product.stock or 0) + float(item.quantity or 0)
+                        .with_for_update()
+                        .populate_existing()
+                        .first()
+                    )
+                    if locked_product is None:
+                        raise ValueError(
+                            "No se pudo restaurar el stock: el producto ya no pertenece a la empresa activa."
+                        )
+                    product = locked_product
+                product.stock = float(product.stock or 0) + float(item.quantity or 0)
 
     @staticmethod
     def apply_stock(*, lines, branch_id=None, source_type="sale", source_id=None, user_id=None,
