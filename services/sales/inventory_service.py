@@ -154,7 +154,10 @@ class InventoryService:
             available = float(product.stock or 0)
             if branch_id is not None:
                 from stockarmobile.branch_inventory import available_stock
-                available = available_stock(product, branch_id, allow_inactive=allow_inactive)
+                # A prior reversal may have changed this balance in the same
+                # transaction; refresh still sees that uncommitted write after
+                # autoflush and avoids stale identity-map values.
+                available = available_stock(product, branch_id, allow_inactive=allow_inactive, refresh=True)
             if available < float(quantity):
                 raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {available:g} {product.unit_measure or ''}.")
 
