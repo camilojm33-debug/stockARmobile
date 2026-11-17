@@ -324,7 +324,23 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         _campaign_branch_id(campaign),
         require_ready=True,
     )
-    # Store the resolved branch even for older drafts without branch metadata.
+    # Once queued, the campaign sender is immutable. A running campaign may
+    # never switch numbers halfway through delivery, even if preparation is
+    # requested again after a merchant reconnects Meta.
+    current_sender_binding = _tenant_campaign_sender_binding(company, branch, connection)
+    saved_sender_binding = campaign_data.get("whatsapp_sender")
+    if campaign.status == "EN_PREPARACION":
+        if not isinstance(saved_sender_binding, dict) or any(
+            str(saved_sender_binding.get(field) or "") != str(current_sender_binding.get(field) or "")
+            for field in ("company_id", "branch_id", "phone_number_id", "business_account_id")
+        ):
+            raise ValueError(
+                "La campaña ya está en cola con otro remitente o con una conexión anterior. "
+                "No puede cambiar de número durante el envío. Cancelala y creá una nueva campaña "
+                "después de validar el WhatsApp del comercio."
+            )
+
+    # Store the resolved branch even for older approved drafts without metadata.
     # The identity is re-checked at send time to prevent silent sender changes.
     campaign_data["branch_id"] = int(branch.id)
     stored_template = campaign_data.get("whatsapp_template")
@@ -354,7 +370,7 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
-    campaign_data["whatsapp_sender"] = _tenant_campaign_sender_binding(company, branch, connection)
+    campaign_data["whatsapp_sender"] = current_sender_binding
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
     # Legacy unsent email rows are retained for audit but permanently skipped.
