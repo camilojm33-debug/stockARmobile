@@ -246,6 +246,7 @@ def test_sale_service_update_sale_rejects_cancelled_sale_before_touching_invento
         cart_key=lambda: "cart_test",
         to_decimal=lambda value: Decimal("0.00"),
     )
+    service._lock_sale_for_update = lambda sale: sale
     fake_sale = SimpleNamespace(status="anulada", items=[])
     fake_form = SimpleNamespace(getlist=lambda _key: [], get=lambda _key: "")
 
@@ -326,6 +327,8 @@ def test_sale_service_cancel_sale_and_delete_sale_unit(monkeypatch):
         to_decimal=lambda value: Decimal("0.00"),
     )
 
+    service._lock_sale_for_update = lambda sale: sale
+
     # This test isolates the sale service's cancellation mechanics; CRM state
     # synchronization is covered separately with a real app/database context.
     monkeypatch.setattr(service, "_sync_crm_opportunity_after_sale_annulment", lambda sale: None)
@@ -372,3 +375,119 @@ def test_sale_service_cancel_sale_and_delete_sale_unit(monkeypatch):
     assert float(draft_product.stock) == 4.0
     assert sale_delete in session.deleted
     assert any(call.get("action") == "sale_delete" for call in audit_calls)
+
+def test_sale_lifecycle_lock_refreshes_authoritative_sale_state_and_items(app):
+    from sqlalchemy import update
+    from app import Company, Product, Sale, SaleItem, db
+
+    with app.app_context():
+        company = Company(name="Sale lifecycle lock", active=True)
+        db.session.add(company)
+        db.session.flush()
+        product = Product(
+            barcode="SALE-LOCK-001",
+            name="Producto de prueba",
+            price=10,
+            cost_price=5,
+            stock=5,
+            active=True,
+            company_id=company.id,
+        )
+        sale = Sale(
+            customer="Cliente de prueba",
+            company_id=company.id,
+            status="confirmada",
+            total_amount=10,
+        )
+        db.session.add_all([product, sale])
+        db.session.flush()
+        item = SaleItem(
+            sale_id=sale.id,
+            product_id=product.id,
+            quantity=1,
+            price=10,
+        )
+        db.session.add(item)
+        db.session.commit()
+
+        stale_sale = Sale.query.filter_by(id=sale.id).first()
+        assert stale_sale.status == "confirmada"
+        assert stale_sale.items[0].quantity == 1
+
+        # Simulate another committed lifecycle request after this session
+        # initially loaded the row and its collection.
+        db.session.execute(
+            update(Sale)
+            .where(Sale.id == sale.id)
+            .values(status="anulada")
+            .execution_options(synchronize_session=False)
+        )
+        db.session.execute(
+            update(SaleItem)
+            .where(SaleItem.id == item.id)
+            .values(quantity=3)
+            .execution_options(synchronize_session=False)
+        )
+        assert stale_sale.status == "confirmada"
+        assert stale_sale.items[0].quantity == 1
+
+        service = SaleService(
+            require_open_cash_session=lambda json_response=False: None,
+            calculate_lines=lambda items, lock_for_update=False, discount_overrides=None: [],
+            mark_quote_as_converted=lambda checkout_token, sale_id: None,
+            cart_key=lambda: "cart_test",
+            to_decimal=lambda value: Decimal("0.00"),
+        )
+        locked_sale = service._lock_sale_for_update(stale_sale)
+
+        assert locked_sale.status == "anulada"
+        assert len(locked_sale.items) == 1
+        assert locked_sale.items[0].quantity == 3
+
+
+def test_legacy_stock_reversal_locks_and_refreshes_product_before_increment(app):
+    from sqlalchemy import update
+    from app import Company, Product, db
+
+    with app.app_context():
+        company = Company(name="Legacy stock lock", active=True)
+        db.session.add(company)
+        db.session.flush()
+        product = Product(
+            barcode="SALE-STOCK-LOCK-001",
+            name="Producto legado",
+            price=10,
+            cost_price=5,
+            stock=5,
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(product)
+        db.session.commit()
+
+        stale_product = Product.query.filter_by(id=product.id).first()
+        assert stale_product.stock == 5
+
+        # Simulate another stock transaction committing after the ORM object
+        # was first read. The reversal must increment the persisted value (3),
+        # not overwrite it with the stale value (5) plus the returned quantity.
+        db.session.execute(
+            update(Product)
+            .where(Product.id == product.id)
+            .values(stock=3)
+            .execution_options(synchronize_session=False)
+        )
+        assert stale_product.stock == 5
+
+        item = SimpleNamespace(
+            product_id=product.id,
+            quantity=2,
+            product=stale_product,
+        )
+        InventoryService.reverse_stock(
+            sale_items=[item],
+            resolve_product_func=lambda row: row.product,
+        )
+
+        assert stale_product.stock == 5
+
