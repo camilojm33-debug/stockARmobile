@@ -1822,7 +1822,7 @@ def campaign_transition(campaign_id):
             prepare_recipients(campaign.id, company_id=current_user.company_id)
             CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
             db.session.commit()
-            flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano por WhatsApp desde el número oficial Vendedor 24/7 de StockARmobile, respetando el consentimiento.", "success")
+            flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano desde el número de WhatsApp que este comercio conectó mediante Meta, respetando el consentimiento.", "success")
         else:
             db.session.commit()
             flash("Estado de campaña actualizado.", "success")
