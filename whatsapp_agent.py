@@ -705,8 +705,9 @@ def _process_shared_tenant_campaign_reply(
 
     is_platform_sender = is_commercial_phone_number_id(phone_number_id)
     if is_platform_sender:
-        # Backward-compatible routing for campaigns already sent before the
-        # merchant-owned sender correction. New sends never use this path.
+        # The shared StockARmobile number is the sender for current tenant CRM
+        # campaigns. Resolve the provider message ID to the exact tenant recipient
+        # before attributing the reply; ambiguous contacts remain unattributed.
         recipient = resolve_shared_campaign_reply(
             phone_number_id=phone_number_id,
             sender=sender,
