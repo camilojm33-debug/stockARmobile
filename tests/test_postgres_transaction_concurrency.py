@@ -191,8 +191,10 @@ def test_concurrent_sale_lifecycle_lock_reloads_state_after_first_commit(app):
         db.session.commit()
         company_id, user_id, sale_id = company.id, user.id, sale.id
 
-    first_has_lock = Barrier(2)
-    allow_first_commit = Barrier(2)
+    from threading import Event
+    first_has_lock = Event()
+    second_loaded_stale_sale = Event()
+    allow_first_commit = Event()
 
     def first_lifecycle_transaction():
         with app.app_context():
@@ -209,8 +211,9 @@ def test_concurrent_sale_lifecycle_lock_reloads_state_after_first_commit(app):
                 )
                 sale = Sale.query.filter_by(id=sale_id, company_id=company_id).one()
                 locked = service._lock_sale_for_update(sale)
-                first_has_lock.wait(timeout=15)
-                allow_first_commit.wait(timeout=15)
+                first_has_lock.set()
+                if not allow_first_commit.wait(timeout=15):
+                    raise TimeoutError("No se liberó la transacción de venta concurrente.")
                 locked.status = "anulada"
                 db.session.commit()
                 db.session.remove()
@@ -233,7 +236,9 @@ def test_concurrent_sale_lifecycle_lock_reloads_state_after_first_commit(app):
                 # row lock. The service helper must refresh it after waiting.
                 sale = Sale.query.filter_by(id=sale_id, company_id=company_id).one()
                 assert sale.status == "confirmada"
-                first_has_lock.wait(timeout=15)
+                if not first_has_lock.wait(timeout=15):
+                    raise TimeoutError("La primera transacción no tomó el bloqueo.")
+                second_loaded_stale_sale.set()
                 locked = service._lock_sale_for_update(sale)
                 observed = locked.status
                 db.session.remove()
@@ -242,8 +247,9 @@ def test_concurrent_sale_lifecycle_lock_reloads_state_after_first_commit(app):
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(first_lifecycle_transaction)
         second = executor.submit(second_lifecycle_transaction)
-        first_has_lock.wait(timeout=15)
-        allow_first_commit.wait(timeout=15)
+        assert first_has_lock.wait(timeout=15)
+        assert second_loaded_stale_sale.wait(timeout=15)
+        allow_first_commit.set()
         assert first.result(timeout=45) == "committed"
         assert second.result(timeout=45) == "anulada"
 
