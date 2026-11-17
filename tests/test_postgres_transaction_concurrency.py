@@ -144,3 +144,108 @@ def test_concurrent_ai_invoice_confirmation_creates_only_one_purchase(app):
         ).all()
         assert float(persisted.stock) == 1.0
         assert len(purchases) == 1
+
+
+
+def test_concurrent_sale_lifecycle_lock_reloads_state_after_first_commit(app):
+    """A second transaction must observe the first sale lifecycle transition."""
+    _require_postgresql()
+    from flask_login import login_user
+    from services.sales.sale_service import SaleService
+    from app import Sale, SaleItem
+
+    with app.app_context():
+        company = Company(name="PG concurrent sale lifecycle", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="pg-sale-lock-admin",
+            email="pg-sale-lock-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        product = Product(
+            company_id=company.id, barcode="PG-SALE-LOCK-001",
+            name="Producto venta concurrente", stock=5, cost_price=5,
+            price=10, active=True,
+        )
+        db.session.add_all([user, product])
+        db.session.flush()
+        sale = Sale(
+            customer="Cliente concurrencia",
+            company_id=company.id,
+            seller_id=user.id,
+            status="confirmada",
+            total_amount=10,
+        )
+        db.session.add(sale)
+        db.session.flush()
+        db.session.add(SaleItem(
+            sale_id=sale.id,
+            product_id=product.id,
+            quantity=1,
+            price=10,
+        ))
+        db.session.commit()
+        company_id, user_id, sale_id = company.id, user.id, sale.id
+
+    first_has_lock = Barrier(2)
+    allow_first_commit = Barrier(2)
+
+    def first_lifecycle_transaction():
+        with app.app_context():
+            db.session.remove()
+            with app.test_request_context("/"):
+                user = User.query.filter_by(id=user_id, company_id=company_id).one()
+                login_user(user)
+                service = SaleService(
+                    require_open_cash_session=lambda json_response=False: None,
+                    calculate_lines=lambda *args, **kwargs: [],
+                    mark_quote_as_converted=lambda *args, **kwargs: None,
+                    cart_key=lambda: "postgres-concurrency-test",
+                    to_decimal=lambda value: value,
+                )
+                sale = Sale.query.filter_by(id=sale_id, company_id=company_id).one()
+                locked = service._lock_sale_for_update(sale)
+                first_has_lock.wait(timeout=15)
+                allow_first_commit.wait(timeout=15)
+                locked.status = "anulada"
+                db.session.commit()
+                db.session.remove()
+                return "committed"
+
+    def second_lifecycle_transaction():
+        with app.app_context():
+            db.session.remove()
+            with app.test_request_context("/"):
+                user = User.query.filter_by(id=user_id, company_id=company_id).one()
+                login_user(user)
+                service = SaleService(
+                    require_open_cash_session=lambda json_response=False: None,
+                    calculate_lines=lambda *args, **kwargs: [],
+                    mark_quote_as_converted=lambda *args, **kwargs: None,
+                    cart_key=lambda: "postgres-concurrency-test",
+                    to_decimal=lambda value: value,
+                )
+                # Load a pre-lock snapshot while transaction one still owns the
+                # row lock. The service helper must refresh it after waiting.
+                sale = Sale.query.filter_by(id=sale_id, company_id=company_id).one()
+                assert sale.status == "confirmada"
+                first_has_lock.wait(timeout=15)
+                locked = service._lock_sale_for_update(sale)
+                observed = locked.status
+                db.session.remove()
+                return observed
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(first_lifecycle_transaction)
+        second = executor.submit(second_lifecycle_transaction)
+        first_has_lock.wait(timeout=15)
+        allow_first_commit.wait(timeout=15)
+        assert first.result(timeout=45) == "committed"
+        assert second.result(timeout=45) == "anulada"
+
+    db.session.expire_all()
+    assert Sale.query.filter_by(id=sale_id, company_id=company_id).one().status == "anulada"
