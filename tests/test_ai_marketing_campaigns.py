@@ -323,11 +323,20 @@ def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monke
 
 
 def test_whatsapp_campaign_requires_connection_before_queue(app):
-    from app import Company, User, db
+    from app import Branch, Company, User, db
 
     with app.app_context():
         company = Company(name="WhatsApp Co", active=True)
         db.session.add(company)
+        db.session.flush()
+        branch = Branch(
+            company_id=company.id,
+            name="Casa central",
+            code="CENTRAL",
+            active=True,
+            is_default=True,
+        )
+        db.session.add(branch)
         db.session.flush()
         user = User(
             username="wa-admin",
