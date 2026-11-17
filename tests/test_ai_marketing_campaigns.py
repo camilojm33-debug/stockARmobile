@@ -664,7 +664,7 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
         )
         ok, detail, provider_id = _send_whatsapp(recipient, campaign)
 
-        assert ok is True
+        assert ok, detail
         assert detail == "sent"
         assert provider_id == "wamid.shared-vendedor247-test"
         assert sent["company_id"] == platform.id
