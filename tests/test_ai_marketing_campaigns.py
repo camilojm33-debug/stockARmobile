@@ -1154,6 +1154,39 @@ def test_tenant_campaign_sender_resolves_the_company_branch_connection(app, monk
             resolve_tenant_campaign_sender(other_merchant, other_branch.id)
 
 
+def test_superadmin_commercial_company_is_rejected_by_tenant_campaign_sender(app, monkeypatch):
+    from app import Branch, Company, db
+    from services.ai_agent.tenant_campaign_service import resolve_tenant_campaign_sender
+
+    with app.app_context():
+        platform = Company(
+            name="StockARmobile Comercial",
+            active=True,
+            preferences_json='{"internal_channel":"whatsapp_commercial"}',
+        )
+        db.session.add(platform)
+        db.session.flush()
+        branch = Branch(
+            company_id=platform.id,
+            name="Comercial",
+            code="COM",
+            active=True,
+            is_default=True,
+        )
+        db.session.add(branch)
+        db.session.flush()
+
+        def platform_connection_must_not_be_resolved(*args, **kwargs):
+            raise AssertionError("Tenant CRM must never read SuperAdmin sender credentials.")
+
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            platform_connection_must_not_be_resolved,
+        )
+        with pytest.raises(ValueError, match="CRM comercial de SuperAdmin"):
+            resolve_tenant_campaign_sender(platform, branch.id)
+
+
 def test_tenant_campaign_reply_is_resolved_only_through_own_registered_phone(app, monkeypatch):
     from app import Branch, Client, Company, User, db
     from services.ai_agent.campaign_service import CampaignService
