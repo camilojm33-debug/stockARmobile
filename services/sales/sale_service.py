@@ -536,11 +536,18 @@ class SaleService:
         )
         products_by_id = self._lock_products_for_sale_update(product_ids_to_lock)
 
+        existing_product_ids = {
+            int(item.product_id) for item in sale.items if getattr(item, "product_id", None)
+        }
+        missing_existing_products = sorted(existing_product_ids - set(products_by_id))
+        if missing_existing_products:
+            raise ValueError(
+                "No se puede editar la venta: uno o más productos no pertenecen a la empresa activa."
+            )
+
         def _resolve_product_for_sale_item(item):
             product_id = int(getattr(item, "product_id", 0) or 0)
-            return products_by_id.get(product_id) or item.product or scope_query_to_company(
-                db.session.query(Product), Product
-            ).filter(Product.id == product_id).first()
+            return products_by_id.get(product_id)
 
         InventoryService.reverse_stock(
             sale_items=sale.items,
