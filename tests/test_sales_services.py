@@ -618,3 +618,53 @@ def test_sale_edit_product_lock_set_is_sorted_scoped_and_refreshed(app):
         assert locked[second_id].stock == 7
         assert foreign_id not in locked
 
+def test_sale_checkout_idempotent_retry_succeeds_without_open_cash_session(app):
+    from flask_login import login_user
+    from app import Company, Sale, User, db
+
+    with app.app_context():
+        company = Company(name="Sale checkout idempotency", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="sale-checkout-idempotency",
+            email="sale-checkout-idempotency@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        sale = Sale(
+            customer="Cliente existente",
+            company_id=company.id,
+            seller_id=user.id,
+            client_txn_id="checkout-retry-closed-cash",
+            status="confirmada",
+            total_amount=100,
+        )
+        db.session.add(sale)
+        db.session.commit()
+        sale_id = sale.id
+
+        def unexpected_cash_lookup(*, json_response=False):
+            raise AssertionError("An idempotent replay must not require an open cash session.")
+
+        service = SaleService(
+            require_open_cash_session=unexpected_cash_lookup,
+            calculate_lines=lambda items, lock_for_update=False, discount_overrides=None, branch_id=None: [],
+            mark_quote_as_converted=lambda checkout_token, sale_id: None,
+            cart_key=lambda: "cart_test",
+            to_decimal=lambda value: Decimal("0.00"),
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            response = service.create_sale_from_items(
+                items={},
+                data={"checkout_token": "checkout-retry-closed-cash"},
+                json_response=True,
+            )
+
+        assert response.get_json()["sale_id"] == sale_id
+
