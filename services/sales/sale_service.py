@@ -536,12 +536,6 @@ class SaleService:
         client_id = form.get("client_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
 
-        product_id_values = []
-        for raw_value in product_ids:
-            raw_value = (raw_value or "").strip()
-            if raw_value:
-                product_id_values.append(int(raw_value))
-
         new_lines = InventoryService.build_edit_lines(
             product_ids=product_ids,
             quantities=quantities,
