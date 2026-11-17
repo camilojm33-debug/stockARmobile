@@ -9,6 +9,7 @@ from services.ai_agent.tenant_campaign_service import (
     dispatch_due_campaigns,
     prepare_recipients,
     refresh_attribution,
+    _fetch_shared_campaign_template as _REAL_FETCH_SHARED_CAMPAIGN_TEMPLATE,
 )
 
 
@@ -326,7 +327,7 @@ def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monke
         assert campaign.target_count == 0
 
 
-def test_whatsapp_campaign_requires_connection_before_queue(app):
+def test_whatsapp_campaign_requires_connection_before_queue(app, monkeypatch):
     from app import Company, User, db
 
     with app.app_context():
@@ -659,7 +660,7 @@ def test_tenant_crm_campaigns_use_shared_vendedor247_sender_and_keep_tenant_data
 
         monkeypatch.setattr(
             "services.ai_agent.whatsapp_service.WhatsAppService.send_template",
-            fake_send_template,
+            staticmethod(fake_send_template),
         )
         ok, detail, provider_id = _send_whatsapp(recipient, campaign)
 
@@ -1074,17 +1075,14 @@ def test_preparation_revalidates_the_dedicated_shared_template_saved_in_the_draf
             "services.ai_agent.config_service.get_whatsapp_connection",
             lambda _company: connection,
         )
-        from services.ai_agent.tenant_campaign_service import (
-            _fetch_shared_campaign_template,
-            _shared_campaign_whatsapp,
-        )
+        from services.ai_agent.tenant_campaign_service import _shared_campaign_whatsapp
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._shared_campaign_whatsapp",
             _shared_campaign_whatsapp,
         )
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_shared_campaign_template",
-            _fetch_shared_campaign_template,
+            _REAL_FETCH_SHARED_CAMPAIGN_TEMPLATE,
         )
         calls = []
 
