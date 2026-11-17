@@ -555,3 +555,64 @@ def test_branch_stock_lock_refreshes_cached_row_after_another_stock_commit(app):
         locked_stock = get_branch_stock(cached_product, branch.id, lock=True)
         assert locked_stock.stock == 2
 
+def test_sale_edit_product_lock_set_is_sorted_scoped_and_refreshed(app):
+    from flask_login import login_user
+    from sqlalchemy import update
+    from app import Company, Product, User, db
+
+    with app.app_context():
+        company = Company(name="Sale edit product lock", active=True)
+        other_company = Company(name="Other sale edit tenant", active=True)
+        db.session.add_all([company, other_company])
+        db.session.flush()
+        first = Product(
+            barcode="SALE-EDIT-LOCK-001", name="Producto 1", price=10,
+            cost_price=5, stock=10, active=True, company_id=company.id,
+        )
+        second = Product(
+            barcode="SALE-EDIT-LOCK-002", name="Producto 2", price=20,
+            cost_price=10, stock=20, active=True, company_id=company.id,
+        )
+        foreign = Product(
+            barcode="SALE-EDIT-LOCK-003", name="Producto ajeno", price=30,
+            cost_price=15, stock=30, active=True, company_id=other_company.id,
+        )
+        user = User(
+            username="sale-edit-lock-admin",
+            email="sale-edit-lock-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([first, second, foreign, user])
+        db.session.commit()
+
+        first_id, second_id, foreign_id = first.id, second.id, foreign.id
+        stale_second = db.session.get(Product, second_id)
+        assert stale_second.stock == 20
+        db.session.execute(
+            update(Product)
+            .where(Product.id == second_id)
+            .values(stock=7)
+            .execution_options(synchronize_session=False)
+        )
+        assert stale_second.stock == 20
+
+        service = SaleService(
+            require_open_cash_session=lambda json_response=False: None,
+            calculate_lines=lambda items, lock_for_update=False, discount_overrides=None: [],
+            mark_quote_as_converted=lambda checkout_token, sale_id: None,
+            cart_key=lambda: "cart_test",
+            to_decimal=lambda value: Decimal("0.00"),
+        )
+        with app.test_request_context("/"):
+            login_user(user)
+            locked = service._lock_products_for_sale_update(
+                [second_id, foreign_id, first_id, second_id]
+            )
+
+        assert list(locked) == [first_id, second_id]
+        assert locked[second_id].stock == 7
+        assert foreign_id not in locked
+
