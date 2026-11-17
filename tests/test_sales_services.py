@@ -672,7 +672,7 @@ def test_stock_reversal_fails_closed_when_product_cannot_be_resolved():
     import pytest
 
     item = SimpleNamespace(product_id=99, quantity=2, product=None)
-    with pytest.raises(ValueError, match="no se pudo resolver un producto"):
+    with pytest.raises(ValueError, match="(?i)no se pudo resolver un producto"):
         InventoryService.reverse_stock(
             sale_items=[item],
             resolve_product_func=lambda _item: None,
