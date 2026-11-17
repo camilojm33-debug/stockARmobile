@@ -37,12 +37,12 @@
     <div class="alert alert-danger campaign-readiness" role="alert">
       <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Marketing IA todavía no está listo para enviar por WhatsApp</div>
       <p class="mb-2">{{ template_error or "No se pudo validar el WhatsApp compartido de StockARmobile y su plantilla aprobada." }}</p>
-      {% if campaign_sender_phone %}<div class="small mb-2">Número emisor del comercio detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
+      {% if campaign_sender_phone %}<div class="small mb-2">Número emisor compartido detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
       <div class="small">Esta campaña saldrá desde el número compartido de StockARmobile. Los clientes, consentimientos, destinatarios, conversaciones y métricas siguen aislados dentro de cada comercio.</div>
       {% if template_admin_url %}
         <a class="btn btn-sm btn-outline-danger mt-3" href="{{ template_admin_url }}"><i class="bi bi-gear me-1"></i>Configurar mi Vendedor IA</a>
       {% else %}
-        <div class="small mt-3"><strong>Próximo paso:</strong> el administrador de este comercio debe conectar su propio WhatsApp en Agentes IA → Vendedor IA y disponer de una plantilla MARKETING aprobada en su propia cuenta de Meta.</div>
+        <div class="small mt-3"><strong>Próximo paso:</strong> StockARmobile debe revisar la conexión central y disponer de una plantilla MARKETING aprobada en la WABA compartida. El comercio no necesita conectar otro número.</div>
       {% endif %}
     </div>
   {% endif %}
