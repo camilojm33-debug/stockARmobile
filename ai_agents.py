@@ -1545,7 +1545,7 @@ def _campaign_audience_preview(company_id, audience, *, client_segment="", days=
 @bp.route("/campanas/nueva", methods=["GET", "POST"])
 @company_admin_required
 def campaign_wizard():
-    from app import Product, db
+    from app import Branch, Product, db
     from stockarmobile.branch_context import get_active_branch_id
     from services.ai_agent.campaign_service import CampaignService
     from services.ai_agent.tenant_campaign_service import (
@@ -1568,9 +1568,18 @@ def campaign_wizard():
         from stockarmobile.branch_context import get_default_branch_id
         campaign_branch_id = get_default_branch_id(company.id)
 
-    branch = None
+    branch = (
+        Branch.query.filter_by(
+            id=int(campaign_branch_id),
+            company_id=int(company.id),
+            active=True,
+        ).first()
+        if campaign_branch_id else None
+    )
     connection = {}
     try:
+        if branch is None:
+            raise ValueError("La sucursal seleccionada no está disponible.")
         branch, connection = resolve_tenant_campaign_sender(
             company,
             campaign_branch_id,
