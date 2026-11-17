@@ -28,3 +28,15 @@ def test_campaign_wizard_explains_merchant_owned_whatsapp_readiness():
     assert "Conectá el número propio del comercio desde Vendedor IA" in wizard
     assert "WhatsApp del comercio · Vendedor IA 24/7" in detail
     assert "número compartido de StockARmobile" not in wizard.lower()
+
+
+
+def test_campaign_approval_confirmation_names_merchant_owned_sender():
+    source = Path("ai_agents.py").read_text(encoding="utf-8")
+    transition = source[
+        source.index('def campaign_transition('):
+        source.index('@bp.get("")', source.index('def campaign_transition('))
+    ]
+
+    assert "el número de WhatsApp que este comercio conectó mediante Meta" in transition
+    assert "número oficial Vendedor 24/7 de StockARmobile" not in transition
