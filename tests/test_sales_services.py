@@ -378,7 +378,8 @@ def test_sale_service_cancel_sale_and_delete_sale_unit(monkeypatch):
 
 def test_sale_lifecycle_lock_refreshes_authoritative_sale_state_and_items(app):
     from sqlalchemy import update
-    from app import Company, Product, Sale, SaleItem, db
+    from flask_login import login_user
+    from app import Company, Product, Sale, SaleItem, User, db
 
     with app.app_context():
         company = Company(name="Sale lifecycle lock", active=True)
@@ -399,7 +400,15 @@ def test_sale_lifecycle_lock_refreshes_authoritative_sale_state_and_items(app):
             status="confirmada",
             total_amount=10,
         )
-        db.session.add_all([product, sale])
+        user = User(
+            username="sale-lock-admin",
+            email="sale-lock-admin@example.test",
+            password_hash="test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([product, sale, user])
         db.session.flush()
         item = SaleItem(
             sale_id=sale.id,
@@ -438,7 +447,9 @@ def test_sale_lifecycle_lock_refreshes_authoritative_sale_state_and_items(app):
             cart_key=lambda: "cart_test",
             to_decimal=lambda value: Decimal("0.00"),
         )
-        locked_sale = service._lock_sale_for_update(stale_sale)
+        with app.test_request_context("/"):
+            login_user(user)
+            locked_sale = service._lock_sale_for_update(stale_sale)
 
         assert locked_sale.status == "anulada"
         assert len(locked_sale.items) == 1
@@ -490,4 +501,57 @@ def test_legacy_stock_reversal_locks_and_refreshes_product_before_increment(app)
         )
 
         assert stale_product.stock == 5
+
+def test_branch_stock_lock_refreshes_cached_row_after_another_stock_commit(app):
+    from sqlalchemy import update
+    from app import Branch, BranchStock, Company, Product, db
+    from stockarmobile.branch_inventory import get_branch_stock
+
+    with app.app_context():
+        company = Company(name="Branch stock refresh", active=True)
+        db.session.add(company)
+        db.session.flush()
+        branch = Branch(
+            company_id=company.id,
+            name="Sucursal principal",
+            code="MAIN",
+            active=True,
+            is_default=True,
+        )
+        product = Product(
+            barcode="BRANCH-STOCK-REFRESH-001",
+            name="Producto por sucursal",
+            price=10,
+            cost_price=5,
+            stock=5,
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add_all([branch, product])
+        db.session.flush()
+        stock = BranchStock(
+            company_id=company.id,
+            branch_id=branch.id,
+            product_id=product.id,
+            stock=5,
+            min_stock=0,
+            reserved_stock=0,
+        )
+        db.session.add(stock)
+        db.session.commit()
+
+        cached_product = Product.query.filter_by(id=product.id).first()
+        cached_stock = get_branch_stock(cached_product, branch.id)
+        assert cached_stock.stock == 5
+
+        db.session.execute(
+            update(BranchStock)
+            .where(BranchStock.id == cached_stock.id)
+            .values(stock=2)
+            .execution_options(synchronize_session=False)
+        )
+        assert cached_stock.stock == 5
+
+        locked_stock = get_branch_stock(cached_product, branch.id, lock=True)
+        assert locked_stock.stock == 2
 
