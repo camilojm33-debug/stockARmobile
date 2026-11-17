@@ -47,7 +47,13 @@ class InventoryService:
 
     @staticmethod
     def reverse_stock(*, sale_items, resolve_product_func, branch_id=None, source_id=None, user_id=None):
-        for item in sale_items:
+        # Stable product ordering avoids deadlocks when concurrent sale edits or
+        # annulations restore overlapping multi-product carts.
+        ordered_items = sorted(
+            list(sale_items or []),
+            key=lambda item: int(getattr(item, "product_id", 0) or 0),
+        )
+        for item in ordered_items:
             product = resolve_product_func(item)
             if product is not None:
                 if branch_id is not None:
@@ -59,6 +65,24 @@ class InventoryService:
                         allow_inactive=True,
                     )
                 else:
+                    # Legacy single-balance tenants do not pass through
+                    # branch_inventory.adjust_branch_stock. Lock and refresh the
+                    # Product row here so a concurrent sale cannot be overwritten
+                    # by a stale ORM object's absolute stock value.
+                    from app import Product
+                    if isinstance(product, Product):
+                        locked_product = (
+                            Product.query.filter_by(
+                                id=int(item.product_id),
+                                company_id=int(product.company_id),
+                            )
+                            .with_for_update()
+                            .populate_existing()
+                            .first()
+                        )
+                        if locked_product is None:
+                            continue
+                        product = locked_product
                     product.stock = float(product.stock or 0) + float(item.quantity or 0)
 
     @staticmethod
