@@ -230,3 +230,18 @@ def test_tenant_and_superadmin_template_controls_validate_meta_approval():
     assert "wa-template-refresh" in tenant_ui
     assert "commercial-template-refresh" in superadmin_ui
     assert "Los CRM de los comercios" in superadmin_ui or "CRM de los comercios" in superadmin_ui
+
+
+
+def test_shared_vendedor_campaign_replies_return_to_the_originating_tenant_branch():
+    source = (ROOT / "whatsapp_agent.py").read_text(encoding="utf-8")
+    handler = source[
+        source.index("def _process_shared_tenant_campaign_reply("):
+        source.index("def _persist_deterministic_turn(", source.index("def _process_shared_tenant_campaign_reply("))
+    ]
+
+    assert "_campaign_branch_id(recipient.campaign)" in handler
+    assert "elif campaign_branch_id is not None:" in handler
+    assert "company_id=int(company.id)" in handler
+    assert "get_default_branch_id(company.id)" in handler
+    assert 'sender_type": "stockarmobile_platform"' in handler or '"stockarmobile_platform"' in handler
