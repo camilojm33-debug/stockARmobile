@@ -164,6 +164,21 @@ def test_ai_invoice_purchase_refreshes_locked_product_and_requires_sha256(app):
         assert stale_product.stock == 4
         assert stale_product.cost_price == 9
 
+        replay_invoice = {
+            **invoice,
+            "status": "LISTA_PARA_CONFIRMAR",
+        }
+        replay_result = InvoicePurchaseService.confirm(
+            company_id=company.id,
+            user_id=user_id,
+            invoice=replay_invoice,
+            conversation=None,
+            branch_id=None,
+        )
+        assert replay_result["duplicate"] is True
+        assert replay_result["purchase_order_id"] == result["purchase_order_id"]
+        assert Product.query.filter_by(id=product_id).first().stock == 4
+
         no_hash_invoice = {
             **invoice,
             "status": "LISTA_PARA_CONFIRMAR",
