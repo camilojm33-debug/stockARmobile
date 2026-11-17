@@ -465,7 +465,38 @@ def create_transfer():
         amount = _money(request.form.get("amount"))
         if amount <= 0:
             raise ValueError("El importe de la transferencia debe ser mayor a cero.")
+
         source_session_id = request.form.get("source_session_id", type=int)
+        target_branch_id = request.form.get("target_branch_id", type=int)
+        target_register_id = request.form.get("target_register_id", type=int)
+        key = (request.form.get("idempotency_key") or "").strip()[:100] or uuid4().hex
+        description = (request.form.get("description") or "").strip()[:255] or None
+
+        # Resolve idempotency before checking mutable cash-session state. A
+        # browser retry after a timeout must return the original transfer even
+        # if that cash session has since been closed or its balance changed.
+        existing = CashTransfer.query.filter_by(
+            company_id=company_id,
+            idempotency_key=key,
+        ).first()
+        if existing is not None:
+            same_payload = (
+                existing.source_session_id is not None
+                and source_session_id is not None
+                and int(existing.source_session_id) == int(source_session_id)
+                and int(existing.target_branch_id) == int(target_branch_id or 0)
+                and int(existing.target_register_id) == int(target_register_id or 0)
+                and _to_decimal(existing.amount) == amount
+                and (existing.description or None) == description
+            )
+            if not same_payload:
+                raise ValueError(
+                    "La clave de idempotencia ya fue utilizada con otra transferencia. "
+                    "Elegí una clave nueva para una operación diferente."
+                )
+            flash(f"La transferencia #{existing.id} ya estaba registrada.", "info")
+            return redirect(url_for("cash_treasury.index"))
+
         source_session = (
             CashSession.query.filter_by(
                 id=source_session_id,
@@ -488,10 +519,10 @@ def create_transfer():
         )
         if source_register is None:
             raise ValueError("La sesión de origen no tiene una caja física activa asignada.")
-        target_branch = _get_company_branch(request.form.get("target_branch_id", type=int), lock=True)
+        target_branch = _get_company_branch(target_branch_id, lock=True)
         target_register = (
             CashRegister.query.filter_by(
-                id=request.form.get("target_register_id", type=int),
+                id=target_register_id,
                 company_id=company_id,
                 branch_id=target_branch.id,
                 active=True,
@@ -507,11 +538,7 @@ def create_transfer():
         summary = _session_summary(source_session)
         if amount > summary["expected"]:
             raise ValueError("La transferencia supera el efectivo esperado disponible en la caja de origen.")
-        key = (request.form.get("idempotency_key") or "").strip()[:100] or uuid4().hex
-        existing = CashTransfer.query.filter_by(company_id=company_id, idempotency_key=key).first()
-        if existing is not None:
-            flash(f"La transferencia #{existing.id} ya estaba registrada.", "info")
-            return redirect(url_for("cash_treasury.index"))
+
         transfer = CashTransfer(
             company_id=company_id,
             source_branch_id=source_register.branch_id,
@@ -523,7 +550,7 @@ def create_transfer():
             currency="ARS",
             status="pendiente",
             idempotency_key=key,
-            description=(request.form.get("description") or "").strip()[:255] or None,
+            description=description,
             created_by_user_id=current_user.id,
         )
         db.session.add(transfer)
