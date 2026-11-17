@@ -1429,9 +1429,17 @@ def campaign_detail(campaign_id):
     )
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignRecipient,
-        _shared_campaign_whatsapp,
+        _campaign_branch_id,
+        resolve_tenant_campaign_sender,
     )
-    _sender_company, sender_connection = _shared_campaign_whatsapp()
+    try:
+        _sender_branch, sender_connection = resolve_tenant_campaign_sender(
+            _current_active_company(),
+            _campaign_branch_id(campaign),
+            require_ready=False,
+        )
+    except ValueError:
+        sender_connection = {}
     campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
@@ -1544,7 +1552,7 @@ def campaign_wizard():
         CAMPAIGN_OPT_OUT_TEXT,
         _fetch_campaign_template,
         _render_content,
-        _shared_campaign_whatsapp,
+        resolve_tenant_campaign_sender,
     )
 
     entitlement = can_use_ai_feature(_current_active_company(), "marketing")
@@ -1552,27 +1560,40 @@ def campaign_wizard():
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
 
+    company = _current_active_company()
     template = None
     template_error = None
-    # The sender is shared by StockARmobile; branch_id is retained only for
-    # routing the reply back into the correct merchant CRM branch.
     campaign_branch_id = get_active_branch_id()
-    sender_company, connection = _shared_campaign_whatsapp()
+    if campaign_branch_id is None:
+        from stockarmobile.branch_context import get_default_branch_id
+        campaign_branch_id = get_default_branch_id(company.id)
+
+    branch = None
+    connection = {}
     try:
-        if sender_company is None:
-            raise ValueError("No está configurado el WhatsApp compartido de StockARmobile.")
-        if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
+        branch, connection = resolve_tenant_campaign_sender(
+            company,
+            campaign_branch_id,
+            require_ready=False,
+        )
+        if (
+            not connection.get("enabled")
+            or not connection.get("phone_number_id")
+            or not connection.get("business_account_id")
+            or not connection.get("access_token")
+        ):
             raise ValueError(
-                "El número compartido de StockARmobile (Vendedor 24/7) no está conectado o habilitado. "
-                "El equipo de StockARmobile debe revisar la conexión comercial."
+                "Conectá y habilitá el WhatsApp propio de esta sucursal desde Vendedor IA mediante Meta Embedded Signup."
             )
         template = _fetch_campaign_template(connection)
     except ValueError as exc:
         template_error = str(exc)
 
     campaign_sender_phone = str(connection.get("display_phone_number") or "").strip()
-    # Tenant administrators do not configure the platform-owned shared sender.
-    template_admin_url = None
+    template_admin_url = (
+        url_for("ai_agents.vendor_whatsapp_connect", branch_id=branch.id)
+        if branch is not None else url_for("ai_agents.vendor_whatsapp_connect")
+    )
 
     products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
     if request.method == "POST":
