@@ -15,18 +15,28 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
     assert "campaign_detail" in template
 
 
-def test_campaign_wizard_explains_shared_stockarmobile_whatsapp_readiness():
-    template = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
+def test_campaign_wizard_explains_merchant_owned_whatsapp_readiness():
+    wizard = Path("templates/ai_agents/campaign_wizard.html").read_text(encoding="utf-8")
     detail = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
 
-    assert "Canal compartido listo" in template
-    assert "WhatsApp compartido de StockARmobile (Vendedor 24/7)" in template
-    assert "cuenta comercial central de StockARmobile" in template
-    assert "Los clientes, consentimientos, destinatarios, conversaciones y métricas siguen aislados" in template
-    assert "El comercio no necesita conectar un segundo número" in template
-    assert "Marketing IA todavía no está listo" in template
-    assert "{% if template %}" in template
-    assert "WhatsApp compartido StockARmobile · Vendedor 24/7" in detail
-    assert "el comercio no necesita conectar un segundo número" in template.lower()
-    assert "número emisor compartido detectado" in template.lower()
-    assert "número emisor del comercio detectado" not in template.lower()
+    assert "WhatsApp propio conectado" in wizard
+    assert "WhatsApp del comercio · Vendedor IA 24/7" in wizard
+    assert "cuenta WhatsApp Business del comercio" in wizard
+    assert "Meta Embedded Signup" in wizard
+    assert "número emisor del comercio detectado" in wizard.lower()
+    assert "Esta campaña saldrá exclusivamente desde el número" in wizard
+    assert "Conectá el número propio del comercio desde Vendedor IA" in wizard
+    assert "WhatsApp del comercio · Vendedor IA 24/7" in detail
+    assert "número compartido de StockARmobile" not in wizard.lower()
+
+
+
+def test_campaign_approval_confirmation_names_merchant_owned_sender():
+    source = Path("ai_agents.py").read_text(encoding="utf-8")
+    transition = source[
+        source.index('def campaign_transition('):
+        source.index('@bp.get("")', source.index('def campaign_transition('))
+    ]
+
+    assert "el número de WhatsApp que este comercio conectó mediante Meta" in transition
+    assert "número oficial Vendedor 24/7 de StockARmobile" not in transition

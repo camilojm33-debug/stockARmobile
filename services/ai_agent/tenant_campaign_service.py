@@ -1,6 +1,6 @@
 """Tenant-scoped Marketing IA delivery engine.
 
-Tenant CRM campaigns use StockARmobile's shared Vendedor 24/7 WhatsApp sender.
+Tenant CRM campaigns always use the WhatsApp connection registered by their own company and branch.
 Campaigns, recipients, consent, conversations, replies and attribution remain tenant scoped.
 """
 from __future__ import annotations
@@ -70,20 +70,89 @@ def _campaign_branch_id(campaign):
     return value if value and value > 0 else None
 
 
-def _shared_campaign_whatsapp():
-    """Resolve StockARmobile's dedicated Vendedor 24/7 sender for all tenant CRM campaigns.
+def resolve_tenant_campaign_sender(company, branch_id=None, *, require_ready=True):
+    """Resolve the WhatsApp sender owned by one tenant company and branch.
 
-    Only the sender connection is shared. Campaigns, clients, recipients,
-    consent, conversations, replies and attribution remain scoped to the tenant.
+    The SuperAdmin commercial company is deliberately never consulted here.
+    A Phone Number ID must resolve to this exact company and branch.
     """
-    from services.ai_agent.config_service import get_whatsapp_connection
-    from services.saas_commercial_whatsapp import get_commercial_company
+    from app import Branch
+    from stockarmobile.branch_context import get_default_branch_id
+    from services.ai_agent.branch_vendor_service import branch_vendor_access
+    from services.ai_agent.config_service import (
+        company_branch_for_whatsapp_phone_id,
+        get_whatsapp_connection,
+    )
 
-    sender_company = get_commercial_company()
-    if sender_company is None:
-        return None, {}
-    return sender_company, get_whatsapp_connection(sender_company)
+    if company is None or not getattr(company, "id", None):
+        raise ValueError("No se pudo identificar el comercio propietario de la campaña.")
+    from services.ai_agent.config_service import is_commercial_company
+    if is_commercial_company(company):
+        raise ValueError(
+            "El CRM comercial de SuperAdmin utiliza su propio motor de campañas y no puede enviar desde el CRM de un comercio."
+        )
 
+    try:
+        selected_branch_id = int(branch_id) if branch_id is not None else None
+    except (TypeError, ValueError):
+        selected_branch_id = None
+    if not selected_branch_id:
+        selected_branch_id = get_default_branch_id(int(company.id))
+    branch = (
+        Branch.query.filter_by(
+            id=int(selected_branch_id),
+            company_id=int(company.id),
+            active=True,
+        ).first()
+        if selected_branch_id else None
+    )
+    if branch is None:
+        raise ValueError("La campaña no tiene una sucursal activa válida. Seleccioná una sucursal e intentá nuevamente.")
+
+    access = branch_vendor_access(company, branch)
+    if not access.get("allowed"):
+        raise ValueError(
+            access.get("reason")
+            or "Esta sucursal necesita Vendedor IA activo para utilizar su número en campañas."
+        )
+
+    connection = get_whatsapp_connection(company, branch_id=branch.id)
+    if not require_ready:
+        return branch, connection
+
+    phone_number_id = str(connection.get("phone_number_id") or "").strip()
+    waba_id = str(connection.get("business_account_id") or "").strip()
+    access_token = str(connection.get("access_token") or "").strip()
+    if not connection.get("enabled") or not phone_number_id or not access_token or not waba_id:
+        raise ValueError(
+            "El comercio todavía no tiene un WhatsApp propio conectado y habilitado en esta sucursal. "
+            "Conectalo desde Vendedor IA mediante Meta Embedded Signup."
+        )
+    if str(connection.get("token_health") or "").strip().lower() == "expired":
+        raise ValueError("El token de Meta de este comercio venció. Reconectá WhatsApp desde Vendedor IA antes de enviar.")
+
+    registered_company, registered_branch = company_branch_for_whatsapp_phone_id(phone_number_id)
+    if (
+        registered_company is None
+        or registered_branch is None
+        or int(registered_company.id) != int(company.id)
+        or int(registered_branch.id) != int(branch.id)
+    ):
+        raise ValueError(
+            "El número de WhatsApp no está registrado a nombre de este comercio y sucursal. "
+            "Volvé a conectar el número desde Meta Embedded Signup."
+        )
+    return branch, connection
+
+
+def _tenant_campaign_sender_binding(company, branch, connection):
+    """Persist non-secret sender identity to detect connection changes before delivery."""
+    return {
+        "company_id": int(company.id),
+        "branch_id": int(branch.id),
+        "phone_number_id": str(connection.get("phone_number_id") or "").strip(),
+        "business_account_id": str(connection.get("business_account_id") or "").strip(),
+    }
 
 def resolve_tenant_campaign_reply(*, phone_number_id: str, sender: str, context_message_id: str = ""):
     """Resolve a reply arriving on a merchant's registered WhatsApp number.
@@ -238,7 +307,7 @@ def _audience_query(campaign):
 
 
 def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
-    from app import Campaign, Client
+    from app import Campaign, Client, Company
 
     campaign = Campaign.query.filter_by(
         id=int(campaign_id), company_id=int(company_id)
@@ -255,20 +324,33 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     campaign_data["channel"] = "whatsapp"
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
-    # Campaign sender is the dedicated StockARmobile Vendedor 24/7 number.
-    # campaign_branch_id is still stored on the campaign for tenant-side CRM
-    # reply routing; it never selects a tenant-owned WhatsApp sender.
-    sender_company, connection = _shared_campaign_whatsapp()
-    if (
-        sender_company is None
-        or not connection.get("enabled")
-        or not connection.get("phone_number_id")
-        or not connection.get("access_token")
-    ):
-        raise ValueError(
-            "El WhatsApp compartido de StockARmobile (Vendedor 24/7) no está configurado. "
-            "El equipo de StockARmobile debe revisar la conexión comercial."
-        )
+    company = Company.query.filter_by(id=int(campaign.company_id), active=True).first()
+    if company is None:
+        raise ValueError("El comercio propietario de la campaña no existe o está inactivo.")
+    branch, connection = resolve_tenant_campaign_sender(
+        company,
+        _campaign_branch_id(campaign),
+        require_ready=True,
+    )
+    # Once queued, the campaign sender is immutable. A running campaign may
+    # never switch numbers halfway through delivery, even if preparation is
+    # requested again after a merchant reconnects Meta.
+    current_sender_binding = _tenant_campaign_sender_binding(company, branch, connection)
+    saved_sender_binding = campaign_data.get("whatsapp_sender")
+    if campaign.status == "EN_PREPARACION":
+        if not isinstance(saved_sender_binding, dict) or any(
+            str(saved_sender_binding.get(field) or "") != str(current_sender_binding.get(field) or "")
+            for field in ("company_id", "branch_id", "phone_number_id", "business_account_id")
+        ):
+            raise ValueError(
+                "La campaña ya está en cola con otro remitente o con una conexión anterior. "
+                "No puede cambiar de número durante el envío. Cancelala y creá una nueva campaña "
+                "después de validar el WhatsApp del comercio."
+            )
+
+    # Store the resolved branch even for older approved drafts without metadata.
+    # The identity is re-checked at send time to prevent silent sender changes.
+    campaign_data["branch_id"] = int(branch.id)
     stored_template = campaign_data.get("whatsapp_template")
     if isinstance(stored_template, dict) and stored_template.get("name"):
         configured_name = str(connection.get("template_name") or "").strip()
@@ -296,6 +378,7 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
+    campaign_data["whatsapp_sender"] = current_sender_binding
     campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
 
     # Legacy unsent email rows are retained for audit but permanently skipped.
@@ -380,7 +463,7 @@ def _fetch_campaign_template(
     selected_language: str | None = None,
     allow_single_auto_select: bool = True,
 ) -> dict:
-    """Resolve the approved campaign template from StockARmobile's shared WABA."""
+    """Resolve the approved marketing template from the tenant branch WABA."""
     from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
 
     return get_campaign_template(
@@ -392,21 +475,51 @@ def _fetch_campaign_template(
 
 
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
+    from app import Company
     from services.ai_agent.whatsapp_service import WhatsAppService
 
-    sender_company, connection = _shared_campaign_whatsapp()
-    if (
-        sender_company is None
-        or not connection.get("enabled")
-        or not connection.get("phone_number_id")
-        or not connection.get("access_token")
-    ):
-        return False, "El WhatsApp compartido de StockARmobile (Vendedor 24/7) no está configurado.", ""
+    company = Company.query.filter_by(id=int(campaign.company_id), active=True).first()
+    if company is None:
+        return False, "El comercio propietario de la campaña no existe o está inactivo.", ""
 
-    # All tenant CRM campaigns use the same platform-owned Vendedor 24/7 WABA.
-    # The recipient and campaign records remain tenant-scoped; branch_id only
-    # determines which tenant CRM receives the reply.
-    template = _json(campaign).get("whatsapp_template") or {}
+    client = recipient.client
+    if (
+        int(getattr(recipient, "company_id", 0) or 0) != int(company.id)
+        or int(getattr(recipient, "campaign_id", 0) or 0) != int(campaign.id)
+        or client is None
+        or int(getattr(client, "company_id", 0) or 0) != int(company.id)
+    ):
+        return False, "El destinatario no pertenece a la campaña y al comercio que solicita el envío.", ""
+
+    try:
+        branch, connection = resolve_tenant_campaign_sender(
+            company,
+            _campaign_branch_id(campaign),
+            require_ready=True,
+        )
+    except ValueError as exc:
+        return False, str(exc)[:2000], ""
+
+    campaign_data = _json(campaign)
+    saved_sender = campaign_data.get("whatsapp_sender")
+    current_sender = _tenant_campaign_sender_binding(company, branch, connection)
+    if not isinstance(saved_sender, dict):
+        return (
+            False,
+            "La campaña fue preparada con una configuración anterior y no tiene remitente propio validado. "
+            "Volvé a preparar y aprobar la campaña desde el CRM del comercio.",
+            "",
+        )
+    for field in ("company_id", "branch_id", "phone_number_id", "business_account_id"):
+        if str(saved_sender.get(field) or "") != str(current_sender.get(field) or ""):
+            return (
+                False,
+                "La conexión de WhatsApp del comercio cambió desde que se preparó la campaña. "
+                "Volvé a validar la plantilla y aprobar la campaña antes de enviarla.",
+                "",
+            )
+
+    template = campaign_data.get("whatsapp_template") or {}
     template_name = str(template.get("name") or "").strip()
     language = str(template.get("language") or "").strip()
     configured_template_name = str(connection.get("template_name") or "").strip()
@@ -422,7 +535,6 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     ):
         return False, "La plantilla aprobada cambió desde que se preparó la campaña; volvé a validar y aprobar.", ""
 
-    client = recipient.client
     try:
         params = [
             str(client.name or "Cliente")[:1024],
@@ -433,11 +545,13 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
         return False, str(exc), ""
     try:
         result = WhatsAppService.send_template(
-            sender_company,
+            company,
             to=recipient.destination,
             template_name=template_name,
             template_language=language,
             body_parameters=params,
+            branch_id=branch.id,
+            connection=connection,
         )
     except requests.Timeout as exc:
         return False, f"Resultado incierto: Meta no respondió a tiempo ({exc}).", ""
@@ -448,7 +562,6 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     messages = result.get("messages") if isinstance(result, dict) else None
     provider_id = str(messages[0].get("id") or "") if isinstance(messages, list) and messages and isinstance(messages[0], dict) else ""
     return True, "sent", provider_id
-
 
 def refresh_attribution(company_id=None):
     from app import Campaign, Client, Sale

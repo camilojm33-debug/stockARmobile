@@ -245,3 +245,4 @@ def test_shared_vendedor_campaign_replies_return_to_the_originating_tenant_branc
     assert "company_id=int(company.id)" in handler
     assert "get_default_branch_id(company.id)" in handler
     assert 'sender_type": "stockarmobile_platform"' in handler or '"stockarmobile_platform"' in handler
+    assert "legacy tenant campaigns sent from the" in handler
