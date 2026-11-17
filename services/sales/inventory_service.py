@@ -58,8 +58,11 @@ class InventoryService:
         )
         for item in ordered_items:
             product = resolve_product_func(item)
-            if product is not None:
-                if branch_id is not None:
+            if product is None:
+                raise ValueError(
+                    "No se pudo resolver un producto de la venta en la empresa activa; no se restauró el stock."
+                )
+            if branch_id is not None:
                     from stockarmobile.branch_inventory import adjust_branch_stock
                     adjust_branch_stock(
                         product, branch_id, item.quantity or 0,
