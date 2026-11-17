@@ -448,6 +448,23 @@ class SaleService:
         db.session.expire(locked_sale, ["items"])
         return locked_sale
 
+    def _lock_products_for_sale_update(self, product_ids):
+        """Lock all products touched by an edit in stable order before changing stock."""
+        from app import Product, db, scope_query_to_company
+
+        normalized_ids = sorted({int(product_id) for product_id in (product_ids or []) if int(product_id) > 0})
+        if not normalized_ids:
+            return {}
+        rows = (
+            scope_query_to_company(db.session.query(Product), Product)
+            .filter(Product.id.in_(normalized_ids))
+            .order_by(Product.id.asc())
+            .with_for_update()
+            .populate_existing()
+            .all()
+        )
+        return {int(product.id): product for product in rows}
+
     def update_sale(
         self,
         *,
@@ -475,16 +492,39 @@ class SaleService:
         sale_order_discount_default = max(self._to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
         previous_snapshot = sale_snapshot(sale)
 
-        def _resolve_product_for_sale_item(item):
-            return item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
-
-        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=_resolve_product_for_sale_item, branch_id=getattr(sale, "branch_id", None), source_id=sale.id, user_id=getattr(current_user, "id", None))
-
         product_ids = form.getlist("product_id")
         quantities = form.getlist("quantity")
         prices = form.getlist("price")
         discounts = form.getlist("discount")
         row_deletes = form.getlist("remove_item")
+        product_id_values = []
+        for raw_value in product_ids:
+            raw_value = (raw_value or "").strip()
+            if raw_value:
+                product_id_values.append(int(raw_value))
+
+        # Pre-lock the union of old and new products in one deterministic order.
+        # Otherwise editing a sale to add a lower-ID product after restoring a
+        # higher-ID old product can invert locks and deadlock another checkout.
+        product_ids_to_lock = set(product_id_values)
+        product_ids_to_lock.update(
+            int(item.product_id) for item in sale.items if getattr(item, "product_id", None)
+        )
+        products_by_id = self._lock_products_for_sale_update(product_ids_to_lock)
+
+        def _resolve_product_for_sale_item(item):
+            product_id = int(getattr(item, "product_id", 0) or 0)
+            return products_by_id.get(product_id) or item.product or scope_query_to_company(
+                db.session.query(Product), Product
+            ).filter(Product.id == product_id).first()
+
+        InventoryService.reverse_stock(
+            sale_items=sale.items,
+            resolve_product_func=_resolve_product_for_sale_item,
+            branch_id=getattr(sale, "branch_id", None),
+            source_id=sale.id,
+            user_id=getattr(current_user, "id", None),
+        )
         order_discount = self._to_decimal(form.get("order_discount") or sale_order_discount_default or 0)
         discount_type = form.get("discount_type") or sale.discount_type
         discount_value = form.get("discount_value") or (order_discount if discount_type else None)
@@ -501,13 +541,6 @@ class SaleService:
             raw_value = (raw_value or "").strip()
             if raw_value:
                 product_id_values.append(int(raw_value))
-
-        products_by_id = {}
-        if product_id_values:
-            products_by_id = {
-                product.id: product
-                for product in scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(product_id_values)).all()
-            }
 
         new_lines = InventoryService.build_edit_lines(
             product_ids=product_ids,
