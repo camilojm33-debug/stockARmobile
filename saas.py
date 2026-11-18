@@ -7059,7 +7059,7 @@ def global_settings():
 @bp.get("/whatsapp-plantillas-maestras")
 @superadmin_required
 def whatsapp_master_templates():
-    """Show the centrally managed WhatsApp template definitions used for tenant provisioning."""
+    """Show master WhatsApp templates and provisioning state per merchant branch."""
     _require_superadmin()
     from app import Branch, Company
     from services.ai_agent.config_service import (
@@ -7069,44 +7069,61 @@ def whatsapp_master_templates():
     )
     from services.ai_agent.whatsapp_master_template_service import list_master_templates
 
+    master_templates = list_master_templates()
     channel_rows = []
+    status_labels = {
+        "APPROVED": "Aprobada",
+        "PENDING": "Pendiente de aprobación",
+        "IN_APPEAL": "En revisión de Meta",
+        "REJECTED": "Rechazada",
+        "CONFLICT": "Conflicto de contenido",
+        "ERROR": "Error de instalación",
+        "UNCERTAIN": "Resultado por confirmar",
+    }
 
     def add_channel_row(company, branch_name, whatsapp):
-        phone = str((whatsapp or {}).get("display_phone_number") or "").strip()
-        enabled = bool((whatsapp or {}).get("enabled") and (whatsapp or {}).get("phone_number_id"))
-        sync_state = (whatsapp or {}).get("master_template_sync")
+        whatsapp = whatsapp if isinstance(whatsapp, dict) else {}
+        phone = str(whatsapp.get("display_phone_number") or "").strip()
+        enabled = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
+        sync_state = whatsapp.get("master_template_sync")
         sync_state = sync_state if isinstance(sync_state, dict) else {}
         synced_templates = sync_state.get("templates")
         synced_templates = synced_templates if isinstance(synced_templates, list) else []
-        master_state = next(
-            (item for item in synced_templates if isinstance(item, dict) and item.get("key") == "marketing_general"),
-            None,
-        )
-        if not enabled:
-            status = "Sin WhatsApp conectado"
-            detail = "Conectá el WhatsApp del Vendedor IA para instalar la plantilla."
-        elif master_state is None:
-            status = "Pendiente de sincronización"
-            detail = "La plantilla se instalará cuando el comercio sincronice su WhatsApp."
-        else:
-            raw_status = str(master_state.get("status") or "UNKNOWN").upper()
-            status = {
-                "APPROVED": "Aprobada",
-                "PENDING": "Pendiente de aprobación de Meta",
-                "IN_APPEAL": "En revisión de Meta",
-                "REJECTED": "Rechazada por Meta",
-                "CONFLICT": "Conflicto de contenido",
-                "ERROR": "Error de instalación",
-                "UNCERTAIN": "Resultado por confirmar",
-            }.get(raw_status, raw_status.replace("_", " ").title())
-            detail = str(master_state.get("message") or "")
+        by_key = {
+            str(item.get("key") or ""): item
+            for item in synced_templates
+            if isinstance(item, dict)
+        }
+        template_statuses = []
+        for master in master_templates:
+            state = by_key.get(master["key"])
+            raw_status = str((state or {}).get("status") or "").upper()
+            if not enabled:
+                label = "Sin WhatsApp"
+                detail = "Conectá el WhatsApp de esta sucursal."
+            elif state is None:
+                label = "Sin sincronizar"
+                detail = "Sincronizá WhatsApp para instalar esta plantilla maestra."
+            else:
+                label = status_labels.get(raw_status, raw_status.replace("_", " ").title() or "Sin estado")
+                detail = str(state.get("message") or "")
+            template_statuses.append({
+                "key": master["key"],
+                "name": master["display_name"],
+                "meta_name": master["name"],
+                "status": label,
+                "raw_status": raw_status,
+                "detail": detail,
+            })
+        approved_count = sum(1 for item in template_statuses if item["raw_status"] == "APPROVED")
         channel_rows.append({
             "company": str(getattr(company, "name", "") or "Comercio"),
             "branch": str(branch_name or "Casa central"),
             "phone": phone or "—",
             "connected": enabled,
-            "status": status,
-            "detail": detail,
+            "template_statuses": template_statuses,
+            "approved_count": approved_count,
+            "template_count": len(master_templates),
             "checked_at": str(sync_state.get("checked_at") or ""),
         })
 
@@ -7128,7 +7145,7 @@ def whatsapp_master_templates():
 
     return render_template(
         "saas/whatsapp_master_templates.html",
-        master_templates=list_master_templates(),
+        master_templates=master_templates,
         channel_rows=channel_rows,
     )
 
