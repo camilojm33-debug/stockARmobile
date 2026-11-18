@@ -1,146 +1,6 @@
 {% extends "base_master.html" %}
 {% block title %}{{ campaign.title }} - Campañas IA
-<script>
-(function () {
-  const form = document.getElementById("campaignEditForm");
-  if (!form) return;
-  const goal = document.getElementById("campaignEditGoal");
-  const template = document.getElementById("campaignEditTemplate");
-  const content = document.getElementById("campaignEditContent");
-  const preview = document.getElementById("campaignTemplatePreview");
-  const panel = document.getElementById("campaignEditVariablePanel");
-  const controls = document.getElementById("campaignEditVariableControls");
-  const mappingInput = document.getElementById("campaignEditParameterFields");
-  const defaultsInput = document.getElementById("campaignEditParameterDefaults");
-  const feedback = document.getElementById("campaignEditVariableFeedback");
-  if (!goal || !template || !panel || !controls || !mappingInput || !defaultsInput) return;
-  let options = [];
-  let fields = String(mappingInput.value || "").split(",").filter(Boolean);
-  let defaults = {};
-  try { options = JSON.parse(panel.dataset.variableOptions || "[]"); } catch (_error) { options = []; }
-  try { defaults = JSON.parse(defaultsInput.value || "{}") || {}; } catch (_error) { defaults = {}; }
-  function preset() {
-    const option = goal.selectedOptions[0];
-    let mapping = [], fallback = {};
-    try { mapping = JSON.parse(option && option.dataset.defaultFields || "[]"); } catch (_error) { mapping = []; }
-    try { fallback = JSON.parse(option && option.dataset.defaultValues || "{}"); } catch (_error) { fallback = {}; }
-    return {mapping: Array.isArray(mapping) ? mapping : [], defaults: fallback && typeof fallback === "object" ? fallback : {}};
-  }
-  function body() { return template.selectedOptions[0]?.dataset.body || ""; }
-  function write() {
-    const selects = Array.from(controls.querySelectorAll("[data-field]"));
-    fields = selects.map(select => select.value);
-    const saved = {};
-    selects.forEach(select => {
-      const input = controls.querySelector('[data-default="' + select.dataset.position + '"]');
-      const value = String(input && input.value || "").trim();
-      if (value) saved[select.value] = value;
-    });
-    defaults = saved;
-    mappingInput.value = fields.join(",");
-    defaultsInput.value = JSON.stringify(saved);
-    const duplicated = fields.some((field, index) => fields.indexOf(field) !== index);
-    feedback.textContent = duplicated ? "Cada parámetro debe usar un campo diferente." : "Los valores predeterminados se aplicarán cuando falte el dato en la ficha.";
-    feedback.className = duplicated ? "small mt-2 text-danger" : "small mt-2 text-muted";
-    return !duplicated;
-  }
-  function render(preserve) {
-    controls.textContent = "";
-    const source = body();
-    const positions = Array.from(source.matchAll(/\{\{\s*(\d+)\s*\}\}/g)).map(match => Number(match[1]));
-    const count = positions.length ? Math.max.apply(null, positions) : 0;
-    const goalPreset = preset();
-    let templateFields = [];
-    try { templateFields = JSON.parse(template.selectedOptions[0].dataset.fields || "[]"); } catch (_error) { templateFields = []; }
-    const previousFields = fields.slice();
-    const previousDefaults = Object.assign({}, defaults);
-    for (let index = 0; index < count; index += 1) {
-      const row = document.createElement("div");
-      row.className = "row g-2 align-items-end border-bottom pb-2 mb-2";
-      const left = document.createElement("div");
-      left.className = "col-md-6";
-      const label = document.createElement("label");
-      label.className = "form-label small fw-semibold";
-      label.textContent = "Variable {{" + (index + 1) + "}}";
-      const select = document.createElement("select");
-      select.className = "form-select form-select-sm";
-      select.dataset.field = "1";
-      select.dataset.position = String(index + 1);
-      options.forEach(item => {
-        const option = document.createElement("option");
-        option.value = item.key;
-        option.textContent = item.label;
-        select.appendChild(option);
-      });
-      select.value = (preserve && previousFields[index]) || templateFields[index] || goalPreset.mapping[index] || options[0]?.key || "mensaje";
-      const right = document.createElement("div");
-      right.className = "col-md-6";
-      const defaultLabel = document.createElement("label");
-      defaultLabel.className = "form-label small";
-      defaultLabel.textContent = "Valor predeterminado (opcional)";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "form-control form-control-sm";
-      input.maxLength = 300;
-      input.placeholder = "Usar el dato de la ficha";
-      input.dataset.default = String(index + 1);
-      input.value = (preserve && previousDefaults[select.value]) || goalPreset.defaults[select.value] || "";
-      select.addEventListener("change", () => { input.value = goalPreset.defaults[select.value] || ""; write(); });
-      input.addEventListener("input", write);
-      left.appendChild(label);
-      left.appendChild(select);
-      right.appendChild(defaultLabel);
-      right.appendChild(input);
-      row.appendChild(left);
-      row.appendChild(right);
-      controls.appendChild(row);
-    }
-    write();
-    updatePreview();
-  }
-  function updatePreview() {
-    if (!preview) return;
-    const selectedBody = body();
-    const values = {
-      contacto: "Cliente de ejemplo", empresa: "Tu comercio", comercio: "Tu comercio",
-      telefono: "5491100000000", email: "cliente@ejemplo.com", localidad: "Tu localidad",
-      provincia: "Tu provincia", rubro: "minorista", producto: "Producto destacado",
-      precio: "Consultar", mensaje: (content.value || "").trim(), asunto: form.elements.objective.value || "Novedades"
-    };
-    const chosenFields = Array.from(controls.querySelectorAll("[data-field]")).map(select => select.value);
-    const resolved = chosenFields.map(field => values[field] || defaults[field] || "");
-    const hasOptOut = /\bBAJA\b/i.test(selectedBody) && /(dejar de recibir|no recibir)/i.test(selectedBody);
-    if (!hasOptOut && resolved.length && resolved[resolved.length - 1]) resolved[resolved.length - 1] += "\n\nPara dejar de recibir mensajes, respondé BAJA.";
-    let result = selectedBody;
-    resolved.forEach((value, index) => {
-      result = result.replace(new RegExp("\\{\\{\\s*" + (index + 1) + "\\s*\\}\\}", "g"), value);
-    });
-    preview.textContent = result;
-  }
-  function selectTemplateForGoal() {
-    const target = goal.value;
-    const match = Array.from(template.options).find(option => option.value && option.dataset.goal === target);
-    if (match) template.value = match.value;
-  }
-  template.addEventListener("change", () => {
-    const choice = template.selectedOptions[0];
-    if (choice && choice.dataset.goal) goal.value = choice.dataset.goal;
-    render(false);
-  });
-  goal.addEventListener("change", () => {
-    selectTemplateForGoal();
-    render(false);
-  });
-  content.addEventListener("input", updatePreview);
-  form.addEventListener("submit", event => {
-    if (!write()) {
-      event.preventDefault();
-      feedback.scrollIntoView({behavior: "smooth", block: "center"});
-    }
-  });
-  render(true);
-})();
-</script>
+
 <script src="{{ url_for('static', filename='assets/js/campaign-copy-template-picker.js') }}?v=20261118-1"></script>
 {% endblock %}
 {% block extra_css %}
@@ -304,6 +164,147 @@
   };
   if (templateSelect) templateSelect.addEventListener("change", updatePreview);
   if (content) content.addEventListener("input", updatePreview);
+})();
+</script>
+<script>
+(function () {
+  const form = document.getElementById("campaignEditForm");
+  if (!form) return;
+  const goal = document.getElementById("campaignEditGoal");
+  const template = document.getElementById("campaignEditTemplate");
+  const content = document.getElementById("campaignEditContent");
+  const preview = document.getElementById("campaignTemplatePreview");
+  const panel = document.getElementById("campaignEditVariablePanel");
+  const controls = document.getElementById("campaignEditVariableControls");
+  const mappingInput = document.getElementById("campaignEditParameterFields");
+  const defaultsInput = document.getElementById("campaignEditParameterDefaults");
+  const feedback = document.getElementById("campaignEditVariableFeedback");
+  if (!goal || !template || !panel || !controls || !mappingInput || !defaultsInput) return;
+  let options = [];
+  let fields = String(mappingInput.value || "").split(",").filter(Boolean);
+  let defaults = {};
+  try { options = JSON.parse(panel.dataset.variableOptions || "[]"); } catch (_error) { options = []; }
+  try { defaults = JSON.parse(defaultsInput.value || "{}") || {}; } catch (_error) { defaults = {}; }
+  function preset() {
+    const option = goal.selectedOptions[0];
+    let mapping = [], fallback = {};
+    try { mapping = JSON.parse(option && option.dataset.defaultFields || "[]"); } catch (_error) { mapping = []; }
+    try { fallback = JSON.parse(option && option.dataset.defaultValues || "{}"); } catch (_error) { fallback = {}; }
+    return {mapping: Array.isArray(mapping) ? mapping : [], defaults: fallback && typeof fallback === "object" ? fallback : {}};
+  }
+  function body() { return template.selectedOptions[0]?.dataset.body || ""; }
+  function write() {
+    const selects = Array.from(controls.querySelectorAll("[data-field]"));
+    fields = selects.map(select => select.value);
+    const saved = {};
+    selects.forEach(select => {
+      const input = controls.querySelector('[data-default="' + select.dataset.position + '"]');
+      const value = String(input && input.value || "").trim();
+      if (value) saved[select.value] = value;
+    });
+    defaults = saved;
+    mappingInput.value = fields.join(",");
+    defaultsInput.value = JSON.stringify(saved);
+    const duplicated = fields.some((field, index) => fields.indexOf(field) !== index);
+    feedback.textContent = duplicated ? "Cada parámetro debe usar un campo diferente." : "Los valores predeterminados se aplicarán cuando falte el dato en la ficha.";
+    feedback.className = duplicated ? "small mt-2 text-danger" : "small mt-2 text-muted";
+    return !duplicated;
+  }
+  function render(preserve) {
+    controls.textContent = "";
+    const source = body();
+    const positions = Array.from(source.matchAll(/\{\{\s*(\d+)\s*\}\}/g)).map(match => Number(match[1]));
+    const count = positions.length ? Math.max.apply(null, positions) : 0;
+    const goalPreset = preset();
+    let templateFields = [];
+    try { templateFields = JSON.parse(template.selectedOptions[0].dataset.fields || "[]"); } catch (_error) { templateFields = []; }
+    const previousFields = fields.slice();
+    const previousDefaults = Object.assign({}, defaults);
+    for (let index = 0; index < count; index += 1) {
+      const row = document.createElement("div");
+      row.className = "row g-2 align-items-end border-bottom pb-2 mb-2";
+      const left = document.createElement("div");
+      left.className = "col-md-6";
+      const label = document.createElement("label");
+      label.className = "form-label small fw-semibold";
+      label.textContent = "Variable {{" + (index + 1) + "}}";
+      const select = document.createElement("select");
+      select.className = "form-select form-select-sm";
+      select.dataset.field = "1";
+      select.dataset.position = String(index + 1);
+      options.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.key;
+        option.textContent = item.label;
+        select.appendChild(option);
+      });
+      select.value = (preserve && previousFields[index]) || templateFields[index] || goalPreset.mapping[index] || options[0]?.key || "mensaje";
+      const right = document.createElement("div");
+      right.className = "col-md-6";
+      const defaultLabel = document.createElement("label");
+      defaultLabel.className = "form-label small";
+      defaultLabel.textContent = "Valor predeterminado (opcional)";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "form-control form-control-sm";
+      input.maxLength = 300;
+      input.placeholder = "Usar el dato de la ficha";
+      input.dataset.default = String(index + 1);
+      input.value = (preserve && previousDefaults[select.value]) || goalPreset.defaults[select.value] || "";
+      select.addEventListener("change", () => { input.value = goalPreset.defaults[select.value] || ""; write(); });
+      input.addEventListener("input", write);
+      left.appendChild(label);
+      left.appendChild(select);
+      right.appendChild(defaultLabel);
+      right.appendChild(input);
+      row.appendChild(left);
+      row.appendChild(right);
+      controls.appendChild(row);
+    }
+    write();
+    updatePreview();
+  }
+  function updatePreview() {
+    if (!preview) return;
+    const selectedBody = body();
+    const values = {
+      contacto: "Cliente de ejemplo", empresa: "Tu comercio", comercio: "Tu comercio",
+      telefono: "5491100000000", email: "cliente@ejemplo.com", localidad: "Tu localidad",
+      provincia: "Tu provincia", rubro: "minorista", producto: "Producto destacado",
+      precio: "Consultar", mensaje: (content.value || "").trim(), asunto: form.elements.objective.value || "Novedades"
+    };
+    const chosenFields = Array.from(controls.querySelectorAll("[data-field]")).map(select => select.value);
+    const resolved = chosenFields.map(field => values[field] || defaults[field] || "");
+    const hasOptOut = /\bBAJA\b/i.test(selectedBody) && /(dejar de recibir|no recibir)/i.test(selectedBody);
+    if (!hasOptOut && resolved.length && resolved[resolved.length - 1]) resolved[resolved.length - 1] += "\n\nPara dejar de recibir mensajes, respondé BAJA.";
+    let result = selectedBody;
+    resolved.forEach((value, index) => {
+      result = result.replace(new RegExp("\\{\\{\\s*" + (index + 1) + "\\s*\\}\\}", "g"), value);
+    });
+    preview.textContent = result;
+  }
+  function selectTemplateForGoal() {
+    const target = goal.value;
+    const match = Array.from(template.options).find(option => option.value && option.dataset.goal === target);
+    if (match) template.value = match.value;
+  }
+  template.addEventListener("change", () => {
+    const choice = template.selectedOptions[0];
+    if (choice && choice.dataset.goal) goal.value = choice.dataset.goal;
+    render(false);
+  });
+  goal.addEventListener("change", () => {
+    selectTemplateForGoal();
+    render(false);
+  });
+  content.addEventListener("input", updatePreview);
+  form.addEventListener("submit", event => {
+    if (!write()) {
+      event.preventDefault();
+      feedback.scrollIntoView({behavior: "smooth", block: "center"});
+    }
+  });
+  render(true);
 })();
 </script>
 {% endblock %}
