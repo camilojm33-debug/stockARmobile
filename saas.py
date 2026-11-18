@@ -7070,8 +7070,10 @@ def whatsapp_master_templates():
         is_commercial_company,
     )
     from services.ai_agent.whatsapp_master_template_service import list_master_templates
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, message_templates
 
     master_templates = list_master_templates()
+    prospect_campaign_templates = message_templates(SCOPE_SAAS_PROSPECTS)
     channel_rows = []
     status_labels = {
         "APPROVED": "Aprobada",
@@ -7148,6 +7150,7 @@ def whatsapp_master_templates():
     return render_template(
         "saas/whatsapp_master_templates.html",
         master_templates=master_templates,
+        prospect_campaign_templates=prospect_campaign_templates,
         channel_rows=channel_rows,
     )
 
