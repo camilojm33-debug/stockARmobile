@@ -51,7 +51,7 @@
         <h2 class="h4 fw-bold">1. ¿Qué querés lograr?</h2><p class="text-muted">Este contexto guía la propuesta y facilita revisar el resultado.</p>
         <div class="row g-3">
           <div class="col-md-7"><label class="form-label">Nombre de campaña</label><input class="form-control" name="title" maxlength="180" required placeholder="Ej. Volvé a visitarnos"></div>
-          <div class="col-md-5"><label class="form-label">Objetivo</label><select class="form-select" name="objective" required><option value="">Elegir objetivo…</option><option>Recuperar clientes</option><option>Promocionar un producto</option><option>Informar una novedad</option><option>Fidelizar clientes</option></select></div>
+          <div class="col-md-5"><label class="form-label">Objetivo</label><select class="form-select" name="objective" required><option value="">Elegir objetivo…</option><option>Recuperar clientes</option><option>Hacer seguimiento comercial</option><option>Promocionar un producto</option><option>Informar una novedad</option><option>Fidelizar clientes</option></select></div>
         </div>
       </section>
       <section class="campaign-pane" data-step="2">
@@ -61,7 +61,7 @@
           <div class="col-md-5" id="campaignDaysWrap"><label class="form-label">Días sin compra</label><input class="form-control" type="number" min="1" max="365" name="days" id="campaignDays" value="90"></div>
           <div class="col-12 d-none" id="campaignSegmentWrap"><label class="form-label">Texto de etiqueta / filtro</label><input class="form-control" name="client_segment" id="campaignSegment" maxlength="80" placeholder="Ej. mayorista"><div class="form-text">Se busca en las notas internas del cliente.</div></div>
         </div>
-        <div class="alert alert-primary mt-3 mb-2"><strong><span id="campaignAudienceCount">{{ audience_count }}</span> destinatarios elegibles estimados</strong><div class="small mt-1"><span id="campaignAudienceExcluded">Se excluyen clientes sin consentimiento registrado, sin WhatsApp o inactivos.</span></div></div>
+        <div class="alert alert-primary mt-3 mb-2"><strong><span id="campaignAudienceCount">{{ audience_count }}</span> destinatarios elegibles estimados</strong><div class="small mt-1"><span id="campaignAudienceExcluded">Solo se incluirán clientes que autorizaron recibir promociones.</span></div></div>
         <div class="small text-muted">Antes de cada envío se vuelve a comprobar que cada contacto pueda recibir mensajes.</div>
       </section>
       <section class="campaign-pane" data-step="3">
@@ -206,7 +206,7 @@
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.error || "No se pudo actualizar la audiencia.");
       countLabel.textContent = String(payload.eligible);
-      excludedLabel.textContent = payload.excluded + " contacto(s) excluido(s) por falta de WhatsApp válido o consentimiento documentado.";
+      excludedLabel.textContent = payload.excluded + " contacto(s) excluido(s) porque no pueden recibir promociones.";
       updateReview();
     } catch (error) {
       excludedLabel.textContent = error.message || "No se pudo actualizar la audiencia.";
