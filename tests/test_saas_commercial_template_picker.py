@@ -63,14 +63,6 @@ def test_commercial_template_compatibility_rejects_wrong_category_and_dynamic_he
 
 
 def test_commercial_template_catalog_marks_supported_and_unsupported_templates(monkeypatch):
-    monkeypatch.setattr(
-        templates_service,
-        "_list_waba_templates",
-        lambda waba_id, token: [
-            _template(body="Hola {{1}} {{2}}"),
-            _template(name="other", body="Hola {{1}} {{3}}"),
-        ],
-    )
     # Set unique names so the order is deterministic.
     raw = [
         _template(body="Hola {{1}} {{2}}"),
