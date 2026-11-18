@@ -988,10 +988,9 @@ def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
     ]
     if fields == ["none"]:
         return []
-    if fields:
-        return fields
-    settings = _commercial_campaign_settings(campaign)
-    return list(settings.get("whatsapp_parameter_fields") or ["contacto", "producto", "mensaje"])
+    # Keep a stable backwards-compatible mapping for legacy campaigns. New UI
+    # drafts persist an explicit mapping derived from the selected template and goal.
+    return fields or ["contacto", "producto", "mensaje"]
 
 
 def _commercial_campaign_settings(campaign) -> dict:
