@@ -946,7 +946,10 @@ def vendor_whatsapp_complete():
                 branch=branch,
             )
             approved_master = next(
-                (item for item in master_template_provisioning if item.get("status") == "APPROVED"),
+                (
+                    item for item in master_template_provisioning
+                    if item.get("key") == "marketing_general" and item.get("status") == "APPROVED"
+                ),
                 None,
             )
             if approved_master:
@@ -1072,7 +1075,10 @@ def vendor_whatsapp_templates_provision():
         # this WhatsApp channel. Never overwrite a selection already made by the merchant.
         if not str(connection.get("template_name") or "").strip():
             approved_master = next(
-                (item for item in results if item.get("status") == "APPROVED"),
+                (
+                    item for item in results
+                    if item.get("key") == "marketing_general" and item.get("status") == "APPROVED"
+                ),
                 None,
             )
             if approved_master:
