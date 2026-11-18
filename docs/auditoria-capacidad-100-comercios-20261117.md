@@ -85,7 +85,7 @@ pytest -q -s --tb=short tests/test_tenant_load_capacity.py
 
 ### Resultado del benchmark PostgreSQL en CI
 
-Commit probado: `fc4c7d005587a0aed26988c067c2cbadb85c6ac8`. GitHub Actions: workflows `CI` y `StockArMobile tests` finalizados en verde. Resultado de la prueba específica: **100 empresas, 100 solicitudes, 5 solicitudes simultáneas, 100 respuestas exitosas, cero errores**. Latencias de solicitud observadas: p50 **0,694 s**, p95 **0,716 s**, p99 **1,144 s** y máximo **1,149 s**. Los datos se generaron en PostgreSQL 18 efímero de CI, no en producción.
+Commit de prueba: `4173b950a7665ac92e5512a4e724118168fad80b` (código integrado en `main` mediante `fa1cee6803ddd167c91785671e3f0bc7ecd58797`). GitHub Actions: workflows `CI` y `StockArMobile tests` finalizados en verde. Resultado final de la prueba específica: **100 empresas, 100 solicitudes, 5 solicitudes simultáneas, 100 respuestas exitosas, cero errores**. Latencias de solicitud observadas: p50 **0,522 s**, p95 **0,599 s**, p99 **0,769 s** y máximo **0,774 s**. Los datos se generaron en PostgreSQL 18 efímero de CI, no en producción.
 
 ### Resultado del ensayo de sobrecarga previo
 
