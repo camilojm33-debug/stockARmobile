@@ -1167,14 +1167,7 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
             except Exception as exc:
                 template_check = {"ok": False, "detail": str(exc)[:240]}
             if template_check.get("ok"):
-                raw_fields = str(campaign.whatsapp_parameter_fields or "").strip()
-                parameter_fields = [
-                    part.strip().lower()
-                    for part in raw_fields.split(",")
-                    if part.strip()
-                ]
-                if parameter_fields == ["none"]:
-                    parameter_fields = []
+                parameter_fields = get_commercial_whatsapp_parameter_fields(campaign)
                 expected_parameters = int(template_check.get("variable_count") or 0)
                 mapping_valid = (
                     len(parameter_fields) == expected_parameters
