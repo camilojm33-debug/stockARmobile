@@ -69,7 +69,7 @@ La prueba:
 1. Se ejecuta únicamente contra PostgreSQL real; en SQLite se omite.
 2. Crea 100 empresas de prueba, cada una con usuario administrador y membresía activa propia, producto, cliente, venta y detalle de venta.
 3. Sincroniza 100 solicitudes a `GET /dashboard/` mediante 100 workers.
-   - Mantiene el pool limitado a 5 conexiones + 10 de overflow; solo el timeout de espera se eleva a 120 segundos dentro del job de CI para que las solicitudes formen cola. Ese timeout de prueba no cambia el entorno de producción.
+   - En el PostgreSQL efímero de CI (`max_connections=100`), el benchmark usa un pool máximo de 50 conexiones (25 + 25 overflow) y timeout de 90 segundos. Es un perfil de estrés aislado; los valores predeterminados de producción permanecen en 5 + 10 y 30 segundos.
 4. Comprueba HTTP 200, empresa y usuario correctos en el HTML y presencia del producto/cliente de ese comercio.
 5. Comprueba que no aparezcan marcadores de productos o clientes de otros 99 comercios en la respuesta.
 6. Imprime p50, p95, p99 y máximo observados; exige que no se excedan los timeouts configurados y que el pool no conserve conexiones tomadas al finalizar.
