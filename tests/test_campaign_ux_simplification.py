@@ -12,7 +12,7 @@ def _read(path):
 
 
 def test_campaign_templates_have_valid_jinja_syntax():
-    env = Environment()
+    env = Environment(autoescape=True)
     for path in (
         "templates/ai_agents/campaign_wizard.html",
         "templates/ai_agents/campaign_detail.html",
