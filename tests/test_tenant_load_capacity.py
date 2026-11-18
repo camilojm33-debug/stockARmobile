@@ -66,16 +66,15 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
             )
             db.session.add_all([user, product, client])
             db.session.flush()
-            membership = CompanyMembership(
+            # The User after_insert hook provisions the primary membership.
+            membership = CompanyMembership.query.filter_by(
                 user_id=user.id,
                 company_id=company.id,
-                role="admin",
-                permissions_json='["sales","inventory","cash","reports","quotes_view"]',
                 active=True,
                 status="active",
-                accepted_at=utcnow(),
-            )
-            db.session.add(membership)
+            ).first()
+            assert membership is not None
+            assert membership.role == "admin"
 
             sale = Sale(
                 date=utcnow(),
