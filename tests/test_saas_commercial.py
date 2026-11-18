@@ -342,6 +342,18 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         assert recipient_before.status == "pending"
         assert campaign.status == "APROBADA"
 
+        campaign.whatsapp_parameter_fields = "contacto"
+        db.session.commit()
+        blocked = dispatch_due_campaigns(db.session, per_campaign=50)
+        recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
+        assert blocked["blocked"] == 1
+        assert blocked["sent"] == 0
+        assert calls == []
+        assert recipient.status == "pending"
+        assert campaign.status == "APROBADA"
+
+        campaign.whatsapp_parameter_fields = "contacto,empresa"
+        db.session.commit()
         result = dispatch_due_campaigns(db.session, per_campaign=50)
 
         recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
