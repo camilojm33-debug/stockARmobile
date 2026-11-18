@@ -20,6 +20,26 @@
     </div>
   </div>
 
+  <section class="card border-0 shadow-sm rounded-4 mb-4">
+    <div class="card-body p-4">
+      <div class="small text-uppercase fw-bold text-primary mb-1">SuperAdmin · Audiencia SaaS</div>
+      <h2 class="h5 fw-bold mb-1">Biblioteca comercial de captación</h2>
+      <p class="small text-muted">Estas propuestas se usan para captar nuevos comercios y convertir prospectos de StockARmobile. No incluyen ni consultan clientes de los comercios.</p>
+      <div class="row g-3">
+        {% for item in prospect_campaign_templates %}
+        <div class="col-lg-4">
+          <div class="border rounded-3 p-3 h-100">
+            <span class="badge text-bg-primary mb-2">{{ item.goal_key|replace('_',' ')|title }}</span>
+            <h3 class="h6 fw-bold">{{ item.label }}</h3>
+            <div class="small text-muted mb-2">{{ item.subject }}</div>
+            <pre class="small text-wrap mb-0" style="white-space:pre-wrap;font:inherit;">{{ item.body_text }}</pre>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
   {% for item in master_templates %}
     <section class="card border-0 shadow-sm rounded-4 mb-4">
       <div class="card-body p-4">
