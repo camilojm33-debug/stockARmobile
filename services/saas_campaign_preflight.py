@@ -295,6 +295,61 @@ def campaign_preflight(db_session, campaign) -> dict:
             "Primero validá la plantilla y el mapeo de sus variables.",
         )
 
+    email_preview_subject = ""
+    email_preview_text = ""
+    if email_channel:
+        from services.saas_commercial_service import (
+            _campaign_email_is_valid,
+            _commercial_email_missing_fields,
+            _eligible_leads_query,
+            render_merge,
+        )
+        email_total = 0
+        email_invalid = 0
+        missing_email_fields: dict[str, int] = {}
+        email_leads = _eligible_leads_query("email", filters).order_by("lead_score", "id")
+        for lead in email_leads.yield_per(500):
+            if not _campaign_email_is_valid(lead):
+                continue
+            email_total += 1
+            try:
+                missing = _commercial_email_missing_fields(campaign, lead)
+            except ValueError as exc:
+                missing = [str(exc)]
+            if missing:
+                email_invalid += 1
+                for field in missing:
+                    missing_email_fields[field] = missing_email_fields.get(field, 0) + 1
+            elif not email_preview_subject:
+                email_preview_subject = render_merge(campaign.subject, lead, campaign=campaign)
+                email_preview_text = render_merge(
+                    campaign.body_text or campaign.body_html,
+                    lead,
+                    campaign=campaign,
+                )
+        email_recipient_ok = email_total > 0 and email_invalid == 0
+        if email_total == 0:
+            email_recipient_detail = "No hay prospectos con email válido y consentimiento vigente para esta segmentación."
+        elif email_invalid:
+            missing_summary = ", ".join(
+                f"{field}: {count}" for field, count in sorted(missing_email_fields.items())
+            )
+            email_recipient_detail = (
+                f"{email_invalid} de {email_total} prospecto(s) tienen variables de email faltantes: {missing_summary}."
+            )
+        else:
+            email_recipient_detail = (
+                f"{email_total} prospecto(s) revisados; todos los campos del email están completos "
+                "o tienen valores predeterminados."
+            )
+        add(
+            "email_recipient_data",
+            "Datos personalizados de email",
+            email_recipient_ok,
+            email_recipient_detail,
+            "Completá los campos que faltan en la ficha del prospecto o agregá un valor predeterminado en la campaña.",
+        )
+
     try:
         from services.saas_commercial_service import crm_campaign_dispatch_worker_started
         worker_started = crm_campaign_dispatch_worker_started()
@@ -314,6 +369,8 @@ def campaign_preflight(db_session, campaign) -> dict:
         "issues": issues,
         "audience": audience,
         "preview_message": preview_message,
+        "preview_email_subject": email_preview_subject,
+        "preview_email_text": email_preview_text,
         "template_validation": template_validation,
         "summary": "Lista para enviar." if not issues else f"{len(issues)} bloqueo(s) detectado(s).",
     }
