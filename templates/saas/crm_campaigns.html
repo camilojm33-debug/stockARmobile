@@ -250,7 +250,7 @@
                 <label class="form-label fw-semibold">Objetivo comercial</label>
                 <select class="form-select" name="campaign_goal" data-campaign-goal>
                   {% for option in campaign_goal_options %}
-                  <option value="{{ option.key }}" {% if option.key == 'saas_acquisition' %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
+                  <option value="{{ option.key }}" data-default-fields='{{ option.default_mapping|tojson }}' data-default-values='{{ option.default_values|tojson }}' {% if option.key == 'saas_acquisition' %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
                   {% endfor %}
                 </select>
                 <div class="form-text">Este CRM se dirige exclusivamente a prospectos de StockARmobile. Los clientes finales permanecen en el CRM de cada comercio.</div>
