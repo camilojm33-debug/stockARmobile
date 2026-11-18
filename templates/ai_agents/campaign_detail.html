@@ -1,5 +1,135 @@
 {% extends "base_master.html" %}
-{% block title %}{{ campaign.title }} - Campañas IA{% endblock %}
+{% block title %}{{ campaign.title }} - Campañas IA
+<script>
+(function () {
+  const form = document.getElementById("campaignEditForm");
+  if (!form) return;
+  const goal = document.getElementById("campaignEditGoal");
+  const template = document.getElementById("campaignEditTemplate");
+  const content = document.getElementById("campaignEditContent");
+  const preview = document.getElementById("campaignTemplatePreview");
+  const panel = document.getElementById("campaignEditVariablePanel");
+  const controls = document.getElementById("campaignEditVariableControls");
+  const mappingInput = document.getElementById("campaignEditParameterFields");
+  const defaultsInput = document.getElementById("campaignEditParameterDefaults");
+  const feedback = document.getElementById("campaignEditVariableFeedback");
+  if (!goal || !template || !panel || !controls || !mappingInput || !defaultsInput) return;
+  let options = [];
+  let fields = String(mappingInput.value || "").split(",").filter(Boolean);
+  let defaults = {};
+  try { options = JSON.parse(panel.dataset.variableOptions || "[]"); } catch (_error) { options = []; }
+  try { defaults = JSON.parse(defaultsInput.value || "{}") || {}; } catch (_error) { defaults = {}; }
+  function preset() {
+    const option = goal.selectedOptions[0];
+    let mapping = [], fallback = {};
+    try { mapping = JSON.parse(option && option.dataset.defaultFields || "[]"); } catch (_error) { mapping = []; }
+    try { fallback = JSON.parse(option && option.dataset.defaultValues || "{}"); } catch (_error) { fallback = {}; }
+    return {mapping: Array.isArray(mapping) ? mapping : [], defaults: fallback && typeof fallback === "object" ? fallback : {}};
+  }
+  function body() { return template.selectedOptions[0]?.dataset.body || ""; }
+  function write() {
+    const selects = Array.from(controls.querySelectorAll("[data-field]"));
+    fields = selects.map(select => select.value);
+    const saved = {};
+    selects.forEach(select => {
+      const input = controls.querySelector('[data-default="' + select.dataset.position + '"]');
+      const value = String(input && input.value || "").trim();
+      if (value) saved[select.value] = value;
+    });
+    defaults = saved;
+    mappingInput.value = fields.join(",");
+    defaultsInput.value = JSON.stringify(saved);
+    const duplicated = fields.some((field, index) => fields.indexOf(field) !== index);
+    feedback.textContent = duplicated ? "Cada parámetro debe usar un campo diferente." : "Los valores predeterminados se aplicarán cuando falte el dato en la ficha.";
+    feedback.className = duplicated ? "small mt-2 text-danger" : "small mt-2 text-muted";
+    return !duplicated;
+  }
+  function render(preserve) {
+    controls.textContent = "";
+    const source = body();
+    const positions = Array.from(source.matchAll(/\{\{\s*(\d+)\s*\}\}/g)).map(match => Number(match[1]));
+    const count = positions.length ? Math.max.apply(null, positions) : 0;
+    const goalPreset = preset();
+    let templateFields = [];
+    try { templateFields = JSON.parse(template.selectedOptions[0].dataset.fields || "[]"); } catch (_error) { templateFields = []; }
+    const previousFields = fields.slice();
+    const previousDefaults = Object.assign({}, defaults);
+    for (let index = 0; index < count; index += 1) {
+      const row = document.createElement("div");
+      row.className = "row g-2 align-items-end border-bottom pb-2 mb-2";
+      const left = document.createElement("div");
+      left.className = "col-md-6";
+      const label = document.createElement("label");
+      label.className = "form-label small fw-semibold";
+      label.textContent = "Variable {{" + (index + 1) + "}}";
+      const select = document.createElement("select");
+      select.className = "form-select form-select-sm";
+      select.dataset.field = "1";
+      select.dataset.position = String(index + 1);
+      options.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.key;
+        option.textContent = item.label;
+        select.appendChild(option);
+      });
+      select.value = (preserve && previousFields[index]) || templateFields[index] || goalPreset.mapping[index] || options[0]?.key || "mensaje";
+      const right = document.createElement("div");
+      right.className = "col-md-6";
+      const defaultLabel = document.createElement("label");
+      defaultLabel.className = "form-label small";
+      defaultLabel.textContent = "Valor predeterminado (opcional)";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "form-control form-control-sm";
+      input.maxLength = 300;
+      input.placeholder = "Usar el dato de la ficha";
+      input.dataset.default = String(index + 1);
+      input.value = (preserve && previousDefaults[select.value]) || goalPreset.defaults[select.value] || "";
+      select.addEventListener("change", () => { input.value = goalPreset.defaults[select.value] || ""; write(); });
+      input.addEventListener("input", write);
+      left.appendChild(label);
+      left.appendChild(select);
+      right.appendChild(defaultLabel);
+      right.appendChild(input);
+      row.appendChild(left);
+      row.appendChild(right);
+      controls.appendChild(row);
+    }
+    write();
+    updatePreview();
+  }
+  function updatePreview() {
+    if (!preview) return;
+    const selectedBody = body();
+    const values = {
+      contacto: "Cliente de ejemplo", empresa: "Tu comercio", comercio: "Tu comercio",
+      telefono: "5491100000000", email: "cliente@ejemplo.com", localidad: "Tu localidad",
+      provincia: "Tu provincia", rubro: "minorista", producto: "Producto destacado",
+      precio: "Consultar", mensaje: (content.value || "").trim(), asunto: form.elements.objective.value || "Novedades"
+    };
+    const chosenFields = Array.from(controls.querySelectorAll("[data-field]")).map(select => select.value);
+    const resolved = chosenFields.map(field => values[field] || defaults[field] || "");
+    const hasOptOut = /\bBAJA\b/i.test(selectedBody) && /(dejar de recibir|no recibir)/i.test(selectedBody);
+    if (!hasOptOut && resolved.length && resolved[resolved.length - 1]) resolved[resolved.length - 1] += "\n\nPara dejar de recibir mensajes, respondé BAJA.";
+    let result = selectedBody;
+    resolved.forEach((value, index) => {
+      result = result.replace(new RegExp("\\{\\{\\s*" + (index + 1) + "\\s*\\}\\}", "g"), value);
+    });
+    preview.textContent = result;
+  }
+  template.addEventListener("change", () => render(false));
+  goal.addEventListener("change", () => render(false));
+  content.addEventListener("input", updatePreview);
+  form.addEventListener("submit", event => {
+    if (!write()) {
+      event.preventDefault();
+      feedback.scrollIntoView({behavior: "smooth", block: "center"});
+    }
+  });
+  render(true);
+})();
+</script>
+{% endblock %}
 {% block extra_css %}
 <style>
 .campaign-results{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}
@@ -21,6 +151,26 @@
     <div class="campaign-result"><span class="small text-muted">{{ label }}</span><strong>{{ value }}</strong></div>
     {% endfor %}
   </div>
+  <section class="card app-card mb-4"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <div><h2 class="h5 fw-bold mb-1">Preflight de campaña</h2><p class="small text-muted mb-0">Validamos remitente, plantilla, audiencia, consentimiento y datos de cada cliente antes de aprobar.</p></div>
+      <span class="badge {{ 'text-bg-success' if campaign_preflight.ready else 'text-bg-danger' }}">{{ 'Lista para enviar' if campaign_preflight.ready else 'Requiere correcciones' }}</span>
+    </div>
+    <div class="row g-2">
+      {% for check in campaign_preflight.checks %}
+      <div class="col-lg-6"><div class="border rounded-3 p-3 h-100">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi {{ 'bi-check-circle-fill text-success' if check.ok else 'bi-exclamation-triangle-fill text-danger' }} mt-1"></i>
+          <div><div class="fw-semibold small">{{ check.label }}</div><div class="small text-muted">{{ check.detail }}</div>
+          {% if not check.ok and check.resolution %}<div class="small mt-2"><strong>Cómo resolverlo:</strong> {{ check.resolution }}</div>{% endif %}</div>
+        </div>
+      </div></div>
+      {% endfor %}
+    </div>
+    {% if campaign_preflight.preview_message %}
+    <div class="mt-3"><div class="small fw-semibold mb-1">Vista previa personalizada con el primer cliente elegible</div><div class="campaign-preview">{{ campaign_preflight.preview_message }}</div></div>
+    {% endif %}
+  </div></section>
   <div class="row g-4">
     <div class="col-lg-7">
       <div class="card app-card mb-4"><div class="card-body">
@@ -33,16 +183,29 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="form-label fw-semibold">Título</label><input class="form-control mb-3" name="title" maxlength="180" value="{{ campaign.title }}" required>
           <label class="form-label fw-semibold">Objetivo</label><input class="form-control mb-3" name="objective" maxlength="120" value="{{ campaign.objective }}" required>
+          <label class="form-label fw-semibold" for="campaignEditGoal">Tipo de campaña para clientes</label>
+          <select class="form-select mb-3" name="campaign_goal" id="campaignEditGoal" required>
+            {% for option in campaign_goal_options %}
+            <option value="{{ option.key }}" data-default-fields='{{ option.default_mapping|tojson }}' data-default-values='{{ option.default_values|tojson }}' {% if option.key == campaign_goal %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
           <label class="form-label fw-semibold">Canal</label><div class="form-control mb-3 bg-light"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp del comercio · Vendedor IA 24/7{% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
           {% if campaign_template_options %}
           <label class="form-label fw-semibold" for="campaignEditTemplate">Plantilla Meta de esta campaña</label>
           <select class="form-select mb-1" name="whatsapp_template" id="campaignEditTemplate" required>
             <option value="">Elegí una plantilla MARKETING compatible…</option>
             {% for option in campaign_template_options %}
-            <option value="{{ option.name }}|{{ option.language }}" data-body="{{ option.body_text }}" {% if option.name == campaign_template.name and option.language == campaign_template.language %}selected{% endif %}>{{ option.name }} · {{ option.language }} · {{ option.category }}</option>
+            <option value="{{ option.name }}|{{ option.language }}" data-body="{{ option.body_text }}" data-goal="{{ option.campaign_goal or '' }}" data-fields='{{ option.default_parameter_fields|tojson }}' {% if option.name == campaign_template.name and option.language == campaign_template.language %}selected{% endif %}>{{ option.display_name or option.name }} · {{ option.language }} · {{ option.category }}</option>
             {% endfor %}
           </select>
           <div class="form-text mb-3">Solo plantillas aprobadas y compatibles de la WABA vinculada a esta sucursal. La selección no cambia el predeterminado del Vendedor IA.</div>
+          <div class="border rounded-3 p-3 mb-3" id="campaignEditVariablePanel" data-variable-options="{{ campaign_variable_options|tojson|forceescape }}">
+            <div class="fw-semibold mb-2">Variables inteligentes y valores predeterminados</div>
+            <div id="campaignEditVariableControls"></div>
+            <input type="hidden" name="whatsapp_parameter_fields" id="campaignEditParameterFields" value="{{ campaign_parameter_fields|join(',') }}">
+            <input type="hidden" name="whatsapp_parameter_defaults" id="campaignEditParameterDefaults" value='{{ campaign_parameter_defaults|tojson }}'>
+            <div id="campaignEditVariableFeedback" class="small mt-2" role="status"></div>
+          </div>
           {% else %}<div class="alert alert-warning py-2 small">No pudimos consultar plantillas compatibles de esta sucursal. La selección actual se conserva; sincronizá WhatsApp antes de cambiarla.</div>{% endif %}
           <label class="form-label fw-semibold">Programación local opcional</label><input class="form-control mb-1" type="datetime-local" name="scheduled_at" id="campaignScheduledLocal" value="{{ campaign_schedule_local }}">
           <input type="hidden" name="scheduled_at_utc" id="campaignScheduledUtc">          <div class="form-text mb-3">Zona horaria: {{ company.timezone if company and company.timezone else 'America/Argentina/Buenos_Aires' }}.</div>
