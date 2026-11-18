@@ -422,15 +422,31 @@
         </div>
         <div class="modal-body px-4">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="name" value="{{ campaign.name }}">
 
           <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Identidad y canal</div>
+            <div class="campaign-section-title"><span class="section-dot"></span>1. ¿A quién queremos llegar?</div>
+            <p class="small text-muted mb-3">Los contactos se vuelven a comprobar al guardar. Dejá los filtros vacíos para usar toda la base habilitada.</p>
             <div class="row g-3">
-              <div class="col-lg-8">
-                <label class="form-label fw-semibold">Nombre interno</label>
-                <input class="form-control" name="name" required value="{{ campaign.name }}" maxlength="180">
+              <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ segment_filters.get('industry','') }}" placeholder="Ej.: Ferretería"></div>
+              <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ segment_filters.get('province','') }}" placeholder="Ej.: Chaco"></div>
+              <div class="col-md-4"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" value="{{ segment_filters.get('locality','') }}" placeholder="Ej.: Resistencia"></div>
+              <div class="col-12">
+                <details>
+                  <summary class="small fw-semibold text-primary" style="cursor:pointer;">Más filtros (opcional)</summary>
+                  <div class="row g-3 mt-1">
+                    <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" value="{{ segment_filters.get('segment','') }}" placeholder="Ej.: captación"></div>
+                    <div class="col-md-6"><label class="form-label fw-semibold">Puntaje mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="{{ segment_filters.get('min_score',0) }}"></div>
+                  </div>
+                </details>
               </div>
-              <div class="col-lg-4">
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>2. ¿Qué mensaje vamos a enviar?</div>
+            <div class="row g-3">
+              <div class="col-md-4">
                 <label class="form-label fw-semibold">Canal</label>
                 <select class="form-select" name="channel">
                   <option value="email" {{ 'selected' if campaign.channel == 'email' else '' }}>Email</option>
@@ -438,72 +454,38 @@
                   <option value="both" {{ 'selected' if campaign.channel == 'both' else '' }}>Email + WhatsApp</option>
                 </select>
               </div>
-              <div class="col-lg-8">
-                <label class="form-label fw-semibold">Asunto / título</label>
+              <div class="col-md-8">
+                <label class="form-label fw-semibold">Título del mensaje</label>
                 <input class="form-control" name="subject" required value="{{ campaign.subject }}" maxlength="255">
               </div>
-              <div class="col-lg-4">
-                <label class="form-label fw-semibold">Programar envío</label>
-                <input class="form-control" type="datetime-local" name="scheduled_at" value="{{ campaign_scheduled_local }}">
-              </div>
-            </div>
-          </div>
-
-          <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Audiencia</div>
-            <div class="alert alert-info campaign-alert small mb-3">
-              <i class="bi bi-shield-check fs-5 me-1"></i>
-              Los filtros se vuelven a aplicar y los destinatarios anteriores se descartan al guardar.
-            </div>
-            <div class="row g-3">
-              <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ segment_filters.get('industry','') }}" placeholder="Ferretería"></div>
-              <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ segment_filters.get('province','') }}" placeholder="Chaco"></div>
-              <div class="col-md-4"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" value="{{ segment_filters.get('locality','') }}" placeholder="Resistencia"></div>
-              <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" value="{{ segment_filters.get('segment','') }}" placeholder="captacion"></div>
-              <div class="col-md-6"><label class="form-label fw-semibold">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="{{ segment_filters.get('min_score',0) }}"></div>
-            </div>
-          </div>
-
-          <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
-            <div class="row g-3">
               <div class="col-12">
-                <label class="form-label fw-semibold">Texto</label>
+                <label class="form-label fw-semibold">Mensaje</label>
                 <textarea class="form-control" name="body_text" rows="7" required>{{ campaign.body_text or '' }}</textarea>
               </div>
-              <div class="col-12">
-                <label class="form-label fw-semibold">HTML para Email</label>
-                <textarea class="form-control font-monospace" name="body_html" rows="9" required>{{ campaign.body_html }}</textarea>
-              </div>
             </div>
+            <div class="alert alert-info small mt-3 mb-0" data-whatsapp-template-feedback role="status">Estamos comprobando que WhatsApp esté listo para esta campaña.</div>
+            <details class="mt-3">
+              <summary class="small fw-semibold text-primary" style="cursor:pointer;">Programar para más tarde (opcional)</summary>
+              <div class="mt-2"><label class="form-label fw-semibold">Fecha y hora</label><input class="form-control" type="datetime-local" name="scheduled_at" value="{{ campaign_scheduled_local }}"></div>
+            </details>
+            <details class="mt-3">
+              <summary class="small fw-semibold text-primary" style="cursor:pointer;">Diseño avanzado de Email (opcional)</summary>
+              <div class="mt-2">
+                <label class="form-label fw-semibold">Diseño del correo</label>
+                <textarea class="form-control font-monospace" name="body_html" rows="8" required>{{ campaign.body_html }}</textarea>
+                <div class="form-text">El diseño básico se genera automáticamente a partir del texto del mensaje.</div>
+              </div>
+            </details>
           </div>
 
-          <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>WhatsApp Comercial · plantillas de Meta</div>
-            <div class="row g-3">
-              <div class="col-lg-9">
-                <label class="form-label fw-semibold">Plantilla aprobada en tu cuenta de WhatsApp</label>
-                <select class="form-select" data-whatsapp-template-picker disabled>
-                  <option value="">Consultando Meta...</option>
-                </select>
-                <input type="hidden" name="whatsapp_template_name" data-whatsapp-template-name value="{{ campaign.whatsapp_template_name or '' }}">
-                <input type="hidden" name="whatsapp_template_language" data-whatsapp-template-language value="{{ campaign.whatsapp_template_language or 'es_AR' }}">
-              </div>
-              <div class="col-lg-3 d-flex align-items-end">
-                <button type="button" class="btn btn-outline-primary w-100" data-whatsapp-template-refresh>
-                  <i class="bi bi-arrow-repeat me-1"></i>Actualizar plantillas
-                </button>
-              </div>
-              <div class="col-12">
-                <div class="alert alert-info small mb-2" data-whatsapp-template-feedback role="status">
-                  Las plantillas se consultan directamente desde Meta. Solo se habilitan las aprobadas como MARKETING y compatibles con campañas.
-                </div>
-                <pre class="small text-muted bg-light rounded-3 p-3 mb-2 text-wrap" data-whatsapp-template-preview>Vista previa de la plantilla seleccionada.</pre>
-                <div data-whatsapp-parameter-controls></div>
-                <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="{{ campaign.whatsapp_parameter_fields or default_whatsapp_parameter_fields }}">
-              </div>
-            </div>
-            <div class="small text-muted mt-2">Los datos de las variables se completan con la ficha del prospecto y el texto de la campaña. Este selector usa únicamente el WhatsApp Comercial interno de SuperAdmin.</div>
+          <div class="d-none" aria-hidden="true">
+            <select class="form-select" data-whatsapp-template-picker disabled><option value="">Configuración automática</option></select>
+            <input type="hidden" name="whatsapp_template_name" data-whatsapp-template-name value="{{ campaign.whatsapp_template_name or '' }}">
+            <input type="hidden" name="whatsapp_template_language" data-whatsapp-template-language value="{{ campaign.whatsapp_template_language or 'es_AR' }}">
+            <button type="button" data-whatsapp-template-refresh>Actualizar</button>
+            <pre data-whatsapp-template-preview></pre>
+            <div data-whatsapp-parameter-controls></div>
+            <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="{{ campaign.whatsapp_parameter_fields or default_whatsapp_parameter_fields }}">
           </div>
         </div>
         <div class="modal-footer px-4 gap-2">
