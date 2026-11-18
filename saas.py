@@ -2690,8 +2690,10 @@ def crm_leads_export():
 @superadmin_required
 def crm_campaigns():
     from app import SaaSCampaign, db, record_audit
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
 
     _require_superadmin()
+    default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
     if request.method == "POST":
         from services.saas_commercial_service import segment_filters_from_request
 
@@ -2703,7 +2705,7 @@ def crm_campaigns():
         body_text = (request.form.get("body_text") or "").strip() or None
         whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
         whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
-        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,producto,mensaje").strip()[:500] or "contacto,producto,mensaje"
+        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or default_whatsapp_parameter_fields).strip()[:500] or default_whatsapp_parameter_fields
         if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
             flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
             return redirect(url_for("saas.crm_campaigns"))
@@ -2746,6 +2748,7 @@ def crm_campaigns():
         marketing_send_enabled=marketing_send_enabled,
         smtp_configured=smtp_configured,
         commercial_whatsapp=commercial_whatsapp,
+        default_whatsapp_parameter_fields=default_whatsapp_parameter_fields,
     )
 
 
@@ -2852,11 +2855,13 @@ def crm_campaign_bulk_consent(campaign_id):
 @superadmin_required
 def crm_campaign_detail(campaign_id):
     from app import SaaSCampaign, db
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
     from services.saas_campaign_preflight import campaign_preflight
     from services.saas_commercial_whatsapp import commercial_whatsapp_summary
 
     _require_superadmin()
+    default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
     try:
         segment_filters = json.loads(campaign.segment_json or "{}")
@@ -2905,6 +2910,7 @@ def crm_campaign_detail(campaign_id):
         preflight=campaign_preflight(db.session, campaign),
         consent_candidates=consent_candidates,
         commercial_whatsapp=commercial_whatsapp_summary(),
+        default_whatsapp_parameter_fields=default_whatsapp_parameter_fields,
     )
 
 
@@ -2960,8 +2966,10 @@ def crm_campaign_prepare(campaign_id):
 @superadmin_required
 def crm_campaign_edit(campaign_id):
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
 
     _require_superadmin()
+    default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
     if campaign.status != "BORRADOR":
         flash("Solo se puede editar una campaña que todavía está en Borrador.", "warning")
@@ -2974,7 +2982,7 @@ def crm_campaign_edit(campaign_id):
     body_text = (request.form.get("body_text") or "").strip() or None
     whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
     whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
-    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,producto,mensaje").strip()[:500] or "contacto,producto,mensaje"
+    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or default_whatsapp_parameter_fields).strip()[:500] or default_whatsapp_parameter_fields
 
     if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
         flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
