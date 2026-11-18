@@ -7163,6 +7163,15 @@ def whatsapp_master_templates_publish_commercial():
 
     try:
         connection = get_whatsapp_connection(company)
+        if not connection.get("enabled"):
+            return jsonify({"success": False, "error": "Habilitá primero WhatsApp Comercial en la configuración de StockARmobile."}), 409
+        if not str(connection.get("phone_number_id") or "").strip():
+            return jsonify({"success": False, "error": "Falta el Phone Number ID del WhatsApp Comercial."}), 409
+        waba_id = str(connection.get("business_account_id") or "").strip()
+        if not waba_id.isdigit() or len(waba_id) > 30:
+            return jsonify({"success": False, "error": "Configurá un WABA ID válido para WhatsApp Comercial."}), 409
+        if not str(connection.get("access_token") or "").strip():
+            return jsonify({"success": False, "error": "Falta el token de Meta. Reconectá WhatsApp con permiso whatsapp_business_management."}), 409
         results = provision_master_templates(connection)
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 409
