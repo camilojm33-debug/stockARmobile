@@ -244,7 +244,7 @@ def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
     assert "Plantillas aprobadas disponibles" in template
     assert "Solo se muestran plantillas que Meta ya aprobó" in template
     assert "Estado de la plantilla maestra" in template
-    assert "La plantilla maestra está pendiente de aprobación" in template
+    assert "La plantilla general está pendiente de aprobación" in template
     assert "Plantilla aprobada</label>" not in template
     assert '@bp.get("/whatsapp-plantillas-maestras")' in superadmin_source
     assert "list_master_templates()" in superadmin_source
