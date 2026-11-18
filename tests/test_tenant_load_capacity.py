@@ -12,7 +12,7 @@ from time import perf_counter
 
 import pytest
 
-from app import Client, Company, Product, Sale, SaleItem, User, db, utcnow
+from app import Client, Company, CompanyMembership, Product, Sale, SaleItem, User, db, utcnow
 
 
 TENANT_COUNT = 100
@@ -64,8 +64,18 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
                 active=True,
                 company_id=company.id,
             )
+            membership = CompanyMembership(
+                user_id=user.id,
+                company_id=company.id,
+                role="admin",
+                permissions_json='["sales","inventory","cash","reports","quotes_view"]',
+                active=True,
+                status="active",
+                accepted_at=utcnow(),
+            )
             db.session.add_all([user, product, client])
             db.session.flush()
+            db.session.add(membership)
 
             sale = Sale(
                 date=utcnow(),
@@ -95,6 +105,7 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
                     "company_id": company.id,
                     "user_id": user.id,
                     "product_marker": product.name,
+                    "client_marker": client.name,
                 }
             )
 
@@ -102,6 +113,8 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
         db.session.remove()
 
     start_gate = Barrier(TENANT_COUNT)
+    all_product_markers = [tenant["product_marker"] for tenant in tenants]
+    all_client_markers = [tenant["client_marker"] for tenant in tenants]
 
     def load_dashboard(tenant):
         client = app.test_client()
@@ -125,6 +138,20 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
         assert f'data-company-id="{tenant["company_id"]}"' in html
         assert f'data-user-id="{tenant["user_id"]}"' in html
         assert tenant["product_marker"] in html
+        assert tenant["client_marker"] in html
+
+        foreign_markers = [
+            marker for marker in all_product_markers
+            if marker != tenant["product_marker"]
+        ] + [
+            marker for marker in all_client_markers
+            if marker != tenant["client_marker"]
+        ]
+        leaked_markers = [marker for marker in foreign_markers if marker in html]
+        assert not leaked_markers, (
+            f"El dashboard del tenant {tenant['company_id']} expuso datos de otro comercio: "
+            f"{leaked_markers[:3]}"
+        )
 
         return elapsed_seconds
 
