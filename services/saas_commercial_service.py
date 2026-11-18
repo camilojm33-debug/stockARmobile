@@ -991,30 +991,60 @@ def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
     return fields or ["contacto", "producto", "mensaje"]
 
 
-def _whatsapp_template_parameters(campaign, lead) -> list[str]:
+def _commercial_campaign_settings(campaign) -> dict:
+    from services.campaign_template_engine import (
+        SCOPE_SAAS_PROSPECTS,
+        campaign_settings,
+    )
+
+    return campaign_settings(SCOPE_SAAS_PROSPECTS, getattr(campaign, "segment_json", "{}"))
+
+
+def _commercial_lead_variable_context(campaign, lead) -> dict:
     from flask import current_app
 
-    campaign_message = render_merge(_clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject), lead)
-    values = {
+    campaign_message = render_merge(
+        _clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject),
+        lead,
+    )
+    app_url = _clean(current_app.config.get("APP_URL"))
+    return {
         "empresa": _clean(lead.company_name),
         "comercio": _clean(lead.company_name),
         "contacto": _clean(lead.contact_name),
         "rubro": _clean(lead.industry),
         "localidad": _clean(lead.locality),
-        "producto": "StockArMobile",
+        "producto": "StockARmobile",
         "mensaje": campaign_message,
         "asunto": render_merge(_clean(campaign.subject), lead),
         "trial_url": (
-            f"{_clean(current_app.config.get('APP_URL')).rstrip('/')}/auth/register?selected_plan=trial"
-            if _clean(current_app.config.get("APP_URL"))
-            else ""
+            f"{app_url.rstrip('/')}/auth/register?selected_plan=trial"
+            if app_url else ""
         ),
     }
+
+
+def _whatsapp_template_parameters(campaign, lead, *, return_details: bool = False):
+    from services.campaign_template_engine import (
+        SCOPE_SAAS_PROSPECTS,
+        resolve_parameters,
+    )
+
+    settings = _commercial_campaign_settings(campaign)
     fields = get_commercial_whatsapp_parameter_fields(campaign)
-    unknown = [field for field in fields if field not in values]
-    if unknown:
-        raise ValueError(f"Campos de plantilla WhatsApp no soportados: {', '.join(unknown)}")
-    return [values[field] for field in fields]
+    resolved = resolve_parameters(
+        SCOPE_SAAS_PROSPECTS,
+        fields,
+        _commercial_lead_variable_context(campaign, lead),
+        settings.get("parameter_defaults"),
+        goal_key=settings.get("campaign_goal"),
+    )
+    if not resolved["valid"]:
+        problems = list(resolved["errors"])
+        if resolved["missing_fields"]:
+            problems.append("Faltan valores para: " + ", ".join(resolved["missing_fields"]) + ".")
+        raise ValueError(" ".join(problems) or "Hay variables de campaña sin resolver.")
+    return resolved if return_details else resolved["values"]
 
 
 def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
