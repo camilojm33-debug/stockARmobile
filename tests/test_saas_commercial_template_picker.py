@@ -97,7 +97,7 @@ def test_commercial_campaign_parameter_builder_supplies_product_and_campaign_tex
     flask_app.config["APP_URL"] = "https://app.stockarmobile.com"
     campaign = SimpleNamespace(
         whatsapp_parameter_fields="contacto,producto,mensaje,trial_url",
-        body_text="Gestioná stock y ventas desde un solo lugar.",
+        body_text="Hola {{contacto}}: gestioná stock y ventas desde un solo lugar.",
         subject="Conocé StockArMobile",
     )
     lead = SimpleNamespace(
@@ -113,7 +113,7 @@ def test_commercial_campaign_parameter_builder_supplies_product_and_campaign_tex
     assert result == [
         "Carla",
         "StockArMobile",
-        "Gestioná stock y ventas desde un solo lugar.",
+        "Hola Carla: gestioná stock y ventas desde un solo lugar.",
         "https://app.stockarmobile.com/auth/register?selected_plan=trial",
     ]
 
