@@ -175,6 +175,19 @@
         {% endfor %}
       </div>
     </details>
+    <div class="alert alert-light border campaign-alert small mt-3 mb-0">
+      {% if audience.total == 0 %}
+        <strong>La audiencia filtrada está en 0.</strong>
+        No encontramos contactos con los filtros actuales. Revisá rubro, provincia, localidad y segmento, o quitá los filtros para revisar toda la agenda.
+      {% else %}
+        <strong>{{ audience.total }} contactos coinciden con los filtros.</strong>
+        <div class="mt-1">
+          Email disponible: {{ audience.email_available }} · Email con permiso: {{ audience.email_optin }}.
+          WhatsApp disponible: {{ audience.whatsapp_available }} · WhatsApp con permiso: {{ audience.whatsapp_optin }}.
+        </div>
+      {% endif %}
+      <div class="mt-1 text-muted">Un dato importado no equivale a consentimiento de marketing. Solo se pueden agregar contactos con permiso registrado para el canal elegido.</div>
+    </div>
   </section>
 
   <div class="row g-4">
@@ -265,16 +278,13 @@
         <h2 class="h5 fw-bold mb-2">Acciones</h2>
         <p class="small text-muted">Primero revisá quiénes recibirán el mensaje. Después confirmá con tu contraseña.</p>
         {% if campaign.status == 'BORRADOR' %}
-          {% if campaign.channel in ['email','both'] %}
           <form method="post" action="{{ url_for('saas.crm_campaign_audience_all_email', campaign_id=campaign.id) }}" class="mb-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-light border w-100" type="submit"><i class="bi bi-envelope-paper me-1"></i>Incluir todos los contactos habilitados para Email</button>
+            <button class="btn btn-light border w-100" type="submit"><i class="bi bi-funnel me-1"></i>Quitar filtros y ampliar la audiencia</button>
           </form>
-          {% endif %}
-          <form method="post" action="{{ url_for('saas.crm_campaign_prepare',campaign_id=campaign.id) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-outline-primary w-100"><i class="bi bi-people me-1"></i>Revisar destinatarios</button>
-          </form>
+          <a class="btn btn-outline-primary w-100" href="{{ url_for('saas.crm_campaign_select_recipients', campaign_id=campaign.id) }}">
+            <i class="bi bi-people me-1"></i>Seleccionar destinatarios
+          </a>
           {% if preflight.ready %}
           <form method="post" action="{{ url_for('saas.crm_campaign_approve',campaign_id=campaign.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
