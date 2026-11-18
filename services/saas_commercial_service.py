@@ -973,15 +973,25 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     detail = "; ".join(connection_failures) or "sin detalle"
     return False, f"No se pudo conectar/autenticar al SMTP ({detail})."
 
+COMMERCIAL_WHATSAPP_PARAMETER_FIELDS = {
+    "empresa", "comercio", "contacto", "rubro", "localidad",
+    "producto", "mensaje", "asunto", "trial_url",
+}
+
+
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
 
+    campaign_message = _clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject)
     values = {
         "empresa": _clean(lead.company_name),
         "comercio": _clean(lead.company_name),
         "contacto": _clean(lead.contact_name),
         "rubro": _clean(lead.industry),
         "localidad": _clean(lead.locality),
+        "producto": "StockArMobile",
+        "mensaje": campaign_message,
+        "asunto": _clean(campaign.subject),
         "trial_url": (
             f"{_clean(current_app.config.get('APP_URL')).rstrip('/')}/auth/register?selected_plan=trial"
             if _clean(current_app.config.get("APP_URL"))
@@ -995,6 +1005,8 @@ def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     ]
     if fields == ["none"]:
         return []
+    if not fields:
+        fields = ["contacto", "producto", "mensaje"]
     unknown = [field for field in fields if field not in values]
     if unknown:
         raise ValueError(f"Campos de plantilla WhatsApp no soportados: {', '.join(unknown)}")
