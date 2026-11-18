@@ -115,3 +115,13 @@ def test_hidden_campaign_metadata_is_generated_without_exposing_meta_configurati
     assert "nameInput.value" in picker
     assert "or subject[:180]" in route
     assert "def crm_campaigns():" in route
+
+
+def test_shared_commercial_navigation_avoids_crm_jargon():
+    nav = _read("templates/crm/_nav.html")
+
+    assert "Agenda comercial" in nav
+    assert "Navegación comercial" in nav
+    assert ">Oportunidades</a>" in nav
+    assert ">Agregar contacto</a>" in nav
+    assert "<i class=\"bi bi-briefcase\"></i> CRM</span>" not in nav
