@@ -203,3 +203,5 @@ def test_commercial_campaign_detail_distinguishes_whatsapp_delivery_states():
     assert "Entregado</span>" in template
     assert "Leído</span>" in template
     assert "No entregado</span>" in template
+    assert "metrics.delivered" in template
+    assert "metrics.opened" in template
