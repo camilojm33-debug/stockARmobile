@@ -159,6 +159,7 @@ def list_approved_campaign_templates(connection: dict) -> list[dict]:
                     "master_key": str(master.get("key") or ""),
                     "campaign_goal": str(master.get("goal_key") or ""),
                     "display_name": str(master.get("display_name") or name)[:140],
+                    "default_parameter_fields": list(master.get("default_parameter_fields") or []),
                 })
 
             next_url = str((payload.get("paging") or {}).get("next") or "").strip()
