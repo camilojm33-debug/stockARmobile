@@ -28,7 +28,7 @@
         <h2 class="h5 fw-bold">Mensaje y previsualización</h2>
         <p class="small text-muted">Así verán tus clientes el mensaje. El sistema completa automáticamente los datos y agrega la opción para dejar de recibir promociones.</p>
         {% if campaign_template.name %}<div class="alert alert-success py-2"><i class="bi bi-check-circle me-1"></i>WhatsApp está listo para esta campaña.</div>{% else %}<div class="alert alert-warning py-2"><i class="bi bi-exclamation-circle me-1"></i>La conexión de WhatsApp debe revisarse antes de aprobar. No se enviará nada hasta que esté lista.</div>{% endif %}
-        <div class="campaign-preview mb-3">{{ campaign_template_preview or 'La vista previa estará disponible luego de validar una plantilla compatible.' }}</div>
+        <div class="campaign-preview mb-3">{{ campaign_template_preview or 'La vista previa estará disponible cuando WhatsApp esté listo.' }}</div>
         {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] %}
         <form method="post" action="{{ url_for('ai_agents.campaign_edit', campaign_id=campaign.id) }}" id="campaignEditForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
