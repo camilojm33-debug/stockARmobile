@@ -1628,6 +1628,14 @@ def campaign_wizard():
         _template_includes_opt_out,
         resolve_tenant_campaign_sender,
     )
+    from services.campaign_template_engine import (
+        SCOPE_MERCHANT_CLIENTS,
+        get_goal,
+        goal_options,
+        normalize_mapping,
+        parse_defaults,
+        variable_options,
+    )
 
     entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
@@ -1640,6 +1648,17 @@ def campaign_wizard():
     template_options = []
     template_selected = False
     template_auto_selected = False
+    requested_goal = (
+        request.form.get("campaign_goal")
+        if request.method == "POST"
+        else request.args.get("campaign_goal")
+    )
+    try:
+        selected_goal = get_goal(SCOPE_MERCHANT_CLIENTS, requested_goal or "customer_marketing")
+    except ValueError:
+        selected_goal = get_goal(SCOPE_MERCHANT_CLIENTS, "customer_marketing")
+    campaign_goal_options = goal_options(SCOPE_MERCHANT_CLIENTS)
+    campaign_variable_options = variable_options(SCOPE_MERCHANT_CLIENTS)
     campaign_branch_id = get_active_branch_id()
     if campaign_branch_id is None:
         from stockarmobile.branch_context import get_default_branch_id
@@ -1689,16 +1708,29 @@ def campaign_wizard():
             ),
             None,
         )
-        if configured:
+        goal_master = next(
+            (
+                item for item in template_options
+                if item.get("campaign_goal") == selected_goal["key"]
+            ),
+            None,
+        )
+        if configured and (
+            not configured.get("campaign_goal")
+            or configured.get("campaign_goal") == selected_goal["key"]
+        ):
             template = configured
             template_selected = True
+        elif goal_master:
+            template = goal_master
+            template_selected = True
+            template_auto_selected = True
         elif len(template_options) == 1:
             template = template_options[0]
             template_selected = True
             template_auto_selected = True
         else:
-            # Keep a representative preview while requiring an explicit choice
-            # when more than one compatible template exists.
+            # Require explicit selection when more than one compatible template exists.
             template = template_options[0]
     except ValueError as exc:
         template_error = str(exc)
@@ -1720,6 +1752,10 @@ def campaign_wizard():
                 template=None,
                 template_options=[],
                 template_selected=False,
+                campaign_goal_options=campaign_goal_options,
+                campaign_goal=selected_goal["key"],
+                campaign_variable_options=campaign_variable_options,
+                campaign_parameter_defaults=dict(selected_goal.get("default_values") or {}),
                 template_error=template_error,
                 products=products,
                 opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
@@ -1746,6 +1782,31 @@ def campaign_wizard():
             )
             template_selected = True
             template_auto_selected = False
+            body_positions = {
+                int(value)
+                for value in re.findall(
+                    r"\{\{\s*(\d+)\s*\}\}",
+                    str(template.get("body_text") or ""),
+                )
+            }
+            expected_parameters = len(body_positions)
+            if body_positions != set(range(1, expected_parameters + 1)):
+                raise ValueError("La plantilla seleccionada no utiliza variables consecutivas compatibles.")
+            master_mapping = template.get("default_parameter_fields") or selected_goal.get("default_mapping") or []
+            mapping_value = request.form.get("whatsapp_parameter_fields") or master_mapping
+            parameter_fields, mapping_errors = normalize_mapping(
+                SCOPE_MERCHANT_CLIENTS,
+                mapping_value,
+                expected_count=expected_parameters,
+                goal_key=selected_goal["key"],
+            )
+            if mapping_errors:
+                raise ValueError(" ".join(mapping_errors))
+            default_values = dict(selected_goal.get("default_values") or {})
+            default_values.update(parse_defaults(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("whatsapp_parameter_defaults") or "{}",
+            ))
         except ValueError as exc:
             flash(str(exc), "danger")
             return redirect(url_for("ai_agents.campaign_wizard"))
@@ -1799,6 +1860,10 @@ def campaign_wizard():
                 content=content,
                 system_data={
                     "channel": "whatsapp",
+                    "audience_scope": SCOPE_MERCHANT_CLIENTS,
+                    "campaign_goal": selected_goal["key"],
+                    "whatsapp_parameter_fields": parameter_fields,
+                    "parameter_defaults": default_values,
                     "client_segment": client_segment if audience_choice == "notes" else "",
                     "days": days,
                     "branch_id": campaign_branch_id,
@@ -1838,6 +1903,10 @@ def campaign_wizard():
         template=template,
         template_options=template_options,
         template_selected=template_selected,
+        campaign_goal_options=campaign_goal_options,
+        campaign_goal=selected_goal["key"],
+        campaign_variable_options=campaign_variable_options,
+        campaign_parameter_defaults=dict(selected_goal.get("default_values") or {}),
         template_error=template_error,
         campaign_sender_phone=campaign_sender_phone,
         template_admin_url=template_admin_url,
