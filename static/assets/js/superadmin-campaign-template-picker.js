@@ -181,7 +181,57 @@
     loadTemplates();
   }
 
+  function startFormDefaults(form) {
+    const nameInput = form.querySelector('[name="name"]');
+    const subjectInput = form.querySelector('[name="subject"]');
+    const bodyText = form.querySelector('[name="body_text"]');
+    const bodyHtml = form.querySelector('[name="body_html"]');
+
+    if (nameInput && nameInput.type === "hidden") {
+      const syncName = function () {
+        nameInput.value = (subjectInput && subjectInput.value || bodyText && bodyText.value || "Campaña comercial")
+          .trim().slice(0, 180) || "Campaña comercial";
+      };
+      if (subjectInput) subjectInput.addEventListener("input", syncName);
+      if (bodyText) bodyText.addEventListener("input", syncName);
+      syncName();
+    }
+
+    if (!bodyText || !bodyHtml) return;
+    let htmlWasCustomized = false;
+    const escapeHtml = function (value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    };
+    const syncHtml = function () {
+      if (htmlWasCustomized) return;
+      const paragraphs = [];
+      let current = [];
+      escapeHtml(bodyText.value || "").split(/\\r?\\n/).forEach(function (line) {
+        if (!line.trim()) {
+          if (current.length) paragraphs.push(current.join("<br>"));
+          current = [];
+        } else {
+          current.push(line);
+        }
+      });
+      if (current.length) paragraphs.push(current.join("<br>"));
+      bodyHtml.value = paragraphs.map(function (paragraph) {
+        return "<p>" + paragraph + "</p>";
+      }).join("\\n");
+    };
+    bodyHtml.addEventListener("input", function () { htmlWasCustomized = true; });
+    bodyText.addEventListener("input", syncHtml);
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
-    document.querySelectorAll("form.js-whatsapp-template-form").forEach(startPicker);
+    document.querySelectorAll("form.js-whatsapp-template-form").forEach(function (form) {
+      startPicker(form);
+      startFormDefaults(form);
+    });
   });
 })();
