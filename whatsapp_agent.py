@@ -276,15 +276,21 @@ def _process_shared_saas_campaign_opt_out(*, phone_number_id: str, sender: str) 
     if not is_commercial_phone_number_id(phone_number_id):
         return False
     from app import SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent
-    from services.saas_commercial_service import normalize_phone
+    from services.saas_commercial_service import normalize_phone, normalize_whatsapp_destination
 
-    normalized_sender = normalize_phone(sender)
+    normalized_sender = normalize_whatsapp_destination(sender)
     if not normalized_sender:
         return False
+    sender_variants = {normalized_sender}
+    legacy_sender = normalize_phone(sender)
+    if legacy_sender:
+        sender_variants.add(legacy_sender)
+    if normalized_sender.startswith("549"):
+        sender_variants.add(normalized_sender[3:])
     sent_lead_ids = [
         row[0] for row in SaaSCampaignRecipient.query.filter(
             SaaSCampaignRecipient.channel == "whatsapp",
-            SaaSCampaignRecipient.destination == normalized_sender,
+            SaaSCampaignRecipient.destination.in_(sorted(sender_variants)),
             SaaSCampaignRecipient.status.in_(("sent", "delivered", "read")),
         ).with_entities(SaaSCampaignRecipient.lead_id).distinct().all()
     ]
