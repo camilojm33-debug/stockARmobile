@@ -125,6 +125,101 @@ def get_goal(scope: str, goal_key: str | None) -> dict:
     raise ValueError("El tipo de campaña no está habilitado para esta audiencia.")
 
 
+CAMPAIGN_COPY_TEMPLATES = {
+    SCOPE_SAAS_PROSPECTS: (
+        {
+            "key": "saas_acquisition_intro",
+            "goal_key": "saas_acquisition",
+            "label": "Presentación de StockARmobile",
+            "subject": "Conocé StockARmobile para gestionar tu comercio",
+            "body_text": (
+                "Hola {{contacto}},\n\n"
+                "Te presentamos StockARmobile, una plataforma para gestionar stock, ventas, clientes y presupuestos.\n\n"
+                "Podés centralizar la operación de tu comercio y tener más control de tu negocio.\n\n"
+                "Conocé la plataforma y coordinemos una demostración."
+            ),
+            "body_html": (
+                "<p>Hola {{contacto}},</p>"
+                "<p>Te presentamos <strong>StockARmobile</strong>, una plataforma para gestionar stock, ventas, clientes y presupuestos.</p>"
+                "<p>Podés centralizar la operación de tu comercio y tener más control de tu negocio.</p>"
+                "<p>Conocé la plataforma y coordinemos una demostración.</p>"
+            ),
+        },
+        {
+            "key": "saas_trial_conversion",
+            "goal_key": "saas_trial_conversion",
+            "label": "Invitación a iniciar una prueba",
+            "subject": "Probá StockARmobile en tu comercio",
+            "body_text": (
+                "Hola {{contacto}},\n\n"
+                "Queremos invitarte a probar StockARmobile y conocer cómo puede ayudarte a organizar stock, ventas y clientes.\n\n"
+                "Iniciá tu prueba desde este enlace: {{trial_url}}\n\n"
+                "Si necesitás ayuda, respondé este mensaje."
+            ),
+            "body_html": (
+                "<p>Hola {{contacto}},</p>"
+                "<p>Te invitamos a probar <strong>StockARmobile</strong> y conocer cómo puede ayudarte a organizar stock, ventas y clientes.</p>"
+                "<p><a href=\"{{trial_url}}\">Iniciá tu prueba</a></p>"
+                "<p>Si necesitás ayuda, respondé este mensaje.</p>"
+            ),
+        },
+        {
+            "key": "saas_lead_followup",
+            "goal_key": "saas_lead_followup",
+            "label": "Seguimiento de un prospecto",
+            "subject": "¿Pudiste revisar StockARmobile?",
+            "body_text": (
+                "Hola {{contacto}},\n\n"
+                "Retomo el contacto para saber si pudiste revisar la propuesta de StockARmobile.\n\n"
+                "Podemos mostrarte cómo gestionar stock, ventas y clientes desde un mismo lugar.\n\n"
+                "¿Coordinamos una demostración?"
+            ),
+            "body_html": (
+                "<p>Hola {{contacto}},</p>"
+                "<p>Retomo el contacto para saber si pudiste revisar la propuesta de StockARmobile.</p>"
+                "<p>Podemos mostrarte cómo gestionar stock, ventas y clientes desde un mismo lugar.</p>"
+                "<p>¿Coordinamos una demostración?</p>"
+            ),
+        },
+    ),
+    SCOPE_MERCHANT_CLIENTS: (
+        {
+            "key": "merchant_general_offer",
+            "goal_key": "customer_marketing",
+            "label": "Promoción general",
+            "subject": "Novedades y promociones",
+            "content": "Hola {{cliente}}, tenemos novedades para vos. Conocé {{producto}} y consultanos por disponibilidad y precio.",
+        },
+        {
+            "key": "merchant_reactivation",
+            "goal_key": "customer_reactivation",
+            "label": "Recuperación de clientes",
+            "subject": "Te esperamos nuevamente",
+            "content": "Hola {{cliente}}, hace tiempo que no te vemos. Queremos invitarte a volver y ofrecerte {{producto}}. ¡Te esperamos!",
+        },
+        {
+            "key": "merchant_loyalty",
+            "goal_key": "customer_loyalty",
+            "label": "Fidelización",
+            "subject": "Gracias por elegirnos",
+            "content": "Hola {{cliente}}, gracias por confiar en nosotros. Tenemos beneficios y novedades para clientes como vos.",
+        },
+        {
+            "key": "merchant_new_product",
+            "goal_key": "customer_new_product",
+            "label": "Nuevo producto",
+            "subject": "Llegaron novedades",
+            "content": "Hola {{cliente}}, llegó {{producto}}. Consultanos y te contamos más detalles.",
+        },
+    ),
+}
+
+
+def message_templates(scope: str) -> list[dict]:
+    """Return prewritten campaign-copy starters from one isolated CRM library."""
+    return [dict(item) for item in CAMPAIGN_COPY_TEMPLATES.get(str(scope or ""), ())]
+
+
 def variable_options(scope: str) -> list[dict]:
     return [dict(item) for item in VARIABLES.get(str(scope or ""), ())]
 
