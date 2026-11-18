@@ -194,7 +194,9 @@ def test_campaign_preflight_blocks_a_wrong_whatsapp_parameter_count(app, monkeyp
 def test_commercial_campaign_parameter_field_defaults_are_consistent():
     from services.saas_commercial_service import get_commercial_whatsapp_parameter_fields
 
-    assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="")) == [
-        "contacto", "producto", "mensaje"
-    ]
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+
+    assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="")) == list(
+        MASTER_TEMPLATE_PARAMETER_FIELDS
+    )
     assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="none")) == []
