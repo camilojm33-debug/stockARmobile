@@ -366,14 +366,24 @@
             <td class="small">{{ r.destination }}</td>
             <td><span class="campaign-channel"><i class="bi {{ 'bi-envelope' if r.channel == 'email' else 'bi-whatsapp' }}"></i>{{ 'Email' if r.channel == 'email' else 'WhatsApp' }}</span></td>
             <td>
-              {% if r.status == 'sent' %}
+              {% if r.channel == 'whatsapp' and (r.provider_status == 'read' or r.opened_at) %}
+                <span class="campaign-status status-sent"><i class="bi bi-eye"></i>Leído</span>
+              {% elif r.channel == 'whatsapp' and (r.provider_status == 'delivered' or r.delivered_at) %}
+                <span class="campaign-status status-sent"><i class="bi bi-check2-all"></i>Entregado</span>
+              {% elif r.status == 'failed' or (r.channel == 'whatsapp' and r.provider_status == 'failed') %}
+                <span class="campaign-status status-failed"><i class="bi bi-x-octagon"></i>No entregado</span>
+              {% elif r.channel == 'whatsapp' and r.provider_status == 'sent' %}
+                <span class="campaign-status status-sent"><i class="bi bi-send-check"></i>Enviado por WhatsApp</span>
+                <div class="small text-muted">Esperando confirmación de entrega</div>
+              {% elif r.channel == 'whatsapp' and r.status == 'sent' %}
+                <span class="campaign-status status-sent"><i class="bi bi-check-circle"></i>Aceptado por WhatsApp</span>
+                <div class="small text-muted">Todavía no confirmado como entregado</div>
+              {% elif r.status == 'sent' %}
                 <span class="campaign-status status-sent"><i class="bi bi-check-circle"></i>Enviado</span>
               {% elif r.status == 'pending' %}
                 <span class="campaign-status status-draft"><i class="bi bi-hourglass"></i>Pendiente</span>
               {% elif r.status == 'sending' %}
                 <span class="campaign-status status-sending"><i class="bi bi-arrow-repeat"></i>Enviando</span>
-              {% elif r.status == 'failed' %}
-                <span class="campaign-status status-failed"><i class="bi bi-x-octagon"></i>Falló</span>
               {% else %}
                 <span class="campaign-status status-empty"><i class="bi bi-slash-circle"></i>{{ r.status }}</span>
               {% endif %}
