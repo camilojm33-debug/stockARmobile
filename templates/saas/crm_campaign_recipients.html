@@ -1,0 +1,187 @@
+{% extends "base_master.html" %}
+{% block title %}Seleccionar destinatarios · {{ campaign.name }}{% endblock %}
+{% block content %}
+<style>
+.recipient-page{max-width:1240px;margin:0 auto}
+.recipient-card{background:var(--app-panel,#fff);border:1px solid var(--app-line,#e5e7eb);border-radius:16px;padding:1.25rem}
+.recipient-stat{border:1px solid var(--app-line,#e5e7eb);border-radius:12px;padding:.9rem;height:100%}
+.recipient-stat strong{display:block;font-size:1.45rem}
+.recipient-table-wrap{max-height:560px;overflow:auto}
+.recipient-table thead th{position:sticky;top:0;background:var(--app-panel,#fff);z-index:2}
+.recipient-check{width:1.1rem;height:1.1rem}
+.recipient-empty{border:1px dashed var(--app-line,#cbd5e1);border-radius:12px;padding:2rem;text-align:center}
+</style>
+<div class="app-shell recipient-page">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-people"></i> Agenda comercial · Campañas</span>
+      <h1 class="h3 fw-bold mb-1">Seleccionar destinatarios</h1>
+      <p class="text-muted mb-0">{{ campaign.name }} · La campaña sigue en Borrador hasta que confirmes el envío.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_campaign_detail', campaign_id=campaign.id) }}">
+      <i class="bi bi-arrow-left me-1"></i>Volver a la campaña
+    </a>
+  </div>
+
+  <div class="row g-3 mb-4">
+    {% if campaign.channel in ['email','both'] %}
+    <div class="col-md-6">
+      <div class="recipient-stat">
+        <span class="small text-muted">Email con permiso</span>
+        <strong>{{ audience.eligible_email }}</strong>
+        <span class="small text-muted">Dirección válida y autorización registrada.</span>
+      </div>
+    </div>
+    {% endif %}
+    {% if campaign.channel in ['whatsapp','both'] %}
+    <div class="col-md-6">
+      <div class="recipient-stat">
+        <span class="small text-muted">WhatsApp con permiso</span>
+        <strong>{{ audience.eligible_whatsapp }}</strong>
+        <span class="small text-muted">Número válido y autorización registrada.</span>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <section class="recipient-card mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+      <div>
+        <h2 class="h5 fw-bold mb-1">Contactos habilitados</h2>
+        <p class="small text-muted mb-0">Podés buscar, marcar contactos individuales o agregar a todos los que coinciden con los filtros.</p>
+      </div>
+      <span class="badge rounded-pill text-bg-light border">{{ existing_count }} ya agregados</span>
+    </div>
+
+    <form method="get" class="row g-2 align-items-end mb-3">
+      <div class="col-md-8">
+        <label class="form-label small fw-semibold" for="recipientSearch">Buscar por empresa, contacto, rubro, localidad o dato de contacto</label>
+        <input class="form-control" id="recipientSearch" type="search" name="q" value="{{ search }}" placeholder="Ej.: Ferretería Central o contacto@empresa.com">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search me-1"></i>Buscar</button>
+      </div>
+      {% if search %}
+      <div class="col-auto">
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_campaign_select_recipients', campaign_id=campaign.id) }}">Limpiar búsqueda</a>
+      </div>
+      {% endif %}
+    </form>
+
+    {% if audience.total == 0 %}
+    <div class="alert alert-warning small mb-3">
+      <strong>La audiencia filtrada está en 0.</strong>
+      Ningún contacto coincide con el rubro, provincia, localidad o segmento guardado en esta campaña.
+      Podés quitar esos filtros y revisar toda la agenda.
+      <form method="post" action="{{ url_for('saas.crm_campaign_audience_all_email', campaign_id=campaign.id) }}" class="mt-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Quitar filtros y ampliar la audiencia</button>
+      </form>
+    </div>
+    {% elif (campaign.channel in ['email','both'] and audience.eligible_email == 0) or (campaign.channel in ['whatsapp','both'] and audience.eligible_whatsapp == 0) %}
+    <div class="alert alert-info small mb-3">
+      <strong>Hay contactos, pero no todos están habilitados para este canal.</strong>
+      Email disponible: {{ audience.email_available }} ({{ audience.email_optin }} con permiso).
+      WhatsApp disponible: {{ audience.whatsapp_available }} ({{ audience.whatsapp_optin }} con permiso).
+      Un dato importado no equivale a consentimiento de marketing.
+    </div>
+    {% endif %}
+
+    <form method="post" id="campaignRecipientSelectionForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="q" value="{{ search }}">
+
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <label class="form-check d-flex align-items-center gap-2 mb-0">
+          <input class="form-check-input recipient-check" type="checkbox" id="selectVisibleRecipients">
+          <span class="small fw-semibold">Marcar todos los que aparecen abajo</span>
+        </label>
+        <span class="small text-muted">Se muestran hasta {{ result_limit }} por canal.</span>
+      </div>
+
+      {% for channel in channels %}
+        {% set channel_rows = rows_by_channel[channel] %}
+        <div class="border rounded-3 mb-3 overflow-hidden">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 p-3 bg-body-tertiary">
+            <div class="fw-bold">
+              <i class="bi {{ 'bi-envelope' if channel == 'email' else 'bi-whatsapp' }} me-1"></i>
+              {{ 'Email' if channel == 'email' else 'WhatsApp' }}
+            </div>
+            <span class="small text-muted">{{ totals_by_channel[channel] }} habilitados para este canal · {{ channel_rows|length }} mostrados</span>
+          </div>
+          {% if channel_rows %}
+          <div class="recipient-table-wrap">
+            <table class="table table-hover align-middle mb-0 recipient-table">
+              <thead><tr><th style="width:48px">Elegir</th><th>Empresa / contacto</th><th>Destino</th><th>Estado</th></tr></thead>
+              <tbody>
+              {% for row in channel_rows %}
+                <tr>
+                  <td>
+                    {% if row.already_added %}
+                      <input class="form-check-input recipient-check" type="checkbox" checked disabled aria-label="Ya agregado">
+                    {% else %}
+                      <input class="form-check-input recipient-check recipient-row-checkbox" type="checkbox" name="recipient_selection" value="{{ channel }}:{{ row.lead.id }}">
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div class="fw-semibold">{{ row.lead.company_name }}</div>
+                    <div class="small text-muted">{{ row.lead.contact_name or 'Sin contacto indicado' }}{% if row.lead.locality %} · {{ row.lead.locality }}{% endif %}</div>
+                  </td>
+                  <td class="small">{{ row.destination }}</td>
+                  <td>
+                    {% if row.already_added %}
+                      <span class="badge text-bg-success">Ya agregado</span>
+                    {% else %}
+                      <span class="badge text-bg-light border">Habilitado</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="recipient-empty m-3">
+            <div class="fw-semibold mb-1">No hay contactos habilitados para {{ 'Email' if channel == 'email' else 'WhatsApp' }} con esta búsqueda.</div>
+            <div class="small text-muted">Revisá los filtros, la búsqueda y los permisos registrados para este canal.</div>
+          </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      <div class="d-flex flex-wrap justify-content-between gap-2 pt-2">
+        <button class="btn btn-outline-primary" type="submit"><i class="bi bi-check2-square me-1"></i>Agregar seleccionados</button>
+        <button class="btn btn-primary" type="submit" name="select_all_eligible" value="1" data-select-all-eligible>
+          <i class="bi bi-people-fill me-1"></i>Agregar todos los habilitados de los filtros
+        </button>
+      </div>
+      <p class="small text-muted mt-2 mb-0">Agregar destinatarios no envía el mensaje. Solo se suman contactos con permiso registrado; la confirmación y el envío se realizan después.</p>
+    </form>
+  </section>
+</div>
+<script>
+(function () {
+  const form = document.getElementById("campaignRecipientSelectionForm");
+  const selectVisible = document.getElementById("selectVisibleRecipients");
+  if (!form || !selectVisible) return;
+  selectVisible.addEventListener("change", function () {
+    form.querySelectorAll(".recipient-row-checkbox").forEach(function (box) {
+      box.checked = selectVisible.checked;
+    });
+  });
+  form.querySelectorAll(".recipient-row-checkbox").forEach(function (box) {
+    box.addEventListener("change", function () {
+      const rows = Array.from(form.querySelectorAll(".recipient-row-checkbox"));
+      selectVisible.checked = rows.length > 0 && rows.every(function (item) { return item.checked; });
+    });
+  });
+  form.addEventListener("submit", function (event) {
+    if (event.submitter && event.submitter.hasAttribute("data-select-all-eligible")) {
+      if (!window.confirm("¿Agregar todos los contactos habilitados que coincidan con los filtros y esta búsqueda?")) {
+        event.preventDefault();
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}
