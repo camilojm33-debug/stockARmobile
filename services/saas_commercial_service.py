@@ -979,6 +979,18 @@ COMMERCIAL_WHATSAPP_PARAMETER_FIELDS = {
 }
 
 
+def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
+    """Resolve the ordered fields used for positional BODY parameters."""
+    fields = [
+        part.strip().lower()
+        for part in _clean(getattr(campaign, "whatsapp_parameter_fields", "")).split(",")
+        if part.strip()
+    ]
+    if fields == ["none"]:
+        return []
+    return fields or ["contacto", "producto", "mensaje"]
+
+
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
 
@@ -998,15 +1010,7 @@ def _whatsapp_template_parameters(campaign, lead) -> list[str]:
             else ""
         ),
     }
-    fields = [
-        part.strip().lower()
-        for part in _clean(campaign.whatsapp_parameter_fields).split(",")
-        if part.strip()
-    ]
-    if fields == ["none"]:
-        return []
-    if not fields:
-        fields = ["contacto", "producto", "mensaje"]
+    fields = get_commercial_whatsapp_parameter_fields(campaign)
     unknown = [field for field in fields if field not in values]
     if unknown:
         raise ValueError(f"Campos de plantilla WhatsApp no soportados: {', '.join(unknown)}")
