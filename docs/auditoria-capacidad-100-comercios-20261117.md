@@ -68,7 +68,7 @@ Archivo: `tests/test_tenant_load_capacity.py`.
 La prueba:
 1. Se ejecuta únicamente contra PostgreSQL real; en SQLite se omite.
 2. Crea 100 empresas de prueba, cada una con usuario administrador y membresía activa propia, producto, cliente, venta y detalle de venta.
-3. Ejecuta 100 solicitudes a `GET /dashboard/` de 100 tenants distintos, en ráfagas de 20 solicitudes simultáneas, con el pool SQLAlchemy predeterminado (5 conexiones + 10 de overflow, timeout de 30 segundos). Esto cubre 100 contextos aislados bajo una concurrencia acotada y repetible, sin inflar artificialmente el pool solo para CI.
+3. Ejecuta 100 solicitudes a `GET /dashboard/` de 100 tenants distintos, en ráfagas de 5 solicitudes simultáneas, con el pool SQLAlchemy predeterminado (5 conexiones + 10 de overflow, timeout de 30 segundos). Esto cubre 100 contextos aislados bajo una concurrencia acotada y repetible, sin inflar artificialmente el pool solo para CI.
 4. Comprueba HTTP 200, empresa y usuario correctos en el HTML y presencia del producto/cliente de ese comercio.
 5. Comprueba que no aparezcan marcadores de productos o clientes de otros 99 comercios en la respuesta.
 6. Imprime p50, p95, p99 y máximo observados; exige que no se excedan los timeouts configurados y que el pool no conserve conexiones tomadas al finalizar.
@@ -80,6 +80,12 @@ pytest -q -s --tb=short tests/test_tenant_load_capacity.py
 ```
 
 **Límite de interpretación:** Flask test client no atraviesa TLS, proxy, red, balanceador ni el proceso Gunicorn de Render. El benchmark mide concurrencia de las rutas, la autenticación, las consultas y el pool SQLAlchemy contra PostgreSQL; no es una simulación completa de 100 usuarios externos conectados por Internet. Los números se deben leer como regresión reproducible de CI, no como capacidad comercial certificada.
+
+
+
+### Resultado del ensayo de sobrecarga previo
+
+Se probó también una ráfaga de 20 dashboards concurrentes con el pool predeterminado (5 conexiones + 10 de overflow). PostgreSQL agotó el pool y devolvió `QueuePool limit ... timeout 30.00`; un perfil de 100 solicitudes concurrentes tampoco terminó dentro de los 90 segundos con un pool de CI mayor. Por ese motivo no se presenta el perfil de 5 como certificación de 100 solicitudes simultáneas: es una comprobación reproducible de aislamiento para 100 comercios con una concurrencia compatible con el servicio actual, y la sobrecarga de 20/100 queda registrada como hallazgo de capacidad pendiente.
 
 ## Decisiones de seguridad y estabilidad
 
