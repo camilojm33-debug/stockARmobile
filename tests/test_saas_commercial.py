@@ -395,6 +395,13 @@ def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
         )
+        local_mobile = SaaSLead(
+            company_name="WhatsApp con número local",
+            contact_name="Contacto Local",
+            whatsapp="3624228396",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
         no_permission = SaaSLead(
             company_name="Sin permiso",
             contact_name="Contacto Sin Permiso",
@@ -409,7 +416,7 @@ def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
         )
-        db.session.add_all([phone_only, explicit, no_permission, invalid_number])
+        db.session.add_all([phone_only, explicit, local_mobile, no_permission, invalid_number])
         db.session.flush()
 
         campaign = SaaSCampaign(
@@ -428,9 +435,10 @@ def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
         rows = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
         by_lead = {row.lead_id: row.destination for row in rows}
 
-        assert summary["eligible_whatsapp"] == 1
+        assert summary["eligible_whatsapp"] == 2
         assert by_lead == {
             explicit.id: "5491122223333",
+            local_mobile.id: "5493624228396",
         }
         assert phone_only.id not in by_lead
         assert no_permission.id not in by_lead
