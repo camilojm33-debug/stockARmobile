@@ -103,7 +103,7 @@
           <div id="campaignVariableFeedback" class="small mt-2" role="status" aria-live="polite"></div>
         </div>
         <label class="form-label fw-semibold">Biblioteca de mensajes maestros</label>
-        <select class="form-select mb-3" data-campaign-copy-picker data-goal-field="campaign_goal" data-subject-field="objective" data-text-field="content" data-html-field="">
+        <select class="form-select mb-3" data-campaign-copy-picker data-goal-field="campaign_goal" data-subject-field="" data-text-field="content" data-html-field="">
           <option value="">Elegí una propuesta base para completar…</option>
           {% for copy in campaign_copy_templates %}
           <option value="{{ copy.key }}" data-goal="{{ copy.goal_key }}" data-subject="{{ copy.subject|forceescape }}" data-text="{{ copy.content|forceescape }}" data-html="">{{ copy.label }}</option>
