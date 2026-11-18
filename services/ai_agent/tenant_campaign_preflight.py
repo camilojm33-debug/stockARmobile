@@ -48,14 +48,17 @@ def tenant_campaign_preflight(campaign, company) -> dict:
             issues.append(row)
 
     goal_key = str(campaign_data.get("campaign_goal") or "customer_marketing")
-    try:
-        goal = get_goal(SCOPE_MERCHANT_CLIENTS, goal_key)
-        goal_ok = True
-        goal_detail = goal["label"]
-    except ValueError:
-        goal = get_goal(SCOPE_MERCHANT_CLIENTS, "customer_marketing")
-        goal_ok = False
-        goal_detail = f"El objetivo {goal_key!r} no existe para campañas de clientes."
+    valid_goal_keys = {item["key"] for item in goal_options(SCOPE_MERCHANT_CLIENTS)}
+    goal_ok = goal_key in valid_goal_keys
+    goal = get_goal(
+        SCOPE_MERCHANT_CLIENTS,
+        goal_key if goal_ok else "customer_marketing",
+    )
+    goal_detail = (
+        goal["label"]
+        if goal_ok
+        else f"El objetivo {goal_key!r} no existe para campañas de clientes."
+    )
     add(
         "campaign_goal",
         "Objetivo de campaña",
