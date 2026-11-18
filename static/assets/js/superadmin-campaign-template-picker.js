@@ -211,7 +211,7 @@
       if (htmlWasCustomized) return;
       const paragraphs = [];
       let current = [];
-      escapeHtml(bodyText.value || "").split(/\\r?\\n/).forEach(function (line) {
+      escapeHtml(bodyText.value || "").split(/\r?\n/).forEach(function (line) {
         if (!line.trim()) {
           if (current.length) paragraphs.push(current.join("<br>"));
           current = [];
@@ -222,7 +222,7 @@
       if (current.length) paragraphs.push(current.join("<br>"));
       bodyHtml.value = paragraphs.map(function (paragraph) {
         return "<p>" + paragraph + "</p>";
-      }).join("\\n");
+      }).join("\n");
     };
     bodyHtml.addEventListener("input", function () { htmlWasCustomized = true; });
     bodyText.addEventListener("input", syncHtml);
