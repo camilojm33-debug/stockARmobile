@@ -3,7 +3,7 @@
 {% block extra_css %}
 <style>
 .campaign-wizard{max-width:980px;margin:0 auto}
-.campaign-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.5rem}
+.campaign-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.5rem}
 .campaign-step{border:1px solid var(--app-line);border-radius:12px;padding:.7rem;text-align:center;color:var(--app-muted);font-size:.84rem}
 .campaign-step.active{border-color:var(--bs-primary);color:var(--bs-primary);background:rgba(37,99,235,.06);font-weight:700}
 .campaign-pane{display:none}.campaign-pane.active{display:block}
@@ -21,36 +21,29 @@
   </div>
   {% if template %}
     <div class="alert alert-success campaign-readiness" role="status">
-      <div class="d-flex flex-wrap justify-content-between gap-3">
+      <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center">
         <div>
-          <div class="readiness-label mb-1">WhatsApp propio conectado</div>
-          <div class="fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp del comercio · Vendedor IA 24/7{% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
-          <div class="small mt-1">Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }} · {{ template.category }}</div>
+          <div class="readiness-label mb-1">Canal de envío</div>
+          <div class="fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp de tu comercio listo para campañas</div>
+          <div class="small mt-1">No necesitás configurar nada más para preparar el mensaje.</div>
         </div>
-        <span class="badge text-bg-success align-self-start"><i class="bi bi-check-circle me-1"></i>Listo para crear borrador</span>
+        <span class="badge text-bg-success align-self-start"><i class="bi bi-check-circle me-1"></i>Listo</span>
       </div>
-      {% if template_auto_selected %}
-        <div class="small mt-2">Detectamos una única plantilla compatible y la seleccionamos automáticamente. La plantilla pertenece a la cuenta WhatsApp Business del comercio.</div>
-      {% endif %}
     </div>
   {% else %}
-    <div class="alert alert-danger campaign-readiness" role="alert">
-      <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Marketing IA todavía no está listo para enviar por WhatsApp</div>
-      <p class="mb-2">{{ template_error or "No se pudo validar el WhatsApp propio del comercio y su plantilla aprobada." }}</p>
-      {% if campaign_sender_phone %}<div class="small mb-2">Número emisor del comercio detectado: <strong>{{ campaign_sender_phone }}</strong>.</div>{% endif %}
-      <div class="small">Esta campaña saldrá exclusivamente desde el número que este comercio conectó mediante Meta Embedded Signup. Clientes, consentimientos, destinatarios, conversaciones y métricas permanecen aislados por empresa.</div>
+    <div class="alert alert-warning campaign-readiness" role="status">
+      <div class="fw-bold mb-1"><i class="bi bi-exclamation-circle me-1"></i>WhatsApp todavía no está listo</div>
+      <p class="mb-2">Conectá WhatsApp desde Vendedor IA o pedí al administrador que revise la conexión. No se enviará ningún mensaje mientras tanto.</p>
       {% if template_admin_url %}
-        <a class="btn btn-sm btn-outline-danger mt-3" href="{{ template_admin_url }}"><i class="bi bi-gear me-1"></i>Configurar mi Vendedor IA</a>
-      {% else %}
-        <div class="small mt-3"><strong>Próximo paso:</strong> Conectá el número propio del comercio desde Vendedor IA y seleccioná una plantilla MARKETING aprobada en su cuenta WABA.</div>
+        <a class="btn btn-sm btn-outline-primary mt-2" href="{{ template_admin_url }}"><i class="bi bi-whatsapp me-1"></i>Revisar WhatsApp</a>
       {% endif %}
     </div>
   {% endif %}
   {% if template %}
   <div class="card app-card"><div class="card-body p-3 p-md-4">
-    <div class="alert alert-primary small mb-4"><i class="bi bi-magic me-1"></i><strong>No tenés que configurar Meta ni elegir una plantilla.</strong> StockARmobile usa automáticamente la plantilla de Marketing aprobada para tu WhatsApp.</div>
+    <div class="alert alert-primary small mb-4"><i class="bi bi-magic me-1"></i><strong>El envío se prepara automáticamente.</strong> Solo elegí a quién escribirle y qué mensaje querés compartir.</div>
     <div class="campaign-steps mb-4" aria-label="Pasos de la campaña">
-      {% for label in ['Objetivo','Público','Mensaje','Horario','Revisión'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
+      {% for label in ['Objetivo','Público','Mensaje','Revisión'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
     </div>
     <form method="post" id="campaignWizardForm" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -58,7 +51,7 @@
         <h2 class="h4 fw-bold">1. ¿Qué querés lograr?</h2><p class="text-muted">Este contexto guía la propuesta y facilita revisar el resultado.</p>
         <div class="row g-3">
           <div class="col-md-7"><label class="form-label">Nombre de campaña</label><input class="form-control" name="title" maxlength="180" required placeholder="Ej. Volvé a visitarnos"></div>
-          <div class="col-md-5"><label class="form-label">Objetivo</label><select class="form-select" name="objective" required><option value="">Elegir objetivo…</option><option>Recuperar clientes</option><option>Promocionar un producto</option><option>Informar una novedad</option><option>Fidelizar clientes</option></select></div>
+          <div class="col-md-5"><label class="form-label">Objetivo</label><select class="form-select" name="objective" required><option value="">Elegir objetivo…</option><option>Recuperar clientes</option><option>Hacer seguimiento comercial</option><option>Promocionar un producto</option><option>Informar una novedad</option><option>Fidelizar clientes</option></select></div>
         </div>
       </section>
       <section class="campaign-pane" data-step="2">
@@ -68,16 +61,12 @@
           <div class="col-md-5" id="campaignDaysWrap"><label class="form-label">Días sin compra</label><input class="form-control" type="number" min="1" max="365" name="days" id="campaignDays" value="90"></div>
           <div class="col-12 d-none" id="campaignSegmentWrap"><label class="form-label">Texto de etiqueta / filtro</label><input class="form-control" name="client_segment" id="campaignSegment" maxlength="80" placeholder="Ej. mayorista"><div class="form-text">Se busca en las notas internas del cliente.</div></div>
         </div>
-        <div class="alert alert-primary mt-3 mb-2"><strong><span id="campaignAudienceCount">{{ audience_count }}</span> destinatarios elegibles estimados</strong><div class="small mt-1"><span id="campaignAudienceExcluded">Se excluyen clientes sin consentimiento registrado, sin WhatsApp o inactivos.</span></div></div>
+        <div class="alert alert-primary mt-3 mb-2"><strong><span id="campaignAudienceCount">{{ audience_count }}</span> destinatarios elegibles estimados</strong><div class="small mt-1"><span id="campaignAudienceExcluded">Solo se incluirán clientes que autorizaron recibir promociones.</span></div></div>
         <div class="small text-muted">Antes de cada envío se vuelve a comprobar que cada contacto pueda recibir mensajes.</div>
       </section>
       <section class="campaign-pane" data-step="3">
-        <h2 class="h4 fw-bold">3. ¿Qué les vamos a contar?</h2><p class="text-muted">Escribí el mensaje. La plantilla de WhatsApp ya está preparada automáticamente.</p>
-        {% if template %}
-        <div class="alert alert-success py-2"><i class="bi bi-patch-check me-1"></i>Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }}</div>
-        {% else %}
-        <div class="alert alert-warning">Sin una plantilla aprobada compatible, la campaña no se puede aprobar.</div>
-        {% endif %}
+        <h2 class="h4 fw-bold">3. ¿Qué les vamos a contar?</h2><p class="text-muted">Escribí el mensaje. El envío se configura automáticamente.</p>
+        <div class="alert alert-success py-2"><i class="bi bi-check-circle me-1"></i>El mensaje saldrá desde el WhatsApp de tu comercio. No tenés que elegir ni configurar nada.</div>
         <label class="form-label">Mensaje para el cliente</label><textarea class="form-control" name="content" id="campaignContent" rows="6" maxlength="900" required placeholder="Escribí el texto que recibirán tus clientes"></textarea>
         <div class="d-flex justify-content-between small text-muted mt-1"><span>Máximo 900 caracteres, incluida la instrucción de baja.</span><span><span id="campaignContentLength">0</span>/900</span></div>
         <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
@@ -85,16 +74,26 @@
         <div class="mt-3"><label class="form-label">Producto (opcional)</label><select class="form-select" name="product_id" id="campaignProduct"><option value="">Varios / sin producto</option>{% for product in products %}<option value="{{ product.id }}" data-price="{{ product.price }}">{{ product.name }}</option>{% endfor %}</select></div>
       </section>
       <section class="campaign-pane" data-step="4">
-        <h2 class="h4 fw-bold">4. ¿Cuándo querés enviarla?</h2><p class="text-muted">Podés dejarla sin programar. La hora ingresada se interpreta en la zona horaria del comercio: {{ company.timezone if company and company.timezone else 'America/Argentina/Buenos_Aires' }}.</p>
-        <label class="form-label">Fecha y hora local (opcional)</label><input class="form-control" type="datetime-local" name="scheduled_at" id="campaignScheduledAt">
-        <input type="hidden" name="scheduled_at_utc" id="campaignScheduledAtUtc">
-        <div class="form-text">Si no seleccionás una fecha, la campaña empezará cuando un administrador la apruebe.</div>
-      </section>
-      <section class="campaign-pane" data-step="5">
-        <h2 class="h4 fw-bold">5. Revisá antes de guardar</h2><p class="text-muted">Todavía no se envía ningún mensaje. Primero guardás el borrador; después decidís si lo aprobás.</p>
-        <div class="border rounded-3 p-3 mb-3"><div class="fw-semibold" id="campaignReviewTitle">Nombre de campaña</div><div class="small text-muted" id="campaignReviewObjective">Objetivo</div><hr><div class="small"><strong>Audiencia:</strong> <span id="campaignReviewAudience">Todos los clientes elegibles</span> · <span id="campaignReviewCount">{{ audience_count }}</span> elegibles</div><div class="small mt-2"><strong>Plantilla:</strong> {{ template.name if template else 'No disponible' }}</div></div>
-        <label class="form-label">Resumen del mensaje</label><div class="campaign-template-preview" id="campaignReviewMessage"></div>
-        <div class="alert alert-warning small mt-3 mb-0"><i class="bi bi-shield-check me-1"></i>Crear el borrador no envía nada. La aprobación requiere IA PRO, plantilla compatible y consentimiento documentado.</div>
+        <h2 class="h4 fw-bold">4. Revisá antes de guardar</h2><p class="text-muted">Confirmá el público y el mensaje. Guardar el borrador no envía nada.</p>
+        <div class="border rounded-3 p-3 mb-3">
+          <div class="fw-semibold" id="campaignReviewTitle">Nombre de campaña</div>
+          <div class="small text-muted" id="campaignReviewObjective">Objetivo</div>
+          <hr>
+          <div class="small"><strong>Audiencia:</strong> <span id="campaignReviewAudience">Todos los clientes elegibles</span> · <span id="campaignReviewCount">{{ audience_count }}</span> elegibles</div>
+          <div class="small mt-2"><strong>Envío:</strong> WhatsApp de tu comercio</div>
+          <div class="small mt-1"><strong>Horario:</strong> <span id="campaignReviewSchedule">Al aprobar la campaña</span></div>
+        </div>
+        <label class="form-label">Vista previa del mensaje</label><div class="campaign-template-preview" id="campaignReviewMessage"></div>
+        <details class="border rounded-3 p-3 mt-3">
+          <summary class="fw-semibold" style="cursor:pointer;">Programar para otro momento (opcional)</summary>
+          <div class="mt-3">
+            <label class="form-label">Fecha y hora</label>
+            <input class="form-control" type="datetime-local" name="scheduled_at" id="campaignScheduledAt">
+            <input type="hidden" name="scheduled_at_utc" id="campaignScheduledAtUtc">
+            <div class="form-text">Si lo dejás vacío, la campaña podrá comenzar cuando la apruebes.</div>
+          </div>
+        </details>
+        <div class="alert alert-warning small mt-3 mb-0"><i class="bi bi-shield-check me-1"></i>Después de guardar, vas a poder revisar la campaña y aprobar el envío.</div>
       </section>
       <div class="d-flex justify-content-between gap-2 mt-4 pt-3 border-top">
         <button class="btn btn-outline-secondary" type="button" id="campaignBack" disabled><i class="bi bi-arrow-left me-1"></i>Anterior</button>
@@ -108,7 +107,7 @@
       <div class="card-body p-4 text-center">
         <div class="mb-2 text-danger"><i class="bi bi-shield-lock fs-2"></i></div>
         <h2 class="h5 fw-bold">Asistente de campañas pausado</h2>
-        <p class="text-muted mb-0">Podés crear campañas cuando el número propio del comercio y su plantilla MARKETING aprobada estén validados. Tus clientes, consentimientos, destinatarios y reportes permanecen aislados por comercio. No se enviará ningún mensaje mientras este control esté pendiente.</p>
+        <p class="text-muted mb-0">Para crear campañas, primero conectá el WhatsApp de tu comercio desde Vendedor IA. Cuando esté listo, vas a poder elegir el público, escribir el mensaje y revisarlo antes de aprobar.</p>
       </div>
     </div>
   {% endif %}
@@ -128,9 +127,9 @@
     panes.forEach(function (pane) { pane.classList.toggle("active", Number(pane.dataset.step) === step); });
     indicators.forEach(function (item) { item.classList.toggle("active", Number(item.dataset.stepIndicator) === step); });
     back.disabled = step === 1;
-    next.classList.toggle("d-none", step === 5);
-    submit.classList.toggle("d-none", step !== 5);
-    if (step === 5) updateReview();
+    next.classList.toggle("d-none", step === 4);
+    submit.classList.toggle("d-none", step !== 4);
+    if (step === 4) updateReview();
   };
   const checkCurrentStep = function () {
     const pane = panes.find(function (item) { return Number(item.dataset.step) === step; });
@@ -140,7 +139,7 @@
     }
     return true;
   };
-  next.addEventListener("click", function () { if (checkCurrentStep()) showStep(Math.min(5, step + 1)); });
+  next.addEventListener("click", function () { if (checkCurrentStep()) showStep(Math.min(4, step + 1)); });
   back.addEventListener("click", function () { showStep(Math.max(1, step - 1)); });
   const content = document.getElementById("campaignContent");
   const preview = document.getElementById("campaignTemplatePreview");
@@ -170,6 +169,10 @@
     document.getElementById("campaignReviewMessage").textContent = preview.textContent;
     document.getElementById("campaignReviewAudience").textContent = document.getElementById("campaignAudience").selectedOptions[0].textContent;
     document.getElementById("campaignReviewCount").textContent = document.getElementById("campaignAudienceCount").textContent;
+    const scheduled = document.getElementById("campaignScheduledAt").value;
+    document.getElementById("campaignReviewSchedule").textContent = scheduled
+      ? new Date(scheduled).toLocaleString()
+      : "Al aprobar la campaña";
   };
   form.addEventListener("submit", function (event) {
     const requiredFields = Array.from(form.querySelectorAll("[required]"));
@@ -203,7 +206,7 @@
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.error || "No se pudo actualizar la audiencia.");
       countLabel.textContent = String(payload.eligible);
-      excludedLabel.textContent = payload.excluded + " contacto(s) excluido(s) por falta de WhatsApp válido o consentimiento documentado.";
+      excludedLabel.textContent = payload.excluded + " contacto(s) excluido(s) porque no pueden recibir promociones.";
       updateReview();
     } catch (error) {
       excludedLabel.textContent = error.message || "No se pudo actualizar la audiencia.";

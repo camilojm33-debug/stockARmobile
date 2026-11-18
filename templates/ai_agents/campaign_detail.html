@@ -13,7 +13,8 @@
 <div class="app-shell ai-hub">
   {% if not ai_marketing_send_enabled %}<div class="alert alert-warning">El envío automático de Marketing IA está deshabilitado; la campaña no puede aprobarse.</div>{% endif %}
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-megaphone"></i> Campaña IA</span><h1 class="h3 fw-bold mb-1">{{ campaign.title }}</h1><p class="text-muted mb-0">{{ campaign.status }} · {{ campaign.audience_segment or 'Segmento no definido' }} · {{ detected_audience_count }} clientes detectados · {{ campaign.target_count }} destinatarios preparados</p></div>
+    {% set campaign_status_label = {'BORRADOR':'Borrador','PENDIENTE_APROBACION':'Pendiente de revisión','APROBADA':'Aprobada','EN_PREPARACION':'En envío','ENVIADA':'Enviada','ENVIADA_PARCIAL':'Envío parcial','FALLIDA':'Revisar envío','SIN_ENVIO':'Sin destinatarios','CANCELADA':'Cancelada'}.get(campaign.status, campaign.status|replace('_',' ')|title) %}
+    <div><span class="page-kicker"><i class="bi bi-megaphone"></i> Campaña</span><h1 class="h3 fw-bold mb-1">{{ campaign.title }}</h1><p class="text-muted mb-0">{{ campaign_status_label }} · {{ campaign.audience_segment or 'Todos los clientes elegibles' }} · {{ detected_audience_count }} clientes detectados · {{ campaign.target_count }} preparados</p></div>
     <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Campañas</a>
   </div>
   <div class="campaign-results mb-4">
@@ -25,9 +26,9 @@
     <div class="col-lg-7">
       <div class="card app-card mb-4"><div class="card-body">
         <h2 class="h5 fw-bold">Mensaje y previsualización</h2>
-        <p class="small text-muted">El cuerpo enviado usa la plantilla Meta aprobada y el texto editable como variable. La instrucción de baja forma parte del mensaje real.</p>
-        {% if campaign_template.name %}<div class="alert alert-success py-2">Plantilla validada al aprobar: <strong>{{ campaign_template.name }}</strong> · {{ campaign_template.language }}</div>{% else %}<div class="alert alert-warning py-2">No hay una instantánea de plantilla aprobada. La aprobación volverá a validar la plantilla Meta.</div>{% endif %}
-        <div class="campaign-preview mb-3">{{ campaign_template_preview or 'La vista previa estará disponible luego de validar una plantilla compatible.' }}</div>
+        <p class="small text-muted">Así verán tus clientes el mensaje. El sistema completa automáticamente los datos y agrega la opción para dejar de recibir promociones.</p>
+        {% if campaign_template.name %}<div class="alert alert-success py-2"><i class="bi bi-check-circle me-1"></i>WhatsApp está listo para esta campaña.</div>{% else %}<div class="alert alert-warning py-2"><i class="bi bi-exclamation-circle me-1"></i>La conexión de WhatsApp debe revisarse antes de aprobar. No se enviará nada hasta que esté lista.</div>{% endif %}
+        <div class="campaign-preview mb-3">{{ campaign_template_preview or 'La vista previa estará disponible cuando WhatsApp esté listo.' }}</div>
         {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] %}
         <form method="post" action="{{ url_for('ai_agents.campaign_edit', campaign_id=campaign.id) }}" id="campaignEditForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -55,7 +56,7 @@
     <div class="col-lg-5">
       <div class="card app-card mb-3"><div class="card-body">
         <h2 class="h5 fw-bold">Resumen de audiencia</h2>
-        <dl class="mb-0"><dt>Tipo</dt><dd>{{ campaign.campaign_type }}</dd><dt>Segmento</dt><dd>{{ campaign.audience_segment or 'No definido' }} ({{ detected_audience_count }})</dd><dt>Elegibles preparados</dt><dd>{{ campaign.target_count }}</dd><dt>Excluidos / omitidos</dt><dd>{{ campaign_metrics.skipped }}</dd><dt>Producto</dt><dd>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</dd><dt>Horario</dt><dd>{{ campaign_schedule_local or 'Al aprobar' }}{% if campaign.scheduled_at %} (hora local del comercio){% endif %}</dd></dl>
+        <dl class="mb-0"><dt>Objetivo</dt><dd>{{ campaign.objective or 'Campaña comercial' }}</dd><dt>Público</dt><dd>{{ campaign.audience_segment or 'Todos los clientes elegibles' }} ({{ detected_audience_count }})</dd><dt>Elegibles preparados</dt><dd>{{ campaign.target_count }}</dd><dt>Excluidos / omitidos</dt><dd>{{ campaign_metrics.skipped }}</dd><dt>Producto</dt><dd>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</dd><dt>Horario</dt><dd>{{ campaign_schedule_local or 'Al aprobar' }}{% if campaign.scheduled_at %} (hora local del comercio){% endif %}</dd></dl>
         <div class="small text-muted">Se excluyen clientes inactivos, números generales sin WhatsApp, números inválidos, bajas y consentimientos sin evidencia registrada.</div>
       </div></div>
       <div class="card app-card mb-3"><div class="card-body">
@@ -63,9 +64,9 @@
       </div></div>
       <div class="card app-card"><div class="card-body">
         <h2 class="h5 fw-bold">Revisión y aprobación</h2>
-        <p class="small text-muted">Marketing IA requiere IA PRO. Se vuelve a validar el consentimiento del cliente, el número de destino y la plantilla Meta del emisor compartido antes de encolar cada campaña. Los mensajes ya en curso pueden terminar después de solicitar una cancelación; no se iniciarán nuevos envíos.</p>
+        <p class="small text-muted">Antes de enviar, StockARmobile vuelve a comprobar que cada cliente pueda recibir el mensaje y que el WhatsApp del comercio esté listo. Los mensajes que ya estén en curso pueden terminar si cancelás la campaña.</p>
         {% if campaign.status == 'BORRADOR' %}
-        <form method="post" action="{{ url_for('ai_agents.campaign_transition', campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="PENDIENTE_APROBACION"><button class="btn btn-primary w-100" type="submit">Enviar a aprobación</button></form>
+        <form method="post" action="{{ url_for('ai_agents.campaign_transition', campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="PENDIENTE_APROBACION"><button class="btn btn-primary w-100" type="submit">Continuar a revisión</button></form>
         {% elif campaign.status == 'PENDIENTE_APROBACION' %}
         <div class="d-grid gap-2"><form method="post" action="{{ url_for('ai_agents.campaign_transition', campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="APROBADA"><button class="btn btn-success w-100" type="submit" {% if not ai_marketing_send_enabled %}disabled{% endif %}>Aprobar y encolar envío</button></form><form method="post" action="{{ url_for('ai_agents.campaign_transition', campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="CANCELADA"><button class="btn btn-outline-danger w-100" type="submit">Cancelar</button></form></div>
         {% elif campaign.status == 'APROBADA' %}<div class="alert alert-success mb-0">Aprobada. Preparando destinatarios.</div>
