@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import hmac
 import os
 import re
@@ -120,47 +121,67 @@ def _record_commercial_campaign_status(status_rows):
             continue
 
         now = utcnow_naive()
+        previous_state = str(recipient.provider_status or "").strip().lower()
         recipient.provider_status = state
-        if state == "delivered" and recipient.delivered_at is None:
-            recipient.delivered_at = now
-            db.session.add(SaaSCampaignEvent(
-                campaign_id=recipient.campaign_id,
-                recipient_id=recipient.id,
-                event_type="delivered",
-                metadata_json='{"channel":"whatsapp"}',
-                created_at=now,
-            ))
-            updated += 1
-        elif state == "read" and recipient.opened_at is None:
-            recipient.opened_at = now
-            db.session.add(SaaSCampaignEvent(
-                campaign_id=recipient.campaign_id,
-                recipient_id=recipient.id,
-                event_type="read",
-                metadata_json='{"channel":"whatsapp"}',
-                created_at=now,
-            ))
-            updated += 1
-        elif state == "failed":
-            errors = raw_status.get("errors") or []
-            recipient.error_reason = str(
-                errors[0].get("title") or errors[0].get("message") or "WhatsApp rechazó el mensaje."
-            )[:2000] if errors else "WhatsApp rechazó el mensaje."
-            if recipient.failed_at is None:
-                recipient.failed_at = now
-                if recipient.status == "sent":
-                    recipient.status = "failed"
-                    recipient.campaign.failed_count = int(recipient.campaign.failed_count or 0) + 1
+        if state == "sent":
+            # Meta has accepted and sent the message to WhatsApp infrastructure;
+            # this is not proof that the recipient's device received it.
+            if previous_state != "sent":
+                updated += 1
+        elif state == "delivered":
+            if recipient.delivered_at is None:
+                recipient.delivered_at = now
                 db.session.add(SaaSCampaignEvent(
                     campaign_id=recipient.campaign_id,
                     recipient_id=recipient.id,
-                    event_type="failed",
+                    event_type="delivered",
                     metadata_json='{"channel":"whatsapp"}',
                     created_at=now,
                 ))
                 updated += 1
+        elif state == "read":
+            recipient.delivered_at = recipient.delivered_at or now
+            if recipient.opened_at is None:
+                recipient.opened_at = now
+                db.session.add(SaaSCampaignEvent(
+                    campaign_id=recipient.campaign_id,
+                    recipient_id=recipient.id,
+                    event_type="read",
+                    metadata_json='{"channel":"whatsapp"}',
+                    created_at=now,
+                ))
+                updated += 1
+        elif state == "failed":
+            errors = raw_status.get("errors") or []
+            first_error = errors[0] if errors and isinstance(errors[0], dict) else {}
+            recipient.error_reason = str(
+                first_error.get("title") or first_error.get("message") or "WhatsApp no pudo entregar el mensaje."
+            )[:2000]
+            if recipient.failed_at is None:
+                recipient.failed_at = now
+                if recipient.status == "sent":
+                    recipient.status = "failed"
+                    campaign = recipient.campaign
+                    campaign.sent_count = SaaSCampaignRecipient.query.filter_by(
+                        campaign_id=campaign.id, status="sent"
+                    ).count()
+                    campaign.failed_count = SaaSCampaignRecipient.query.filter_by(
+                        campaign_id=campaign.id, status="failed"
+                    ).count()
+                    if campaign.status in {"ENVIADA", "ENVIADA_PARCIAL"}:
+                        campaign.status = "ENVIADA_PARCIAL" if campaign.sent_count else "FALLIDA"
+                db.session.add(SaaSCampaignEvent(
+                    campaign_id=recipient.campaign_id,
+                    recipient_id=recipient.id,
+                    event_type="failed",
+                    metadata_json=json.dumps(
+                        {"channel": "whatsapp", "error": recipient.error_reason},
+                        ensure_ascii=False,
+                    ),
+                    created_at=now,
+                ))
+                updated += 1
     return updated
-
 
 def _record_tenant_campaign_status(status_rows):
     from app import Campaign
@@ -256,15 +277,21 @@ def _process_shared_saas_campaign_opt_out(*, phone_number_id: str, sender: str) 
     if not is_commercial_phone_number_id(phone_number_id):
         return False
     from app import SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent
-    from services.saas_commercial_service import normalize_phone
+    from services.saas_commercial_service import normalize_phone, normalize_whatsapp_destination
 
-    normalized_sender = normalize_phone(sender)
+    normalized_sender = normalize_whatsapp_destination(sender)
     if not normalized_sender:
         return False
+    sender_variants = {normalized_sender}
+    legacy_sender = normalize_phone(sender)
+    if legacy_sender:
+        sender_variants.add(legacy_sender)
+    if normalized_sender.startswith("549"):
+        sender_variants.add(normalized_sender[3:])
     sent_lead_ids = [
         row[0] for row in SaaSCampaignRecipient.query.filter(
             SaaSCampaignRecipient.channel == "whatsapp",
-            SaaSCampaignRecipient.destination == normalized_sender,
+            SaaSCampaignRecipient.destination.in_(sorted(sender_variants)),
             SaaSCampaignRecipient.status.in_(("sent", "delivered", "read")),
         ).with_entities(SaaSCampaignRecipient.lead_id).distinct().all()
     ]

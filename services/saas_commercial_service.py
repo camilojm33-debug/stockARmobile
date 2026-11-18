@@ -111,6 +111,59 @@ def normalize_phone(value: str | None) -> str | None:
     digits = re.sub(r"\D+", "", raw)
     return digits or None
 
+
+def normalize_whatsapp_destination(value: str | None) -> str | None:
+    """Return an international WhatsApp destination for Argentine mobile numbers.
+
+    SaaS prospect imports commonly contain Argentine national numbers without
+    the international country/mobile prefixes. WhatsApp Cloud API expects
+    country code 54 plus mobile marker 9. Explicit international destinations
+    are preserved, and the legacy local area + 15 + subscriber form is
+    converted to its national significant number before adding 549.
+    """
+    raw = _clean(value)
+    if not raw:
+        return None
+
+    digits = re.sub(r"\D+", "", raw)
+    if not digits:
+        return None
+    if digits.startswith("00"):
+        digits = digits[2:]
+
+    # Already canonical Argentine WhatsApp mobile: +54 9 + 10 national digits.
+    if digits.startswith("549") and len(digits) == 13:
+        return digits
+
+    # Argentine international format without the mobile marker.
+    if digits.startswith("54"):
+        national = digits[2:]
+        if national.startswith("9") and len(national) == 11:
+            return digits
+        if len(national) == 10:
+            return f"549{national}"
+        return digits
+
+    # Drop Argentina's domestic trunk prefix.
+    if digits.startswith("0"):
+        digits = digits[1:]
+
+    # Old domestic mobile dialling form: area code + 15 + subscriber.
+    if len(digits) == 12:
+        for area_length in (2, 3, 4):
+            if digits[area_length:area_length + 2] == "15":
+                national = digits[:area_length] + digits[area_length + 2:]
+                if len(national) == 10:
+                    return f"549{national}"
+
+    # Argentine national mobile number without trunk/mobile prefixes.
+    if len(digits) == 10:
+        return f"549{digits}"
+
+    # Don't guess at incomplete or foreign numbers. Keep digits so existing
+    # validation can reject malformed destinations rather than silently route.
+    return digits
+
 def parse_consent(value, *, default: str = "unknown") -> str:
     raw = _clean(value).lower()
     if not raw:
@@ -581,9 +634,9 @@ def parse_segment_json(raw: str | None) -> dict:
 
 
 def _lead_whatsapp_destination(lead) -> str | None:
-    """Return a destination only when the lead has an explicit WhatsApp number."""
-    normalized = normalize_phone(getattr(lead, "whatsapp", None))
-    return normalized if normalized and 8 <= len(normalized) <= 15 else None
+    """Return a normalized international destination from an explicit WhatsApp field."""
+    normalized = normalize_whatsapp_destination(getattr(lead, "whatsapp", None))
+    return normalized if normalized and 11 <= len(normalized) <= 15 else None
 
 
 def _eligible_leads_query(channel: str, filters: dict):
@@ -1187,10 +1240,17 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     if not template_name:
         return False, "No hay una plantilla WhatsApp aprobada configurada.", ""
 
+    destination = normalize_whatsapp_destination(recipient.destination)
+    if not destination or not 11 <= len(destination) <= 15:
+        return False, "El número de WhatsApp no tiene un formato internacional válido.", ""
+    # Older drafts may already contain a national-format destination. Normalize
+    # again at dispatch time so retrying those recipients is safe as well.
+    recipient.destination = destination
+
     parameters = _whatsapp_template_parameters(campaign, recipient.lead)
     result = WhatsAppService.send_template(
         company,
-        to=recipient.destination,
+        to=destination,
         template_name=template_name,
         template_language=template_language,
         body_parameters=parameters,
@@ -1389,7 +1449,7 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
                     recipient.updated_at = utcnow()
                     campaign.skipped_count += 1
                     summary["skipped"] += 1
-                elif recipient.channel == "whatsapp" and normalize_phone(lead.whatsapp) != normalize_phone(recipient.destination):
+                elif recipient.channel == "whatsapp" and normalize_whatsapp_destination(lead.whatsapp) != normalize_whatsapp_destination(recipient.destination):
                     recipient.status = "skipped"
                     recipient.error_reason = "Número de WhatsApp modificado después de preparar la audiencia."
                     recipient.updated_at = utcnow()

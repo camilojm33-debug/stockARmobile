@@ -395,6 +395,13 @@ def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
         )
+        local_mobile = SaaSLead(
+            company_name="WhatsApp con número local",
+            contact_name="Contacto Local",
+            whatsapp="3624228396",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
         no_permission = SaaSLead(
             company_name="Sin permiso",
             contact_name="Contacto Sin Permiso",
@@ -409,7 +416,7 @@ def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
         )
-        db.session.add_all([phone_only, explicit, no_permission, invalid_number])
+        db.session.add_all([phone_only, explicit, local_mobile, no_permission, invalid_number])
         db.session.flush()
 
         campaign = SaaSCampaign(
@@ -428,9 +435,10 @@ def test_whatsapp_campaign_requires_explicit_whatsapp_number(app):
         rows = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
         by_lead = {row.lead_id: row.destination for row in rows}
 
-        assert summary["eligible_whatsapp"] == 1
+        assert summary["eligible_whatsapp"] == 2
         assert by_lead == {
             explicit.id: "5491122223333",
+            local_mobile.id: "5493624228396",
         }
         assert phone_only.id not in by_lead
         assert no_permission.id not in by_lead
@@ -1451,3 +1459,70 @@ def test_manual_campaign_recipient_selection_only_adds_selected_consented_contac
         assert result["added"] == 2
         assert recipients == {(email_ok.id, "email"), (whatsapp_ok.id, "whatsapp")}
         assert campaign.target_count == 2
+
+
+def test_argentine_whatsapp_numbers_are_normalized_to_international_format():
+    from types import SimpleNamespace
+    from services.saas_commercial_service import (
+        _lead_whatsapp_destination,
+        normalize_whatsapp_destination,
+    )
+
+    assert normalize_whatsapp_destination("3624228396") == "5493624228396"
+    assert normalize_whatsapp_destination("0362 15 422-8396") == "5493624228396"
+    assert normalize_whatsapp_destination("+54 9 362 422-8396") == "5493624228396"
+    assert normalize_whatsapp_destination("5493624228396") == "5493624228396"
+    assert _lead_whatsapp_destination(SimpleNamespace(whatsapp="3624228396")) == "5493624228396"
+
+def test_whatsapp_send_normalizes_legacy_local_destination(app, monkeypatch):
+    from types import SimpleNamespace
+    from services.saas_commercial_service import _send_whatsapp
+
+    with app.app_context():
+        sent = []
+        company = SimpleNamespace(id=999)
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.get_commercial_company",
+            lambda: company,
+        )
+        monkeypatch.setattr(
+            "services.ai_agent.config_service.get_whatsapp_connection",
+            lambda _company: {
+                "enabled": True,
+                "phone_number_id": "COMMERCIAL_PHONE_QA",
+                "access_token": "test-token",
+            },
+        )
+
+        def fake_send_template(_company, **kwargs):
+            sent.append(kwargs)
+            return {"messages": [{"id": "wamid.local-number-normalized"}]}
+
+        monkeypatch.setattr(
+            "services.ai_agent.whatsapp_service.WhatsAppService.send_template",
+            fake_send_template,
+        )
+        recipient = SimpleNamespace(
+            destination="3624228396",
+            lead=SimpleNamespace(
+                company_name="Comercio de prueba",
+                contact_name="Camilo",
+                industry="Comercio",
+                locality="Resistencia",
+            ),
+        )
+        campaign = SimpleNamespace(
+            whatsapp_template_name="campana_marketing_es_ar",
+            whatsapp_template_language="es_AR",
+            whatsapp_parameter_fields="",
+            body_text="Hola {{contacto}}, probá StockARmobile.",
+            subject="StockARmobile",
+        )
+
+        ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+
+        assert ok is True
+        assert detail == "sent"
+        assert provider_id == "wamid.local-number-normalized"
+        assert sent[0]["to"] == "5493624228396"
+        assert recipient.destination == "5493624228396"

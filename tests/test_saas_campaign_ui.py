@@ -192,3 +192,16 @@ def test_campaign_detail_offers_manual_recipient_selection_and_audience_reset():
     assert 'channels = ["email", "whatsapp"] if campaign.channel == "both"' in source
     assert 'SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).count()' in source
     assert 'Removing filters widens the audience' in source
+
+
+def test_commercial_campaign_detail_distinguishes_whatsapp_delivery_states():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+
+    assert "Aceptado por WhatsApp" in template
+    assert "Todavía no confirmado como entregado" in template
+    assert "Enviado por WhatsApp" in template
+    assert "Entregado</span>" in template
+    assert "Leído</span>" in template
+    assert "No entregado</span>" in template
+    assert "metrics.delivered" in template
+    assert "metrics.opened" in template

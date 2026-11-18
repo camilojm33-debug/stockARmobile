@@ -478,8 +478,12 @@ def test_commercial_campaign_status_webhook_updates_delivery_read_and_failure(co
     db.session.commit()
     assert read == 1
     assert recipient.opened_at is not None
+    assert recipient.delivered_at is not None
     assert recipient.provider_status == "read"
 
+    # Once the dispatcher has finished, a provider delivery failure must
+    # correct the campaign result instead of leaving it displayed as sent.
+    campaign.status = "ENVIADA"
     failed = _record_commercial_campaign_status([
         ("COMMERCIAL_PHONE_QA", "wamid.status.001", "failed", "549999000777", {
             "errors": [{"title": "Undeliverable"}],
@@ -490,6 +494,7 @@ def test_commercial_campaign_status_webhook_updates_delivery_read_and_failure(co
     assert recipient.status == "failed"
     assert recipient.provider_status == "failed"
     assert campaign.failed_count == 1
+    assert campaign.status == "FALLIDA"
 
 
 def test_crm_email_message_delete_is_tenant_scoped_and_prevents_reimport(commercial_database):
