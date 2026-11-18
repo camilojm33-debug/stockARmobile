@@ -62,11 +62,14 @@ def test_provision_creates_missing_master_template_for_connected_waba(monkeypatc
     assert results[0]["name"] == "campana_marketing_es_ar"
     assert results[0]["status"] == "PENDING"
     assert results[0]["created"] is True
+    assert results[0]["category"] == "MARKETING"
+    assert results[0]["campaign_compatible"] is False  # Meta review is still pending.
     assert calls["get"][0][0].endswith("/987654321/message_templates")
     assert calls["post"][0][0].endswith("/987654321/message_templates")
 
     payload = calls["post"][0][1]["json"]
     assert payload["category"] == "MARKETING"
+    assert payload["allow_category_change"] is True
     assert payload["language"] == "es_AR"
     assert payload["components"][0]["type"] == "BODY"
     assert payload["components"][0]["text"] == service.MASTER_TEMPLATES[0]["body_text"]
@@ -199,6 +202,9 @@ def test_master_catalog_exposes_only_non_secret_template_metadata():
     assert catalog[0]["key"] == "marketing_general"
     assert catalog[0]["name"] == "campana_marketing_es_ar"
     assert catalog[0]["category"] == "MARKETING"
+    assert catalog[0]["parameter_fields"] == ["contacto", "producto", "mensaje"]
+    assert catalog[0]["supported_use_cases"]
+    assert "seguimiento de consultas" in " ".join(catalog[0]["supported_use_cases"]).lower()
     assert "{{1}}" in catalog[0]["body_text"]
     assert "{{2}}" in catalog[0]["body_text"]
     assert "{{3}}" in catalog[0]["body_text"]
@@ -233,6 +239,54 @@ def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
 
 
 
+
+def test_meta_category_change_is_reported_and_never_marked_campaign_compatible(monkeypatch):
+    calls = {"post": []}
+
+    monkeypatch.setattr(
+        service.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse({"data": []}),
+    )
+
+    def fake_post(url, **kwargs):
+        calls["post"].append(kwargs["json"])
+        return FakeResponse({
+            "id": "utility-reclassified-template",
+            "status": "PENDING",
+            "category": "UTILITY",
+        })
+
+    monkeypatch.setattr(service.requests, "post", fake_post)
+    results = service.provision_master_templates(_connection())
+
+    assert calls["post"][0]["category"] == "MARKETING"
+    assert calls["post"][0]["allow_category_change"] is True
+    assert results[0]["category"] == "UTILITY"
+    assert results[0]["campaign_compatible"] is False
+    assert "no como MARKETING" in results[0]["message"]
+
+
+def test_existing_template_reclassified_to_utility_is_a_non_destructive_conflict(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        service.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse({"data": [_existing_master("APPROVED", category="UTILITY")]}),
+    )
+    monkeypatch.setattr(
+        service.requests,
+        "post",
+        lambda *args, **kwargs: calls.append(args) or FakeResponse({}),
+    )
+
+    result = service.provision_master_templates(_connection())[0]
+
+    assert result["status"] == "CONFLICT"
+    assert result["category"] == "UTILITY"
+    assert result["campaign_compatible"] is False
+    assert calls == []
+
 def test_provisioning_state_is_saved_without_tokens_for_default_company_and_branch():
     import json
     from types import SimpleNamespace
@@ -253,6 +307,7 @@ def test_provisioning_state_is_saved_without_tokens_for_default_company_and_bran
     stored_company = company_payload["ai_agent"]["whatsapp"]["master_template_sync"]
     assert company_state["templates"][0]["status"] == "PENDING"
     assert stored_company["templates"][0]["name"] == "campana_marketing_es_ar"
+    assert stored_company["templates"][0]["category"] == "MARKETING"
     assert "access_token" not in json.dumps(stored_company)
 
     branch = SimpleNamespace(is_default=False, vendor_ai_json="")
