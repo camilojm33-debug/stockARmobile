@@ -137,6 +137,17 @@ def list_approved_campaign_templates(connection: dict) -> list[dict]:
                 if not name or not language or status != "APPROVED":
                     continue
                 compatible, reason, body_text = campaign_template_compatibility(item)
+                master = next(
+                    (
+                        definition for definition in __import__(
+                            "services.ai_agent.whatsapp_master_template_service",
+                            fromlist=["MASTER_TEMPLATES"],
+                        ).MASTER_TEMPLATES
+                        if str(definition.get("name") or "") == name
+                        and str(definition.get("language") or "") == language
+                    ),
+                    {},
+                )
                 templates.append({
                     "name": name[:120],
                     "language": language[:20],
@@ -145,6 +156,9 @@ def list_approved_campaign_templates(connection: dict) -> list[dict]:
                     "body_text": body_text,
                     "campaign_compatible": compatible,
                     "compatibility_reason": reason,
+                    "master_key": str(master.get("key") or ""),
+                    "campaign_goal": str(master.get("goal_key") or ""),
+                    "display_name": str(master.get("display_name") or name)[:140],
                 })
 
             next_url = str((payload.get("paging") or {}).get("next") or "").strip()
