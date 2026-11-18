@@ -401,6 +401,21 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         destination = _client_phone(client)
         if not destination or (client.id, "whatsapp") in existing:
             continue
+        resolved_parameters = _tenant_campaign_parameter_resolution(
+            campaign,
+            client,
+            company,
+            template,
+            campaign_data,
+        )
+        if not resolved_parameters.get("valid"):
+            missing = ", ".join(resolved_parameters.get("missing_fields") or [])
+            errors = " ".join(resolved_parameters.get("errors") or [])
+            raise ValueError(
+                "No se pudo preparar la campaña: faltan parámetros para "
+                f"{client.name or 'un cliente'} ({missing or errors}). "
+                "Completá la ficha o agregá valores predeterminados antes de volver a aprobar."
+            )
         eligible += 1
         token = client.marketing_unsubscribe_token or _token()
         client.marketing_unsubscribe_token = token
@@ -456,6 +471,68 @@ def _render_content(campaign, client, *, include_opt_out: bool = True):
     if re.search(r"\{\{[^{}]+\}\}", content):
         raise ValueError("El mensaje contiene variables sin resolver; corregí el texto antes de aprobar.")
     return content
+
+
+def _tenant_campaign_parameter_resolution(campaign, client, company, template, campaign_data=None):
+    """Resolve this campaign's positional parameters from one tenant client record."""
+    from services.campaign_template_engine import (
+        SCOPE_MERCHANT_CLIENTS,
+        campaign_settings,
+        parse_defaults,
+        resolve_parameters,
+    )
+
+    data = campaign_data if isinstance(campaign_data, dict) else _json(campaign)
+    settings = campaign_settings(SCOPE_MERCHANT_CLIENTS, data)
+    goal_key = settings.get("campaign_goal")
+    goal_defaults = settings.get("parameter_defaults") or {}
+    configured_defaults = parse_defaults(
+        SCOPE_MERCHANT_CLIENTS,
+        data.get("parameter_defaults"),
+    )
+    defaults = dict(goal_defaults)
+    defaults.update(configured_defaults)
+
+    template_body = str((template or {}).get("body_text") or "")
+    positions = sorted({
+        int(value) for value in re.findall(r"\{\{\s*(\d+)\s*\}\}", template_body)
+    })
+    expected_count = len(positions)
+    if positions != list(range(1, expected_count + 1)):
+        expected_count = -1
+
+    content = _render_content(
+        campaign,
+        client,
+        include_opt_out=not _template_includes_opt_out(template),
+    )
+    product = getattr(campaign, "product", None)
+    context = {
+        "contacto": str(getattr(client, "name", "") or "").strip(),
+        "empresa": str(getattr(company, "name", "") or "").strip(),
+        "comercio": str(getattr(company, "name", "") or "").strip(),
+        "telefono": _client_phone(client),
+        "email": str(getattr(client, "email", "") or "").strip(),
+        "localidad": str(getattr(client, "city", "") or "").strip(),
+        "provincia": str(getattr(client, "province", "") or "").strip(),
+        "rubro": str(getattr(client, "customer_type", "") or "").strip(),
+        "producto": str(getattr(product, "name", "") or "").strip(),
+        "precio": str(getattr(product, "price", "") or "").strip(),
+        "mensaje": content,
+        "asunto": str(getattr(campaign, "objective", "") or getattr(campaign, "title", "") or "").strip(),
+    }
+    mapping = data.get("whatsapp_parameter_fields") or settings.get("whatsapp_parameter_fields")
+    resolved = resolve_parameters(
+        SCOPE_MERCHANT_CLIENTS,
+        mapping,
+        context,
+        defaults,
+        expected_count=expected_count,
+        goal_key=goal_key,
+    )
+    resolved["goal_key"] = goal_key
+    resolved["template_body"] = template_body
+    return resolved
 
 
 def _fetch_campaign_template(
@@ -534,15 +611,18 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
         return False, "La plantilla aprobada cambió desde que se preparó la campaña; volvé a validar y aprobar.", ""
 
     try:
-        params = [
-            str(client.name or "Cliente")[:1024],
-            str(campaign.product.name if campaign.product else "Varios")[:1024],
-            _render_content(
-                campaign,
-                client,
-                include_opt_out=not _template_includes_opt_out(template),
-            ),
-        ]
+        resolved = _tenant_campaign_parameter_resolution(
+            campaign,
+            client,
+            company,
+            template,
+            campaign_data,
+        )
+        if not resolved.get("valid"):
+            missing = ", ".join(resolved.get("missing_fields") or [])
+            errors = " ".join(resolved.get("errors") or [])
+            return False, f"Faltan parámetros de plantilla: {missing or errors}.", ""
+        params = resolved["values"]
     except ValueError as exc:
         return False, str(exc), ""
     try:
