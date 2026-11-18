@@ -170,11 +170,18 @@
           <div class="min-w-0">
             <div class="fw-semibold small">{{ check.label }}</div>
             <div class="small text-muted">{{ check.detail }}</div>
+            {% if not check.ok and check.resolution %}<div class="small mt-2"><strong>Cómo resolverlo:</strong> {{ check.resolution }}</div>{% endif %}
           </div>
         </div>
       </div>
       {% endfor %}
     </div>
+    {% if preflight.preview_message %}
+    <div class="mt-3">
+      <div class="small fw-semibold mb-1">Vista previa personalizada con el primer prospecto elegible</div>
+      <div class="campaign-message-preview">{{ preflight.preview_message }}</div>
+    </div>
+    {% endif %}
   </section>
 
   <div class="row g-4">
@@ -224,7 +231,7 @@
         {% if segment_filters %}
           <div class="d-flex flex-wrap gap-2">
           {% for key,value in segment_filters.items() %}
-            {% if value not in [None, ''] %}
+            {% if key in segment_labels and value not in [None, ''] %}
               <span class="campaign-meta-pill"><span class="text-muted">{{ segment_labels.get(key,key|replace('_',' ')|title) }}</span><strong>{{ value }}</strong></span>
             {% endif %}
           {% endfor %}
