@@ -1042,8 +1042,6 @@ def vendor_whatsapp_templates():
 
 
 @bp.post("/vendedor/whatsapp/plantillas/predeterminadas")
-
-@bp.post("/vendedor/whatsapp/plantillas/predeterminadas")
 @tenant_required
 @company_admin_required
 def vendor_whatsapp_templates_provision():
@@ -1178,8 +1176,6 @@ def vendor_whatsapp_template_save():
         return jsonify({"success": False, "error": "No pudimos guardar la plantilla seleccionada."}), 500
     return jsonify({"success": True, "selected": {"name": match["name"], "language": match["language"]}})
 
-
-@bp.get("/public/vendedor/<token>")
 
 @bp.get("/public/vendedor/<token>")
 def public_vendor_chat(token):
@@ -1959,8 +1955,6 @@ def campaign_edit(campaign_id):
         flash(str(exc), "warning")
     return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
 
-
-@bp.post("/campanas/<int:campaign_id>/transition")
 
 @bp.post("/campanas/<int:campaign_id>/transition")
 @company_admin_required
