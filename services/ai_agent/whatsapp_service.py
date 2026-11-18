@@ -110,7 +110,9 @@ class WhatsAppService:
             "name": name,
             "language": {"code": language},
         }
-        values = [str(value or "")[:1024] for value in (body_parameters or [])]
+        # Meta rejects template text parameters containing line breaks, tabs, or long runs of spaces.
+        # Normalize at the transport boundary so every caller (CRM, Marketing IA, follow-ups) is safe.
+        values = [" ".join(str(value or "").split())[:1024] for value in (body_parameters or [])]
         if values:
             template["components"] = [
                 {
