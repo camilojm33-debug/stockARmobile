@@ -123,8 +123,10 @@ def test_superadmin_campaign_forms_load_meta_templates_and_map_each_variable():
         assert 'name="whatsapp_template_name"' in template
         assert 'name="whatsapp_template_language"' in template
         assert 'name="whatsapp_parameter_fields"' in template
+        assert "data-default-fields=" in template
 
     assert "data-whatsapp-variable" in picker_js
+    assert "form.dataset.defaultFields" in picker_js
     assert "campaign_compatible" in picker_js
     assert "data-current-name" in edit_form
     assert "def whatsapp_commercial_templates():" in route_source
@@ -194,7 +196,9 @@ def test_campaign_preflight_blocks_a_wrong_whatsapp_parameter_count(app, monkeyp
 def test_commercial_campaign_parameter_field_defaults_are_consistent():
     from services.saas_commercial_service import get_commercial_whatsapp_parameter_fields
 
-    assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="")) == [
-        "contacto", "producto", "mensaje"
-    ]
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+
+    assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="")) == list(
+        MASTER_TEMPLATE_PARAMETER_FIELDS
+    )
     assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="none")) == []

@@ -15,6 +15,15 @@ from urllib.parse import urlparse
 import requests
 
 
+# Single shared parameter contract used by merchant Marketing IA and the SuperAdmin CRM.
+# Keep this ordered exactly as the campaign dispatchers send the BODY parameters.
+MASTER_TEMPLATE_PARAMETER_FIELDS = ("contacto", "producto", "mensaje")
+MASTER_TEMPLATE_PARAMETER_LABELS = {
+    "contacto": "Nombre del contacto",
+    "producto": "Producto o tema del seguimiento",
+    "mensaje": "Texto generado por la campaña o Marketing IA",
+}
+
 MASTER_TEMPLATES = (
     {
         "key": "marketing_general",
@@ -23,7 +32,18 @@ MASTER_TEMPLATES = (
         "language": "es_AR",
         "language_label": "Español (Argentina)",
         "category": "MARKETING",
-        "description": "Plantilla predeterminada para promociones, productos y novedades del comercio.",
+        "description": (
+            "Plantilla universal MARKETING para promociones, campañas comerciales, "
+            "reactivación y seguimiento de prospectos. La usa el CRM y el agente Marketing IA."
+        ),
+        "parameter_fields": list(MASTER_TEMPLATE_PARAMETER_FIELDS),
+        "supported_use_cases": [
+            "Promociones y novedades de productos",
+            "Campañas comerciales y captación",
+            "Seguimiento de consultas y prospectos",
+            "Reactivación de clientes inactivos",
+            "Campañas preparadas por Marketing IA",
+        ],
         "body_text": (
             "¡Hola, {{1}}! 👋\n\n"
             "Queremos compartirte novedades de nuestro comercio.\n\n"
@@ -56,6 +76,12 @@ def list_master_templates() -> list[dict]:
             "language_label": item["language_label"],
             "category": item["category"],
             "description": item["description"],
+            "parameter_fields": list(item.get("parameter_fields") or MASTER_TEMPLATE_PARAMETER_FIELDS),
+            "parameter_labels": {
+                field: MASTER_TEMPLATE_PARAMETER_LABELS.get(field, field)
+                for field in (item.get("parameter_fields") or MASTER_TEMPLATE_PARAMETER_FIELDS)
+            },
+            "supported_use_cases": list(item.get("supported_use_cases") or []),
             "body_text": item["body_text"],
         }
         for item in MASTER_TEMPLATES
@@ -72,7 +98,10 @@ def record_master_template_provisioning(company, results: list[dict], *, branch=
             "key": str(item.get("key") or "")[:80],
             "name": str(item.get("name") or "")[:120],
             "language": str(item.get("language") or "")[:20],
+            "category": str(item.get("category") or "").upper()[:40],
             "status": str(item.get("status") or "UNKNOWN").upper()[:30],
+            "campaign_compatible": bool(item.get("campaign_compatible")),
+            "template_id": str(item.get("template_id") or "")[:80],
             "created": bool(item.get("created")),
             "message": str(item.get("message") or "")[:300],
         })
@@ -214,11 +243,15 @@ def _existing_template_result(master: dict, existing: dict) -> dict:
             "key": master["key"],
             "name": name,
             "language": language,
+            "category": category,
             "status": "CONFLICT",
+            "campaign_compatible": False,
+            "template_id": str(existing.get("id") or ""),
             "created": False,
             "message": (
                 "Ya existe una plantilla con este nombre, pero su contenido o categoría "
-                "no coincide con la plantilla maestra. No se modificó ni se reemplazó."
+                "no coincide con la plantilla maestra. No se modificó ni se reemplazó. "
+                "No se utilizará en campañas hasta resolver el conflicto."
             ),
         }
 
@@ -235,7 +268,10 @@ def _existing_template_result(master: dict, existing: dict) -> dict:
         "key": master["key"],
         "name": name,
         "language": language,
+        "category": category,
         "status": status,
+        "campaign_compatible": status == "APPROVED" and category == master["category"],
+        "template_id": str(existing.get("id") or ""),
         "created": False,
         "message": message,
     }
@@ -284,6 +320,10 @@ def provision_master_templates(connection: dict) -> list[dict]:
             "name": master["name"],
             "language": master["language"],
             "category": master["category"],
+            # Let Meta apply its current categorisation rules and report the
+            # actual category back. A reclassified template is never shown as
+            # compatible with the Marketing campaign engine.
+            "allow_category_change": True,
             "components": [body_component],
         }
         try:
@@ -331,17 +371,27 @@ def provision_master_templates(connection: dict) -> list[dict]:
             if not isinstance(created_payload, dict):
                 created_payload = {}
             status = str(created_payload.get("status") or "PENDING").upper()
+            actual_category = str(created_payload.get("category") or master["category"]).upper()
+            compatible = actual_category == master["category"]
+            message = (
+                "Plantilla creada y enviada a revisión de Meta. "
+                "Se habilitará para campañas cuando Meta la apruebe."
+            )
+            if not compatible:
+                message = (
+                    f"Meta la clasificó como {actual_category}, no como MARKETING. "
+                    "No se habilitará para campañas comerciales ni para Marketing IA."
+                )
             results.append({
                 "key": master["key"],
                 "name": master["name"],
                 "language": master["language"],
+                "category": actual_category,
                 "status": status,
+                "campaign_compatible": compatible and status == "APPROVED",
                 "created": True,
                 "template_id": str(created_payload.get("id") or ""),
-                "message": (
-                    "Plantilla creada y enviada a revisión de Meta. "
-                    "Se habilitará para campañas cuando Meta la apruebe."
-                ),
+                "message": message,
             })
         except requests.Timeout:
             results.append({

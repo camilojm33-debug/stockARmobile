@@ -984,7 +984,12 @@ def vendor_whatsapp_templates():
         templates = _load_whatsapp_templates(connection)
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 502
-    approved = [item for item in templates if item["status"] == "APPROVED"]
+    approved = [
+        item for item in templates
+        if item["status"] == "APPROVED"
+        and item.get("campaign_compatible") is True
+        and str(item.get("category") or "").upper() == "MARKETING"
+    ]
     return jsonify({
         "success": True,
         "templates": approved,
@@ -1026,7 +1031,12 @@ def vendor_whatsapp_templates_provision():
         # this WhatsApp channel. Never overwrite a selection already made by the merchant.
         if not str(connection.get("template_name") or "").strip():
             approved_master = next(
-                (item for item in results if item.get("status") == "APPROVED"),
+                (
+                    item for item in results
+                    if item.get("status") == "APPROVED"
+                    and item.get("campaign_compatible") is True
+                    and str(item.get("category") or "").upper() == "MARKETING"
+                ),
                 None,
             )
             if approved_master:
@@ -1093,7 +1103,11 @@ def vendor_whatsapp_template_save():
         return jsonify({"success": False, "error": str(exc)}), 502
     match = next((
         item for item in approved
-        if item["status"] == "APPROVED" and item["name"] == name and item["language"] == language
+        if item["status"] == "APPROVED"
+        and item.get("campaign_compatible") is True
+        and str(item.get("category") or "").upper() == "MARKETING"
+        and item["name"] == name
+        and item["language"] == language
     ), None)
     if match is None:
         return jsonify({"success": False, "error": "La plantilla ya no figura aprobada en Meta. Actualizá el listado."}), 409

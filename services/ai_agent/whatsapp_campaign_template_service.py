@@ -10,8 +10,11 @@ from urllib.parse import urlparse
 import requests
 
 
+from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+
+
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
-_REQUIRED_BODY_VARIABLES = {"1", "2", "3"}
+_REQUIRED_BODY_VARIABLES = {str(index) for index in range(1, len(MASTER_TEMPLATE_PARAMETER_FIELDS) + 1)}
 MAX_TEMPLATE_PAGES = 20
 
 
@@ -67,7 +70,8 @@ def campaign_template_compatibility(template: dict) -> tuple[bool, str, str]:
     if not body_text or body_variables != _REQUIRED_BODY_VARIABLES:
         return (
             False,
-            "El cuerpo debe incluir {{1}} (cliente), {{2}} (producto) y {{3}} (mensaje), sin variables adicionales.",
+            f"El cuerpo debe incluir {len(MASTER_TEMPLATE_PARAMETER_FIELDS)} variables posicionales consecutivas "
+            "desde {{1}}, en el mismo orden que contacto, producto/tema y mensaje de campaña.",
             body_text,
         )
 

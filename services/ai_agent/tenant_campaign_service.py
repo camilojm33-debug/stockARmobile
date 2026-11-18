@@ -375,7 +375,16 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
             template["auto_selected"] = True
     else:
         template = _fetch_campaign_template(connection)
-    if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
+    template_body = str(template.get("body_text") or "")
+    # The StockARmobile master template already shows the BAJA notice as fixed
+    # copy. Add it to the dynamic message only for merchant-selected templates
+    # that do not carry their own unsubscribe instruction.
+    template_has_opt_out = bool(re.search(r"\bBAJA\b|dejar de recibir", template_body, re.IGNORECASE))
+    if not _render_content(
+        campaign,
+        type("PreviewClient", (), {"name": "Cliente"})(),
+        include_opt_out=not template_has_opt_out,
+    ).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
     campaign_data["whatsapp_sender"] = current_sender_binding
@@ -431,7 +440,7 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     return {"eligible": eligible, "added": added, "target_count": campaign.target_count}
 
 
-def _render_content(campaign, client):
+def _render_content(campaign, client, *, include_opt_out=True):
     replacements = {
         "{{cliente}}": str(client.name or ""),
         "{{nombre}}": str(client.name or ""),
@@ -445,7 +454,7 @@ def _render_content(campaign, client):
     content = content.strip()
     if not content:
         raise ValueError("El mensaje de campaña está vacío.")
-    if CAMPAIGN_OPT_OUT_TEXT.lower() not in content.lower():
+    if include_opt_out and CAMPAIGN_OPT_OUT_TEXT.lower() not in content.lower():
         content = f"{content}\n\n{CAMPAIGN_OPT_OUT_TEXT}"
     if len(content) > MAX_CAMPAIGN_COPY_LENGTH:
         raise ValueError(
@@ -536,11 +545,20 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
         return False, "La plantilla aprobada cambió desde que se preparó la campaña; volvé a validar y aprobar.", ""
 
     try:
-        params = [
-            str(client.name or "Cliente")[:1024],
-            str(campaign.product.name if campaign.product else "Varios")[:1024],
-            _render_content(campaign, client),
-        ]
+        from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+
+        parameter_values = {
+            "contacto": str(client.name or "Cliente")[:1024],
+            "producto": str(campaign.product.name if campaign.product else "Varios")[:1024],
+            "mensaje": _render_content(
+                campaign,
+                client,
+                include_opt_out=not bool(
+                    re.search(r"\bBAJA\b|dejar de recibir", str(template.get("body_text") or ""), re.IGNORECASE)
+                ),
+            ),
+        }
+        params = [parameter_values[field] for field in MASTER_TEMPLATE_PARAMETER_FIELDS]
     except ValueError as exc:
         return False, str(exc), ""
     try:

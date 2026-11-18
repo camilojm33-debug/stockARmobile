@@ -58,13 +58,13 @@
       <div class="d-flex align-items-start gap-3">
         <div class="campaigns-hero-icon"><i class="bi bi-megaphone-fill"></i></div>
         <div>
-          <span class="page-kicker"><i class="bi bi-broadcast-pin"></i> CRM comercial · SuperAdmin</span>
-          <h1 class="display-6 fw-bold mb-2">Campañas de captación</h1>
-          <p class="text-muted mb-0" style="max-width:720px;">Creá, prepará, aprobá y controlá las campañas comerciales de StockArMobile desde un solo lugar.</p>
+          <span class="page-kicker"><i class="bi bi-broadcast-pin"></i> Agenda comercial · StockARmobile</span>
+          <h1 class="display-6 fw-bold mb-2">Campañas comerciales</h1>
+          <p class="text-muted mb-0" style="max-width:720px;">El CRM es la agenda comercial de StockARmobile: guarda prospectos, contactos y seguimientos. Una campaña es un mismo mensaje para un grupo de esos contactos.</p>
         </div>
       </div>
       <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-arrow-left me-1"></i>Volver al CRM</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-arrow-left me-1"></i>Volver a contactos</a>
         <button class="btn btn-primary px-3" data-bs-toggle="modal" data-bs-target="#newCampaignModal"><i class="bi bi-plus-lg me-1"></i>Nueva campaña</button>
       </div>
     </div>
@@ -206,11 +206,12 @@
     <div class="modal-content border-0 shadow-lg">
       <form method="post" class="js-whatsapp-template-form"
             data-template-list-url="{{ url_for('saas.whatsapp_commercial_templates') }}"
-            data-current-name="" data-current-language="es_AR">
+            data-current-name="" data-current-language="es_AR"
+            data-default-fields="{{ default_whatsapp_parameter_fields }}">
         <div class="modal-header px-4 py-3">
           <div>
             <div class="page-kicker mb-1"><i class="bi bi-megaphone"></i> Nueva campaña comercial</div>
-            <h2 class="modal-title h5 fw-bold mb-0" id="newCampaignModalLabel">Prepará la campaña</h2>
+            <h2 class="modal-title h5 fw-bold mb-0" id="newCampaignModalLabel">Completá lo básico y listo</h2>
           </div>
           <button type="button" class="btn-close ms-2" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
@@ -218,23 +219,24 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Identidad y canal</div>
+            <div class="campaign-section-title"><span class="section-dot"></span>1. ¿Qué vamos a enviar?</div>
             <div class="row g-3">
               <div class="col-lg-8">
-                <label class="form-label fw-semibold">Nombre interno</label>
+                <label class="form-label fw-semibold">Nombre de la campaña</label>
                 <input class="form-control" name="name" required placeholder="Ej.: Captación ferreterías octubre">
               </div>
               <div class="col-lg-4">
                 <label class="form-label fw-semibold">Canal</label>
                 <select class="form-select" name="channel">
-                  <option value="email">Email</option>
-                  <option value="whatsapp">WhatsApp</option>
+                  <option value="whatsapp" {% if commercial_whatsapp.connected %}selected{% endif %}>WhatsApp</option>
+                  <option value="email" {% if not commercial_whatsapp.connected %}selected{% endif %}>Email</option>
                   <option value="both">Email + WhatsApp</option>
                 </select>
               </div>
               <div class="col-lg-8">
-                <label class="form-label fw-semibold">Asunto / título</label>
-                <input class="form-control" name="subject" required placeholder="Ej.: Probá StockArMobile gratis durante 10 días">
+                <label class="form-label fw-semibold">Título del mensaje</label>
+                <input class="form-control" name="subject" required placeholder="Ej.: Conocé StockARmobile">
+                <div class="form-text">También se usa como asunto cuando elegís Email.</div>
               </div>
               <div class="col-lg-4">
                 <label class="form-label fw-semibold">Programar envío</label>
@@ -244,7 +246,7 @@
           </div>
 
           <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Audiencia</div>
+            <div class="campaign-section-title"><span class="section-dot"></span>2. ¿A quién queremos llegar?</div>
             <div class="alert alert-info campaign-alert small mb-3">
               <div class="d-flex align-items-start gap-2">
                 <i class="bi bi-shield-check fs-5"></i>
@@ -255,13 +257,20 @@
               <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" placeholder="Ferretería"></div>
               <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" placeholder="Chaco"></div>
               <div class="col-md-4"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" placeholder="Resistencia"></div>
-              <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" placeholder="Ej.: captacion"></div>
-              <div class="col-md-6"><label class="form-label fw-semibold">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
+              <div class="col-12">
+                <details class="mt-1">
+                  <summary class="small fw-semibold text-primary" style="cursor:pointer;">Filtros adicionales (opcional)</summary>
+                  <div class="row g-3 mt-1">
+                    <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" placeholder="Ej.: captacion"></div>
+                    <div class="col-md-6"><label class="form-label fw-semibold">Puntaje mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
+                  </div>
+                </details>
+              </div>
             </div>
           </div>
 
           <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
+            <div class="campaign-section-title"><span class="section-dot"></span>3. ¿Qué les vamos a decir?</div>
             <div class="row g-3">
               <div class="col-12">
                 <label class="form-label fw-semibold">Texto</label>
@@ -272,17 +281,24 @@ Te presentamos StockArMobile, una plataforma para gestionar stock, ventas, clien
 Probalo gratis durante 10 días.</textarea>
               </div>
               <div class="col-12">
-                <label class="form-label fw-semibold">HTML para Email</label>
-                <textarea class="form-control font-monospace" name="body_html" rows="8" required>&lt;p&gt;Hola {{contacto}},&lt;/p&gt;
+                <details>
+                  <summary class="small fw-semibold text-primary" style="cursor:pointer;">Diseño avanzado de Email (opcional)</summary>
+                  <div class="mt-2">
+                    <label class="form-label fw-semibold">HTML para Email</label>
+                    <textarea class="form-control font-monospace" name="body_html" rows="8" required>&lt;p&gt;Hola {{contacto}},&lt;/p&gt;
 &lt;p&gt;Te presentamos &lt;strong&gt;StockArMobile&lt;/strong&gt;, una plataforma para gestionar stock, ventas, clientes y presupuestos.&lt;/p&gt;
 &lt;p&gt;&lt;strong&gt;Probalo gratis durante 10 días.&lt;/strong&gt;&lt;/p&gt;
 &lt;p&gt;&lt;a href="https://www.stockarmobile.com"&gt;Conocé StockArMobile&lt;/a&gt;&lt;/p&gt;</textarea>
+                    <div class="form-text">Para una campaña por WhatsApp no necesitás tocar este campo.</div>
+                  </div>
+                </details>
               </div>
             </div>
           </div>
 
-          <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>WhatsApp Comercial · plantillas de Meta</div>
+          <details class="campaign-form-section">
+            <summary class="campaign-section-title" style="cursor:pointer;"><span class="section-dot"></span>Opciones avanzadas de WhatsApp (no hace falta modificarlas)</summary>
+            <p class="small text-muted mt-2 mb-3">Si hay una plantilla de Marketing aprobada en la cuenta comercial, se selecciona sola. Si Meta todavía la está revisando, primero hay que esperar su aprobación.</p>
             <div class="row g-3">
               <div class="col-lg-9">
                 <label class="form-label fw-semibold">Plantilla aprobada en tu cuenta de WhatsApp</label>
@@ -303,14 +319,15 @@ Probalo gratis durante 10 días.</textarea>
                 </div>
                 <pre class="small text-muted bg-light rounded-3 p-3 mb-2 text-wrap" data-whatsapp-template-preview>Vista previa de la plantilla seleccionada.</pre>
                 <div data-whatsapp-parameter-controls></div>
-                <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="contacto,producto,mensaje">
+                <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="{{ default_whatsapp_parameter_fields }}">
               </div>
             </div>
             <div class="small text-muted mt-2">Los datos de las variables se completan con la ficha del prospecto y el texto de la campaña. Este selector usa únicamente el WhatsApp Comercial interno de SuperAdmin.</div>
           </div>
+          </details>
         </div>
         <div class="modal-footer px-4 gap-2">
-          <div class="campaign-submit-help"><i class="bi bi-info-circle me-1"></i>Primero se crea el borrador. Después vas a poder preparar la audiencia y aprobar el envío.</div>
+          <div class="campaign-submit-help"><i class="bi bi-info-circle me-1"></i>Guardar crea un borrador; no envía mensajes. Primero podrás revisar a quiénes les llegará.</div>
           <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button>
           <button class="btn btn-primary px-4" type="submit"><i class="bi bi-save2 me-1"></i>Crear borrador y continuar</button>
         </div>
@@ -319,4 +336,46 @@ Probalo gratis durante 10 días.</textarea>
   </div>
 </div>
 <script src="{{ url_for('static', filename='assets/js/superadmin-campaign-template-picker.js') }}?v=20261118-1"></script>
+<script>
+(function () {
+  const form = document.querySelector("#newCampaignModal form");
+  if (!form) return;
+  const message = form.querySelector('[name="body_text"]');
+  const emailHtml = form.querySelector('[name="body_html"]');
+  if (!message || !emailHtml) return;
+
+  let emailHtmlWasCustomized = false;
+  const escapeHtml = function (value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  };
+  const syncEmailHtml = function () {
+    if (emailHtmlWasCustomized) return;
+    const lines = escapeHtml(message.value || "").split(/\r?\n/);
+    const paragraphs = [];
+    let current = [];
+    lines.forEach(function (line) {
+      if (!line.trim()) {
+        if (current.length) paragraphs.push(current.join("<br>"));
+        current = [];
+      } else {
+        current.push(line);
+      }
+    });
+    if (current.length) paragraphs.push(current.join("<br>"));
+    emailHtml.value = paragraphs.map(function (paragraph) {
+      return "<p>" + paragraph + "</p>";
+    }).join("\n");
+  };
+  emailHtml.addEventListener("input", function () {
+    emailHtmlWasCustomized = true;
+  });
+  message.addEventListener("input", syncEmailHtml);
+  syncEmailHtml();
+})();
+</script>
 {% endblock %}

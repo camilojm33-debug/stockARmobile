@@ -2690,8 +2690,10 @@ def crm_leads_export():
 @superadmin_required
 def crm_campaigns():
     from app import SaaSCampaign, db, record_audit
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
 
     _require_superadmin()
+    default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
     if request.method == "POST":
         from services.saas_commercial_service import segment_filters_from_request
 
@@ -2703,7 +2705,7 @@ def crm_campaigns():
         body_text = (request.form.get("body_text") or "").strip() or None
         whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
         whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
-        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,producto,mensaje").strip()[:500] or "contacto,producto,mensaje"
+        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or default_whatsapp_parameter_fields).strip()[:500] or default_whatsapp_parameter_fields
         if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
             flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
             return redirect(url_for("saas.crm_campaigns"))
@@ -2746,6 +2748,7 @@ def crm_campaigns():
         marketing_send_enabled=marketing_send_enabled,
         smtp_configured=smtp_configured,
         commercial_whatsapp=commercial_whatsapp,
+        default_whatsapp_parameter_fields=default_whatsapp_parameter_fields,
     )
 
 
@@ -2852,11 +2855,13 @@ def crm_campaign_bulk_consent(campaign_id):
 @superadmin_required
 def crm_campaign_detail(campaign_id):
     from app import SaaSCampaign, db
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
     from services.saas_campaign_preflight import campaign_preflight
     from services.saas_commercial_whatsapp import commercial_whatsapp_summary
 
     _require_superadmin()
+    default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
     try:
         segment_filters = json.loads(campaign.segment_json or "{}")
@@ -2905,6 +2910,7 @@ def crm_campaign_detail(campaign_id):
         preflight=campaign_preflight(db.session, campaign),
         consent_candidates=consent_candidates,
         commercial_whatsapp=commercial_whatsapp_summary(),
+        default_whatsapp_parameter_fields=default_whatsapp_parameter_fields,
     )
 
 
@@ -2960,8 +2966,10 @@ def crm_campaign_prepare(campaign_id):
 @superadmin_required
 def crm_campaign_edit(campaign_id):
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
 
     _require_superadmin()
+    default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
     if campaign.status != "BORRADOR":
         flash("Solo se puede editar una campaña que todavía está en Borrador.", "warning")
@@ -2974,7 +2982,7 @@ def crm_campaign_edit(campaign_id):
     body_text = (request.form.get("body_text") or "").strip() or None
     whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
     whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
-    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,producto,mensaje").strip()[:500] or "contacto,producto,mensaje"
+    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or default_whatsapp_parameter_fields).strip()[:500] or default_whatsapp_parameter_fields
 
     if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
         flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
@@ -7037,9 +7045,42 @@ def whatsapp_master_templates():
     from services.ai_agent.config_service import (
         _branch_preferences,
         get_ai_preferences,
+        get_whatsapp_connection,
         is_commercial_company,
     )
     from services.ai_agent.whatsapp_master_template_service import list_master_templates
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    commercial_waba = {
+        "ready": False,
+        "phone": "",
+        "waba_id": "",
+        "templates": [],
+        "checked_at": "",
+    }
+    commercial_company = get_commercial_company()
+    if commercial_company is not None:
+        try:
+            commercial_connection = get_whatsapp_connection(commercial_company)
+            commercial_preferences = get_ai_preferences(commercial_company).get("whatsapp") or {}
+            commercial_sync = commercial_preferences.get("master_template_sync")
+            commercial_sync = commercial_sync if isinstance(commercial_sync, dict) else {}
+            commercial_templates = commercial_sync.get("templates")
+            commercial_templates = commercial_templates if isinstance(commercial_templates, list) else []
+            commercial_waba = {
+                "ready": bool(
+                    commercial_connection.get("enabled")
+                    and commercial_connection.get("phone_number_id")
+                    and commercial_connection.get("business_account_id")
+                    and commercial_connection.get("access_token")
+                ),
+                "phone": str(commercial_connection.get("display_phone_number") or "").strip(),
+                "waba_id": str(commercial_connection.get("business_account_id") or "").strip(),
+                "templates": commercial_templates,
+                "checked_at": str(commercial_sync.get("checked_at") or ""),
+            }
+        except Exception:
+            current_app.logger.exception("No se pudo consultar el estado de la WABA comercial para plantillas maestras.")
 
     channel_rows = []
 
@@ -7102,7 +7143,82 @@ def whatsapp_master_templates():
         "saas/whatsapp_master_templates.html",
         master_templates=list_master_templates(),
         channel_rows=channel_rows,
+        commercial_waba=commercial_waba,
+        commercial_publish_url=url_for("saas.whatsapp_master_templates_publish_commercial"),
+        commercial_settings_url=url_for("saas.whatsapp_commercial_settings"),
     )
+
+
+@bp.post("/whatsapp-plantillas-maestras/publicar-comercial")
+@superadmin_required
+def whatsapp_master_templates_publish_commercial():
+    """Publish/synchronise StockARmobile's master catalogue in its own WABA."""
+    from app import db, record_audit
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.ai_agent.whatsapp_master_template_service import (
+        provision_master_templates,
+        record_master_template_provisioning,
+    )
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    if company is None:
+        return jsonify({
+            "success": False,
+            "error": "No está inicializada la empresa interna StockARmobile Comercial.",
+        }), 409
+
+    try:
+        connection = get_whatsapp_connection(company)
+        if not connection.get("enabled"):
+            return jsonify({"success": False, "error": "Habilitá primero WhatsApp Comercial en la configuración de StockARmobile."}), 409
+        if not str(connection.get("phone_number_id") or "").strip():
+            return jsonify({"success": False, "error": "Falta el Phone Number ID del WhatsApp Comercial."}), 409
+        waba_id = str(connection.get("business_account_id") or "").strip()
+        if not waba_id.isdigit() or len(waba_id) > 30:
+            return jsonify({"success": False, "error": "Configurá un WABA ID válido para WhatsApp Comercial."}), 409
+        if not str(connection.get("access_token") or "").strip():
+            return jsonify({"success": False, "error": "Falta el token de Meta. Reconectá WhatsApp con permiso whatsapp_business_management."}), 409
+        results = provision_master_templates(connection)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except Exception:
+        current_app.logger.exception("No se pudieron publicar las plantillas maestras en la WABA comercial.")
+        return jsonify({
+            "success": False,
+            "error": "No se pudo conectar con Meta para publicar las plantillas maestras.",
+        }), 502
+
+    try:
+        state = record_master_template_provisioning(company, results)
+        status_summary = ", ".join(
+            f"{str(item.get('name') or item.get('key') or 'plantilla')}: {str(item.get('status') or 'UNKNOWN')}"
+            for item in results if isinstance(item, dict)
+        )[:1200]
+        record_audit(
+            action="superadmin_commercial_master_templates_published",
+            entity="whatsapp_commercial",
+            entity_id=company.id,
+            company_id=company.id,
+            detail=f"Publicación/sincronización de plantillas maestras en la WABA comercial. {status_summary}",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo guardar la auditoría de publicación de plantillas maestras.")
+        return jsonify({
+            "success": False,
+            "error": "Meta respondió, pero no pudimos guardar el estado y la auditoría. Volvé a sincronizar para verificarlo.",
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "checked_at": state.get("checked_at", ""),
+        "results": state.get("templates", []),
+        "message": "Catálogo sincronizado con la WABA comercial. Las plantillas quedan disponibles para campañas cuando Meta las aprueba.",
+    })
 
 
 def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:

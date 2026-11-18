@@ -6,7 +6,7 @@
     <div>
       <div class="small text-uppercase fw-bold text-primary mb-1">SuperAdmin · WhatsApp</div>
       <h1 class="h3 fw-bold mb-1">Biblioteca de plantillas maestras</h1>
-      <p class="text-muted mb-0">Definiciones centrales que StockARmobile replica en la cuenta WABA de cada comercio conectado.</p>
+      <p class="text-muted mb-0">Una plantilla MARKETING maestra por WABA, compartida por las campañas del CRM y Marketing IA.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('saas.whatsapp_commercial_settings') }}"><i class="bi bi-arrow-left me-1"></i>WhatsApp Comercial</a>
   </div>
@@ -16,8 +16,16 @@
     <div>
       <strong>Una definición maestra, una copia por cuenta de WhatsApp.</strong>
       Meta mantiene las plantillas dentro de cada WABA y revisa cada copia de forma independiente.
-      Los comercios no comparten emisores, números ni aprobaciones.
+      Los comercios no comparten emisores, números ni aprobaciones. Una vez aprobada, esta misma plantilla sirve
+      para promociones, campañas comerciales, reactivación y seguimiento de prospectos.
     </div>
+  </div>
+  <div class="alert alert-light border small">
+    <strong>El mismo orden de variables en todos los envíos:</strong>
+    1) contacto · 2) producto o tema · 3) mensaje completo generado por la campaña.
+    El CRM de Super Admin y las campañas de Marketing IA envían esos tres datos en el mismo orden.
+    Los seguimientos de ventas y reactivación son MARKETING; las actualizaciones de pedidos o pagos
+    deben usar una plantilla UTILITY específica y no esta plantilla promocional.
   </div>
 
   {% for item in master_templates %}
@@ -42,9 +50,22 @@
           </div>
           <div class="col-md-4">
             <div class="small text-muted">Variables que completa el CRM</div>
-            <strong>{{ "{{1}}" }} · {{ "{{2}}" }} · {{ "{{3}}" }}</strong>
+            <strong>
+              {% for field in item.parameter_fields %}
+                {{ loop.index }} → {{ item.parameter_labels.get(field, field) }}{% if not loop.last %} · {% endif %}
+              {% endfor %}
+            </strong>
           </div>
         </div>
+        {% if item.supported_use_cases %}
+          <hr class="my-3">
+          <h3 class="h6 fw-bold">Usos admitidos</h3>
+          <div class="d-flex flex-wrap gap-2">
+            {% for use_case in item.supported_use_cases %}
+              <span class="badge rounded-pill text-bg-light border">{{ use_case }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
         <hr class="my-3">
         <h3 class="h6 fw-bold">Contenido base</h3>
         <pre class="bg-body-tertiary border rounded-3 p-3 mb-0 text-wrap" style="white-space:pre-wrap;font:inherit;">{{ item.body_text }}</pre>
@@ -53,6 +74,59 @@
   {% else %}
     <div class="alert alert-warning">Todavía no hay plantillas maestras configuradas.</div>
   {% endfor %}
+
+  <section class="card border-0 shadow-sm rounded-4 mb-4">
+    <div class="card-body p-4">
+      <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+        <div>
+          <div class="small text-uppercase fw-bold text-primary mb-1">WABA exclusiva de StockARmobile</div>
+          <h2 class="h5 fw-bold mb-1">Publicar catálogo maestro en Meta</h2>
+          <p class="text-muted small mb-0">Crea o sincroniza estas plantillas en el número comercial de StockARmobile. No modifica las WABA de los comercios.</p>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ commercial_settings_url }}"><i class="bi bi-gear me-1"></i>Configurar WhatsApp Comercial</a>
+      </div>
+
+      <div class="row g-3 align-items-center">
+        <div class="col-lg-8">
+          <div class="border rounded-3 p-3 h-100">
+            <div class="d-flex flex-wrap gap-3">
+              <div><div class="small text-muted">Estado de conexión</div><strong>{{ 'Lista para publicar' if commercial_waba.ready else 'Configuración incompleta' }}</strong></div>
+              <div><div class="small text-muted">Número comercial</div><strong>{{ commercial_waba.phone or 'No configurado' }}</strong></div>
+              <div><div class="small text-muted">WABA ID</div><code>{{ commercial_waba.waba_id or 'No configurado' }}</code></div>
+            </div>
+            {% if not commercial_waba.ready %}
+              <div class="alert alert-warning small mt-3 mb-0">Configurá y habilitá el canal, el Phone Number ID, el WABA ID y un token de Meta con permiso <code>whatsapp_business_management</code> antes de publicar.</div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-lg-4">
+          <form id="commercial-master-publish-form" data-publish-url="{{ commercial_publish_url }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-primary w-100" type="submit" id="commercial-master-publish-button" {% if not commercial_waba.ready %}disabled{% endif %}>
+              <i class="bi bi-cloud-arrow-up me-1"></i>Publicar / sincronizar en Meta
+            </button>
+            <div class="small text-muted mt-2">La primera publicación solicita revisión a Meta. Las siguientes sincronizaciones verifican el estado y no duplican ni reemplazan plantillas existentes.</div>
+          </form>
+        </div>
+      </div>
+
+      <div id="commercial-master-publish-status" class="small mt-3" role="status" aria-live="polite">
+        {% if commercial_waba.checked_at %}
+          Última sincronización: {{ commercial_waba.checked_at }}.
+        {% else %}
+          Todavía no se publicaron ni sincronizaron las plantillas en la WABA comercial.
+        {% endif %}
+      </div>
+      <div id="commercial-master-publish-results" class="mt-2">
+        {% for item in commercial_waba.templates %}
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 border rounded-3 p-2 mb-2">
+            <div><strong>{{ item.name or item.key }}</strong><div class="small text-muted">{{ item.message or '' }}</div></div>
+            <span class="badge {% if item.status == 'APPROVED' and item.campaign_compatible %}text-bg-success{% elif item.status in ['PENDING', 'IN_APPEAL'] %}text-bg-warning{% elif item.status in ['CONFLICT', 'REJECTED', 'ERROR'] or (item.status == 'APPROVED' and not item.campaign_compatible) %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ item.status or 'UNKNOWN' }}{% if item.category %} · {{ item.category }}{% endif %}</span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
 
   <section class="card border-0 shadow-sm rounded-4 mb-4">
     <div class="card-body p-4">
@@ -94,4 +168,64 @@
     La copia queda disponible para campañas cuando Meta la aprueba. Los rechazos o conflictos se muestran en la pantalla de conexión del comercio.
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const form = document.getElementById('commercial-master-publish-form');
+  const button = document.getElementById('commercial-master-publish-button');
+  const status = document.getElementById('commercial-master-publish-status');
+  const results = document.getElementById('commercial-master-publish-results');
+  if (!form || !button || !status || !results) return;
+
+  const publishUrl = form.dataset.publishUrl;
+  const csrf = form.querySelector('input[name="csrf_token"]')?.value || '';
+
+  function renderResults(items) {
+    results.replaceChildren();
+    (Array.isArray(items) ? items : []).forEach(function (item) {
+      const row = document.createElement('div');
+      row.className = 'd-flex flex-wrap align-items-center justify-content-between gap-2 border rounded-3 p-2 mb-2';
+      const copy = document.createElement('div');
+      const name = document.createElement('strong');
+      name.textContent = String(item.name || item.key || 'Plantilla');
+      const detail = document.createElement('div');
+      detail.className = 'small text-muted';
+      detail.textContent = String(item.message || '');
+      copy.append(name, detail);
+      const badge = document.createElement('span');
+      const state = String(item.status || 'UNKNOWN').toUpperCase();
+      badge.className = 'badge ' + (state === 'APPROVED' ? 'text-bg-success' : (['PENDING', 'IN_APPEAL'].includes(state) ? 'text-bg-warning' : (state === 'CONFLICT' || state === 'REJECTED' || state === 'ERROR' ? 'text-bg-danger' : 'text-bg-secondary')));
+      badge.textContent = state + (item.category ? ' · ' + String(item.category).toUpperCase() : '');
+      row.append(copy, badge);
+      results.append(row);
+    });
+  }
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    if (button.disabled) return;
+    button.disabled = true;
+    status.classList.remove('text-danger');
+    status.textContent = 'Conectando con Meta y comprobando las plantillas de la WABA comercial...';
+    try {
+      const response = await fetch(publishUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'X-CSRFToken': csrf, 'Accept': 'application/json'}
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Meta no pudo sincronizar las plantillas.');
+      renderResults(data.results);
+      status.textContent = String(data.message || 'Sincronización completada.') + (data.checked_at ? ' Última comprobación: ' + data.checked_at : '');
+    } catch (error) {
+      status.textContent = error.message || 'No se pudo publicar el catálogo en Meta.';
+      status.classList.add('text-danger');
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -16,7 +16,7 @@
 {% block content %}
 <div class="app-shell campaign-wizard">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-stars"></i> Marketing IA · IA PRO</span><h1 class="h3 fw-bold mb-1">Crear campaña</h1><p class="text-muted mb-0">Definí la audiencia y el mensaje; la campaña queda como borrador para revisión y aprobación.</p></div>
+    <div><span class="page-kicker"><i class="bi bi-stars"></i> Marketing IA</span><h1 class="h3 fw-bold mb-1">Preparar un mensaje para tus clientes</h1><p class="text-muted mb-0">Elegí el público, revisá el texto y guardá. No se envía nada hasta que lo apruebes.</p></div>
     <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Volver a campañas</a>
   </div>
   {% if template %}
@@ -48,8 +48,9 @@
   {% endif %}
   {% if template %}
   <div class="card app-card"><div class="card-body p-3 p-md-4">
+    <div class="alert alert-primary small mb-4"><i class="bi bi-magic me-1"></i><strong>No tenés que configurar Meta ni elegir una plantilla.</strong> StockARmobile usa automáticamente la plantilla de Marketing aprobada para tu WhatsApp.</div>
     <div class="campaign-steps mb-4" aria-label="Pasos de la campaña">
-      {% for label in ['Objetivo','Audiencia','Mensaje','Programación','Confirmación'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
+      {% for label in ['Objetivo','Público','Mensaje','Horario','Revisión'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
     </div>
     <form method="post" id="campaignWizardForm" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -61,17 +62,17 @@
         </div>
       </section>
       <section class="campaign-pane" data-step="2">
-        <h2 class="h4 fw-bold">2. Elegí la audiencia</h2><p class="text-muted">Solo se consideran contactos activos, con número de WhatsApp explícito y consentimiento documentado.</p>
+        <h2 class="h4 fw-bold">2. ¿A quién querés llegar?</h2><p class="text-muted">Elegí un grupo de clientes. StockARmobile solo incluirá contactos que pueden recibir mensajes promocionales.</p>
         <div class="row g-3">
           <div class="col-md-7"><label class="form-label">Segmento</label><select class="form-select" name="audience" id="campaignAudience"><option value="all">Todos los clientes elegibles</option><option value="inactive">Clientes sin compras recientes</option><option value="notes">Etiqueta en notas del cliente</option></select></div>
           <div class="col-md-5" id="campaignDaysWrap"><label class="form-label">Días sin compra</label><input class="form-control" type="number" min="1" max="365" name="days" id="campaignDays" value="90"></div>
           <div class="col-12 d-none" id="campaignSegmentWrap"><label class="form-label">Texto de etiqueta / filtro</label><input class="form-control" name="client_segment" id="campaignSegment" maxlength="80" placeholder="Ej. mayorista"><div class="form-text">Se busca en las notas internas del cliente.</div></div>
         </div>
         <div class="alert alert-primary mt-3 mb-2"><strong><span id="campaignAudienceCount">{{ audience_count }}</span> destinatarios elegibles estimados</strong><div class="small mt-1"><span id="campaignAudienceExcluded">Se excluyen clientes sin consentimiento registrado, sin WhatsApp o inactivos.</span></div></div>
-        <div class="small text-muted">La audiencia se vuelve a validar al aprobar y justo antes de cada envío; los cambios recientes de teléfono o consentimiento se respetan.</div>
+        <div class="small text-muted">Antes de cada envío se vuelve a comprobar que cada contacto pueda recibir mensajes.</div>
       </section>
       <section class="campaign-pane" data-step="3">
-        <h2 class="h4 fw-bold">3. Escribí el mensaje</h2><p class="text-muted">El mensaje se envía en el parámetro editable de una plantilla Meta aprobada y compatible.</p>
+        <h2 class="h4 fw-bold">3. ¿Qué les vamos a contar?</h2><p class="text-muted">Escribí el mensaje. La plantilla de WhatsApp ya está preparada automáticamente.</p>
         {% if template %}
         <div class="alert alert-success py-2"><i class="bi bi-patch-check me-1"></i>Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }}</div>
         {% else %}
@@ -90,7 +91,7 @@
         <div class="form-text">Si no seleccionás una fecha, la campaña empezará cuando un administrador la apruebe.</div>
       </section>
       <section class="campaign-pane" data-step="5">
-        <h2 class="h4 fw-bold">5. Confirmá el borrador</h2><p class="text-muted">Todavía no se enviará ningún mensaje. Luego podrás revisar destinatarios, previsualización y resultados antes de aprobar.</p>
+        <h2 class="h4 fw-bold">5. Revisá antes de guardar</h2><p class="text-muted">Todavía no se envía ningún mensaje. Primero guardás el borrador; después decidís si lo aprobás.</p>
         <div class="border rounded-3 p-3 mb-3"><div class="fw-semibold" id="campaignReviewTitle">Nombre de campaña</div><div class="small text-muted" id="campaignReviewObjective">Objetivo</div><hr><div class="small"><strong>Audiencia:</strong> <span id="campaignReviewAudience">Todos los clientes elegibles</span> · <span id="campaignReviewCount">{{ audience_count }}</span> elegibles</div><div class="small mt-2"><strong>Plantilla:</strong> {{ template.name if template else 'No disponible' }}</div></div>
         <label class="form-label">Resumen del mensaje</label><div class="campaign-template-preview" id="campaignReviewMessage"></div>
         <div class="alert alert-warning small mt-3 mb-0"><i class="bi bi-shield-check me-1"></i>Crear el borrador no envía nada. La aprobación requiere IA PRO, plantilla compatible y consentimiento documentado.</div>
