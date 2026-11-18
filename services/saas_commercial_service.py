@@ -694,6 +694,30 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
 
     filters = parse_segment_json(campaign.segment_json)
     channels = ["email", "whatsapp"] if campaign.channel == "both" else [campaign.channel]
+    if "email" in channels:
+        email_candidates = _eligible_leads_query("email", filters).order_by(
+            SaaSLead.lead_score.desc(),
+            SaaSLead.id.asc(),
+        ).all()
+        email_candidates = [
+            lead for lead in email_candidates
+            if _campaign_email_is_valid(lead)
+        ]
+        email_errors = []
+        for lead in email_candidates:
+            try:
+                missing = _commercial_email_missing_fields(campaign, lead)
+            except ValueError as exc:
+                missing = [str(exc)]
+            if missing:
+                email_errors.append((lead.company_name or lead.id, missing))
+        if email_errors:
+            first_name, first_missing = email_errors[0]
+            raise ValueError(
+                f"No se puede preparar la audiencia de email: {len(email_errors)} "
+                f"prospecto(s) tienen variables sin resolver. Primer caso: {first_name}: "
+                f"{', '.join(first_missing)}. Completá las fichas o agregá valores predeterminados."
+            )
     if "whatsapp" in channels:
         candidate_leads = _eligible_leads_query("whatsapp", filters).order_by(
             SaaSLead.lead_score.desc(),
@@ -773,7 +797,7 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
     }
 
 
-def render_merge(text: str, lead) -> str:
+def render_merge(text: str, lead, *, campaign=None, defaults=None) -> str:
     from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, parse_defaults
 
     rendered = text or ""
@@ -782,6 +806,9 @@ def render_merge(text: str, lead) -> str:
         app_url = _clean(current_app.config.get("APP_URL"))
     except RuntimeError:
         app_url = ""
+    if defaults is None and campaign is not None:
+        defaults = _commercial_campaign_settings(campaign).get("parameter_defaults")
+    safe_defaults = parse_defaults(SCOPE_SAAS_PROSPECTS, defaults)
     values = {
         "{{empresa}}": _clean(getattr(lead, "company_name", "")),
         "{{comercio}}": _clean(getattr(lead, "company_name", "")),
@@ -791,13 +818,45 @@ def render_merge(text: str, lead) -> str:
         "{{provincia}}": _clean(getattr(lead, "province", "")),
         "{{telefono}}": _clean(getattr(lead, "whatsapp", "") or getattr(lead, "phone", "")),
         "{{email}}": _clean(getattr(lead, "email", "")),
-        "{{producto}}": "StockARmobile",
-        "{{asunto}}": "",
+        "{{producto}}": _clean(safe_defaults.get("producto") or "StockARmobile"),
+        "{{asunto}}": _clean(getattr(campaign, "subject", "")) if campaign is not None else _clean(safe_defaults.get("asunto")),
         "{{trial_url}}": f"{app_url.rstrip('/')}/auth/register?selected_plan=trial" if app_url else "",
     }
+    for key, value in list(values.items()):
+        if not value:
+            values[key] = _clean(safe_defaults.get(key[2:-2]))
     for source, value in values.items():
         rendered = rendered.replace(source, value)
     return rendered
+
+
+def _commercial_email_missing_fields(campaign, lead) -> list[str]:
+    """Return email merge fields missing from one prospect after safe defaults."""
+    from services.campaign_template_engine import (
+        SCOPE_SAAS_PROSPECTS,
+        parse_defaults,
+        resolve_parameters,
+    )
+
+    raw = "\n".join([
+        str(getattr(campaign, "subject", "") or ""),
+        str(getattr(campaign, "body_text", "") or ""),
+        str(getattr(campaign, "body_html", "") or ""),
+    ])
+    fields = sorted(set(re.findall(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}", raw)))
+    if not fields:
+        return []
+    settings = _commercial_campaign_settings(campaign)
+    resolved = resolve_parameters(
+        SCOPE_SAAS_PROSPECTS,
+        fields,
+        _commercial_lead_variable_context(campaign, lead),
+        parse_defaults(SCOPE_SAAS_PROSPECTS, settings.get("parameter_defaults")),
+        goal_key=settings.get("campaign_goal"),
+    )
+    if resolved["errors"]:
+        raise ValueError(" ".join(resolved["errors"]))
+    return resolved["missing_fields"]
 
 
 def _unsubscribe_url(lead) -> str:
@@ -935,7 +994,7 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
         recipient.tracking_token = secrets.token_urlsafe(32)
 
     msg = EmailMessage()
-    msg["Subject"] = render_merge(campaign.subject, recipient.lead)[:255]
+    msg["Subject"] = render_merge(campaign.subject, recipient.lead, campaign=campaign)[:255]
     msg["From"] = gmail_mailbox if use_gmail_api else (_clean(current_app.config.get("SMTP_FROM_EMAIL")) or user)
     msg["To"] = recipient.destination
     msg["Reply-To"] = msg["From"]
@@ -947,8 +1006,8 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     msg["X-StockArMobile-Campaign"] = str(campaign.id)
     msg["X-StockArMobile-Recipient"] = str(recipient.id)
 
-    text_body = render_merge(campaign.body_text or campaign.body_html, recipient.lead).rstrip()
-    html_body = _render_tracking_html(render_merge(campaign.body_html, recipient.lead), recipient)
+    text_body = render_merge(campaign.body_text or campaign.body_html, recipient.lead, campaign=campaign).rstrip()
+    html_body = _render_tracking_html(render_merge(campaign.body_html, recipient.lead, campaign=campaign), recipient)
     if unsub:
         text_body += (
             "\n\nPara dejar de recibir comunicaciones comerciales por email, visitá: "
@@ -1044,6 +1103,7 @@ def _commercial_lead_variable_context(campaign, lead) -> dict:
     campaign_message = render_merge(
         _clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject),
         lead,
+        campaign=campaign,
     )
     app_url = _clean(current_app.config.get("APP_URL"))
     return {
@@ -1057,7 +1117,7 @@ def _commercial_lead_variable_context(campaign, lead) -> dict:
         "localidad": _clean(lead.locality),
         "producto": "StockARmobile",
         "mensaje": campaign_message,
-        "asunto": render_merge(_clean(campaign.subject), lead),
+        "asunto": render_merge(_clean(campaign.subject), lead, campaign=campaign),
         "trial_url": (
             f"{app_url.rstrip('/')}/auth/register?selected_plan=trial"
             if app_url else ""
