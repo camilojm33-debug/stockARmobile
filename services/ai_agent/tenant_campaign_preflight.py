@@ -137,12 +137,18 @@ def tenant_campaign_preflight(campaign, company) -> dict:
                 )
             else:
                 preview_template = _fetch_campaign_template(connection)
+            goal_compatible = not preview_template.get("campaign_goal") or preview_template.get("campaign_goal") == goal_key
             template_ok = bool(
                 preview_template.get("status") == "APPROVED"
                 and preview_template.get("campaign_compatible")
+                and goal_compatible
             )
             if not template_ok:
-                template_error = str(preview_template.get("compatibility_reason") or "La plantilla no es compatible.")
+                template_error = (
+                    "La plantilla maestra pertenece a otro objetivo de campaña."
+                    if not goal_compatible
+                    else str(preview_template.get("compatibility_reason") or "La plantilla no es compatible.")
+                )
         except ValueError as exc:
             template_error = str(exc)
     else:
