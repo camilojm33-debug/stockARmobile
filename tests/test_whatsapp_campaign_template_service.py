@@ -189,3 +189,24 @@ def test_campaign_template_rejects_untrusted_meta_pagination_host(monkeypatch):
 
     with pytest.raises(ValueError, match="dirección de paginación no válida"):
         get_campaign_template(_connection())
+
+
+
+def test_campaign_template_explicit_selection_rejects_approved_but_incompatible_template(monkeypatch):
+    from services.ai_agent import whatsapp_campaign_template_service as service
+
+    incompatible = _compatible_template("approved_utility")
+    incompatible["category"] = "UTILITY"
+    monkeypatch.setattr(
+        service.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse({"data": [incompatible]}),
+    )
+
+    with pytest.raises(ValueError, match="no sirve para campañas"):
+        get_campaign_template(
+            _connection(),
+            selected_name="approved_utility",
+            selected_language="es_AR",
+            allow_single_auto_select=False,
+        )

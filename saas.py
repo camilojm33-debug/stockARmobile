@@ -2696,6 +2696,18 @@ def crm_campaigns():
         from services.saas_commercial_service import segment_filters_from_request
 
         filters = segment_filters_from_request(request)
+        from services.campaign_template_engine import (
+            SCOPE_SAAS_PROSPECTS,
+            parse_defaults,
+            get_goal,
+        )
+        goal = get_goal(SCOPE_SAAS_PROSPECTS, request.form.get("campaign_goal") or "saas_acquisition")
+        filters["audience_scope"] = SCOPE_SAAS_PROSPECTS
+        filters["campaign_goal"] = goal["key"]
+        filters["parameter_defaults"] = parse_defaults(
+            SCOPE_SAAS_PROSPECTS,
+            request.form.get("whatsapp_parameter_defaults") or "{}",
+        )
         channel = (request.form.get("channel") or "email").strip().lower()
         name = (request.form.get("name") or "").strip()[:180]
         subject = (request.form.get("subject") or "").strip()[:255]
@@ -2738,9 +2750,12 @@ def crm_campaigns():
     marketing_send_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     smtp_configured = bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER"))
     from services.saas_commercial_whatsapp import commercial_whatsapp_summary
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, goal_options, message_templates
     commercial_whatsapp = commercial_whatsapp_summary()
     return render_template(
         "saas/crm_campaigns.html",
+        campaign_goal_options=goal_options(SCOPE_SAAS_PROSPECTS),
+        campaign_copy_templates=message_templates(SCOPE_SAAS_PROSPECTS),
         campaigns=campaigns,
         summary=summary,
         marketing_send_enabled=marketing_send_enabled,
@@ -2893,9 +2908,12 @@ def crm_campaign_detail(campaign_id):
         ).order_by(SaaSLead.id.asc()).limit(200).all()
         consent_candidates.extend(("whatsapp", lead) for lead in candidates if lead.whatsapp_consent_status != "opted_in")
 
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, goal_options
     return render_template(
         "saas/crm_campaign_detail.html",
         campaign=campaign,
+        campaign_goal_options=goal_options(SCOPE_SAAS_PROSPECTS),
+        campaign_copy_templates=message_templates(SCOPE_SAAS_PROSPECTS),
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
         segment_filters=segment_filters,
@@ -2981,8 +2999,20 @@ def crm_campaign_edit(campaign_id):
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
     from services.saas_commercial_service import segment_filters_from_request
+    from services.campaign_template_engine import (
+        SCOPE_SAAS_PROSPECTS,
+        parse_defaults,
+        get_goal,
+    )
 
     filters = segment_filters_from_request(request)
+    goal = get_goal(SCOPE_SAAS_PROSPECTS, request.form.get("campaign_goal") or "saas_acquisition")
+    filters["audience_scope"] = SCOPE_SAAS_PROSPECTS
+    filters["campaign_goal"] = goal["key"]
+    filters["parameter_defaults"] = parse_defaults(
+        SCOPE_SAAS_PROSPECTS,
+        request.form.get("whatsapp_parameter_defaults") or "{}",
+    )
     scheduled_at = _parse_dt(request.form.get("scheduled_at"))
 
     old_snapshot = {
@@ -7031,7 +7061,7 @@ def global_settings():
 @bp.get("/whatsapp-plantillas-maestras")
 @superadmin_required
 def whatsapp_master_templates():
-    """Show the centrally managed WhatsApp template definitions used for tenant provisioning."""
+    """Show master WhatsApp templates and provisioning state per merchant branch."""
     _require_superadmin()
     from app import Branch, Company
     from services.ai_agent.config_service import (
@@ -7040,45 +7070,64 @@ def whatsapp_master_templates():
         is_commercial_company,
     )
     from services.ai_agent.whatsapp_master_template_service import list_master_templates
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, message_templates
 
+    master_templates = list_master_templates()
+    prospect_campaign_templates = message_templates(SCOPE_SAAS_PROSPECTS)
     channel_rows = []
+    status_labels = {
+        "APPROVED": "Aprobada",
+        "PENDING": "Pendiente de aprobación",
+        "IN_APPEAL": "En revisión de Meta",
+        "REJECTED": "Rechazada",
+        "CONFLICT": "Conflicto de contenido",
+        "ERROR": "Error de instalación",
+        "UNCERTAIN": "Resultado por confirmar",
+    }
 
     def add_channel_row(company, branch_name, whatsapp):
-        phone = str((whatsapp or {}).get("display_phone_number") or "").strip()
-        enabled = bool((whatsapp or {}).get("enabled") and (whatsapp or {}).get("phone_number_id"))
-        sync_state = (whatsapp or {}).get("master_template_sync")
+        whatsapp = whatsapp if isinstance(whatsapp, dict) else {}
+        phone = str(whatsapp.get("display_phone_number") or "").strip()
+        enabled = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
+        sync_state = whatsapp.get("master_template_sync")
         sync_state = sync_state if isinstance(sync_state, dict) else {}
         synced_templates = sync_state.get("templates")
         synced_templates = synced_templates if isinstance(synced_templates, list) else []
-        master_state = next(
-            (item for item in synced_templates if isinstance(item, dict) and item.get("key") == "marketing_general"),
-            None,
-        )
-        if not enabled:
-            status = "Sin WhatsApp conectado"
-            detail = "Conectá el WhatsApp del Vendedor IA para instalar la plantilla."
-        elif master_state is None:
-            status = "Pendiente de sincronización"
-            detail = "La plantilla se instalará cuando el comercio sincronice su WhatsApp."
-        else:
-            raw_status = str(master_state.get("status") or "UNKNOWN").upper()
-            status = {
-                "APPROVED": "Aprobada",
-                "PENDING": "Pendiente de aprobación de Meta",
-                "IN_APPEAL": "En revisión de Meta",
-                "REJECTED": "Rechazada por Meta",
-                "CONFLICT": "Conflicto de contenido",
-                "ERROR": "Error de instalación",
-                "UNCERTAIN": "Resultado por confirmar",
-            }.get(raw_status, raw_status.replace("_", " ").title())
-            detail = str(master_state.get("message") or "")
+        by_key = {
+            str(item.get("key") or ""): item
+            for item in synced_templates
+            if isinstance(item, dict)
+        }
+        template_statuses = []
+        for master in master_templates:
+            state = by_key.get(master["key"])
+            raw_status = str((state or {}).get("status") or "").upper()
+            if not enabled:
+                label = "Sin WhatsApp"
+                detail = "Conectá el WhatsApp de esta sucursal."
+            elif state is None:
+                label = "Sin sincronizar"
+                detail = "Sincronizá WhatsApp para instalar esta plantilla maestra."
+            else:
+                label = status_labels.get(raw_status, raw_status.replace("_", " ").title() or "Sin estado")
+                detail = str(state.get("message") or "")
+            template_statuses.append({
+                "key": master["key"],
+                "name": master["display_name"],
+                "meta_name": master["name"],
+                "status": label,
+                "raw_status": raw_status,
+                "detail": detail,
+            })
+        approved_count = sum(1 for item in template_statuses if item["raw_status"] == "APPROVED")
         channel_rows.append({
             "company": str(getattr(company, "name", "") or "Comercio"),
             "branch": str(branch_name or "Casa central"),
             "phone": phone or "—",
             "connected": enabled,
-            "status": status,
-            "detail": detail,
+            "template_statuses": template_statuses,
+            "approved_count": approved_count,
+            "template_count": len(master_templates),
             "checked_at": str(sync_state.get("checked_at") or ""),
         })
 
@@ -7100,7 +7149,8 @@ def whatsapp_master_templates():
 
     return render_template(
         "saas/whatsapp_master_templates.html",
-        master_templates=list_master_templates(),
+        master_templates=master_templates,
+        prospect_campaign_templates=prospect_campaign_templates,
         channel_rows=channel_rows,
     )
 

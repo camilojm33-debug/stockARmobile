@@ -1,5 +1,6 @@
 {% extends "base_master.html" %}
-{% block title %}Campañas comerciales · SuperAdmin{% endblock %}
+{% block title %}Campañas comerciales · SuperAdmin
+{% endblock %}
 {% block content %}
 <style>
 #newCampaignModal{--campaign-modal-margin:12px;}
@@ -244,7 +245,18 @@
           </div>
 
           <div class="campaign-form-section">
-            <div class="campaign-section-title"><span class="section-dot"></span>Audiencia</div>
+            <div class="campaign-section-title"><span class="section-dot"></span>Objetivo y audiencia</div>
+            <div class="row g-3 mb-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Objetivo comercial</label>
+                <select class="form-select" name="campaign_goal" data-campaign-goal>
+                  {% for option in campaign_goal_options %}
+                  <option value="{{ option.key }}" data-default-fields='{{ option.default_mapping|tojson }}' data-default-values='{{ option.default_values|tojson }}' {% if option.key == 'saas_acquisition' %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Este CRM se dirige exclusivamente a prospectos de StockARmobile. Los clientes finales permanecen en el CRM de cada comercio.</div>
+              </div>
+            </div>
             <div class="alert alert-info campaign-alert small mb-3">
               <div class="d-flex align-items-start gap-2">
                 <i class="bi bi-shield-check fs-5"></i>
@@ -263,6 +275,21 @@
           <div class="campaign-form-section">
             <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
             <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label fw-semibold">Biblioteca de mensajes maestros</label>
+              <select class="form-select" data-campaign-copy-picker
+                data-goal-field="campaign_goal" data-subject-field="subject"
+                data-text-field="body_text" data-html-field="body_html">
+                <option value="">Elegí una propuesta base para completar…</option>
+                {% for copy in campaign_copy_templates %}
+                <option value="{{ copy.key }}" data-goal="{{ copy.goal_key }}"
+                  data-subject="{{ copy.subject|default('')|forceescape }}"
+                  data-text="{{ (copy.body_text or copy.content or '')|forceescape }}"
+                  data-html="{{ copy.body_html|default('')|forceescape }}">{{ copy.label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Podés editar el contenido después de aplicar el mensaje base. La biblioteca corresponde a la audiencia de este CRM.</div>
+            </div>
               <div class="col-12">
                 <label class="form-label fw-semibold">Texto</label>
                 <textarea class="form-control" name="body_text" rows="6" required>Hola {{contacto}},
@@ -304,6 +331,7 @@ Probalo gratis durante 10 días.</textarea>
                 <pre class="small text-muted bg-light rounded-3 p-3 mb-2 text-wrap" data-whatsapp-template-preview>Vista previa de la plantilla seleccionada.</pre>
                 <div data-whatsapp-parameter-controls></div>
                 <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="contacto,producto,mensaje">
+                <input type="hidden" name="whatsapp_parameter_defaults" data-whatsapp-defaults value='{"producto":"StockARmobile"}'>
               </div>
             </div>
             <div class="small text-muted mt-2">Los datos de las variables se completan con la ficha del prospecto y el texto de la campaña. Este selector usa únicamente el WhatsApp Comercial interno de SuperAdmin.</div>
@@ -319,4 +347,5 @@ Probalo gratis durante 10 días.</textarea>
   </div>
 </div>
 <script src="{{ url_for('static', filename='assets/js/superadmin-campaign-template-picker.js') }}?v=20261118-1"></script>
+<script src="{{ url_for('static', filename='assets/js/campaign-copy-template-picker.js') }}?v=20261118-1"></script>
 {% endblock %}

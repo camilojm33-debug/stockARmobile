@@ -25,10 +25,10 @@ def _connection(**updates):
     }
 
 
-def _existing_master(status="APPROVED", *, body=None, category="MARKETING"):
-    master = service.MASTER_TEMPLATES[0]
+def _existing_master(status="APPROVED", *, master=None, body=None, category="MARKETING"):
+    master = master or service.MASTER_TEMPLATES[0]
     return {
-        "id": "template-123",
+        "id": f"template-{master['key']}",
         "name": master["name"],
         "language": master["language"],
         "status": status,
@@ -40,6 +40,13 @@ def _existing_master(status="APPROVED", *, body=None, category="MARKETING"):
             }
         ],
     }
+
+
+def _existing_all_masters(status="APPROVED"):
+    return [
+        _existing_master(status, master=master)
+        for master in service.MASTER_TEMPLATES
+    ]
 
 
 def test_provision_creates_missing_master_template_for_connected_waba(monkeypatch):
@@ -58,12 +65,12 @@ def test_provision_creates_missing_master_template_for_connected_waba(monkeypatc
 
     results = service.provision_master_templates(_connection())
 
-    assert len(results) == 1
-    assert results[0]["name"] == "campana_marketing_es_ar"
-    assert results[0]["status"] == "PENDING"
-    assert results[0]["created"] is True
+    assert len(results) == len(service.MASTER_TEMPLATES) == 4
+    assert [item["key"] for item in results] == [item["key"] for item in service.MASTER_TEMPLATES]
+    assert all(item["status"] == "PENDING" and item["created"] for item in results)
     assert calls["get"][0][0].endswith("/987654321/message_templates")
-    assert calls["post"][0][0].endswith("/987654321/message_templates")
+    assert len(calls["post"]) == len(service.MASTER_TEMPLATES)
+    assert all(call[0].endswith("/987654321/message_templates") for call in calls["post"])
 
     payload = calls["post"][0][1]["json"]
     assert payload["category"] == "MARKETING"
@@ -80,7 +87,7 @@ def test_provision_is_idempotent_when_matching_master_is_already_approved(monkey
     monkeypatch.setattr(
         service.requests,
         "get",
-        lambda *args, **kwargs: FakeResponse({"data": [_existing_master("APPROVED")]}),
+        lambda *args, **kwargs: FakeResponse({"data": _existing_all_masters("APPROVED")}),
     )
     monkeypatch.setattr(
         service.requests,
@@ -90,8 +97,8 @@ def test_provision_is_idempotent_when_matching_master_is_already_approved(monkey
 
     results = service.provision_master_templates(_connection())
 
-    assert results[0]["status"] == "APPROVED"
-    assert results[0]["created"] is False
+    assert len(results) == len(service.MASTER_TEMPLATES)
+    assert all(item["status"] == "APPROVED" and item["created"] is False for item in results)
     assert "lista" in results[0]["message"]
     assert post_calls == []
 
@@ -101,7 +108,7 @@ def test_provision_reports_pending_master_without_creating_duplicate(monkeypatch
     monkeypatch.setattr(
         service.requests,
         "get",
-        lambda *args, **kwargs: FakeResponse({"data": [_existing_master("PENDING")]}),
+        lambda *args, **kwargs: FakeResponse({"data": _existing_all_masters("PENDING")}),
     )
     monkeypatch.setattr(
         service.requests,
@@ -111,8 +118,8 @@ def test_provision_reports_pending_master_without_creating_duplicate(monkeypatch
 
     results = service.provision_master_templates(_connection())
 
-    assert results[0]["status"] == "PENDING"
-    assert results[0]["created"] is False
+    assert len(results) == len(service.MASTER_TEMPLATES)
+    assert all(item["status"] == "PENDING" and item["created"] is False for item in results)
     assert "pendiente" in results[0]["message"]
     assert post_calls == []
 
@@ -135,7 +142,7 @@ def test_provision_does_not_overwrite_same_name_with_different_content(monkeypat
 
     assert results[0]["status"] == "CONFLICT"
     assert "No se modificó" in results[0]["message"]
-    assert post_calls == []
+    assert len(post_calls) == len(service.MASTER_TEMPLATES) - 1
 
 
 def test_provision_reports_missing_meta_permission_without_exposing_token(monkeypatch):
@@ -157,8 +164,9 @@ def test_provision_reports_missing_meta_permission_without_exposing_token(monkey
 
     results = service.provision_master_templates(_connection())
 
-    assert len(get_calls) == 2  # Initial read plus safe duplicate/race check.
-    assert results[0]["status"] == "ERROR"
+    assert len(get_calls) == len(service.MASTER_TEMPLATES) + 1  # Initial read plus a safe race check for each template.
+    assert len(results) == len(service.MASTER_TEMPLATES)
+    assert all(item["status"] == "ERROR" for item in results)
     assert "whatsapp_business_management" in results[0]["message"]
     assert "merchant-access-token" not in results[0]["message"]
 
@@ -195,14 +203,25 @@ def test_provision_rejects_invalid_or_incomplete_connection_before_meta_calls(mo
 def test_master_catalog_exposes_only_non_secret_template_metadata():
     catalog = service.list_master_templates()
 
-    assert len(catalog) == 1
-    assert catalog[0]["key"] == "marketing_general"
-    assert catalog[0]["name"] == "campana_marketing_es_ar"
-    assert catalog[0]["category"] == "MARKETING"
-    assert "{{1}}" in catalog[0]["body_text"]
-    assert "{{2}}" in catalog[0]["body_text"]
-    assert "{{3}}" in catalog[0]["body_text"]
-    assert "access_token" not in catalog[0]
+    assert len(catalog) == 4
+    by_goal = {item["goal_key"]: item for item in catalog}
+    assert set(by_goal) == {
+        "customer_marketing",
+        "customer_reactivation",
+        "customer_loyalty",
+        "customer_new_product",
+    }
+    assert by_goal["customer_marketing"]["name"] == "campana_marketing_es_ar"
+    assert by_goal["customer_reactivation"]["name"] == "campana_reactivacion_es_ar"
+    assert by_goal["customer_loyalty"]["name"] == "campana_fidelizacion_es_ar"
+    assert by_goal["customer_new_product"]["name"] == "campana_novedad_producto_es_ar"
+    for item in catalog:
+        assert item["category"] == "MARKETING"
+        assert "{{1}}" in item["body_text"]
+        assert "{{2}}" in item["body_text"]
+        assert "{{3}}" in item["body_text"]
+        assert len(item["default_parameter_fields"]) == 3
+        assert "access_token" not in item
 
 
 def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
@@ -225,7 +244,7 @@ def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
     assert "Plantillas aprobadas disponibles" in template
     assert "Solo se muestran plantillas que Meta ya aprobó" in template
     assert "Estado de la plantilla maestra" in template
-    assert "La plantilla maestra está pendiente de aprobación" in template
+    assert "La plantilla general está pendiente de aprobación" in template
     assert "Plantilla aprobada</label>" not in template
     assert '@bp.get("/whatsapp-plantillas-maestras")' in superadmin_source
     assert "list_master_templates()" in superadmin_source

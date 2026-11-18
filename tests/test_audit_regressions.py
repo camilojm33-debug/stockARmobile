@@ -172,10 +172,13 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
         )
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
-            lambda _connection: {
-                "name": "approved_template",
-                "language": "es_AR",
+            lambda _connection, **kwargs: {
+                "name": kwargs.get("selected_name") or "approved_template",
+                "language": kwargs.get("selected_language") or "es_AR",
                 "body_text": "Hola {{1}}: {{3}}",
+                "status": "APPROVED",
+                "category": "MARKETING",
+                "campaign_compatible": True,
             },
         )
         prepare_recipients(campaign.id, company_id=company.id)

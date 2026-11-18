@@ -643,6 +643,13 @@ def _load_whatsapp_templates(connection: dict) -> list[dict]:
     return templates
 
 
+def _list_campaign_whatsapp_templates(connection: dict) -> list[dict]:
+    """Return Meta-approved tenant-WABA templates annotated for campaign use."""
+    from services.ai_agent.whatsapp_campaign_template_service import list_approved_campaign_templates
+
+    return list_approved_campaign_templates(connection)
+
+
 @bp.get("/vendedor/conectar-whatsapp")
 @tenant_required
 @company_admin_required
@@ -938,6 +945,45 @@ def vendor_whatsapp_complete():
                 master_template_provisioning,
                 branch=branch,
             )
+            approved_master = next(
+                (
+                    item for item in master_template_provisioning
+                    if item.get("key") == "marketing_general" and item.get("status") == "APPROVED"
+                ),
+                None,
+            )
+            if approved_master:
+                from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
+
+                new_connection = {
+                    "enabled": True,
+                    "phone_number_id": phone_number_id,
+                    "business_account_id": waba_id,
+                    "access_token": access_token,
+                    "template_name": "",
+                    "template_language": "es_AR",
+                }
+                try:
+                    verified_master = get_campaign_template(
+                        new_connection,
+                        selected_name=approved_master["name"],
+                        selected_language=approved_master["language"],
+                        allow_single_auto_select=False,
+                    )
+                except ValueError:
+                    verified_master = None
+                if verified_master:
+                    configure_whatsapp_connection(
+                        company,
+                        phone_number_id=phone_number_id,
+                        access_token=None,
+                        business_account_id=waba_id,
+                        display_phone_number=str(phone.get("display_phone_number") or "").strip(),
+                        enabled=True,
+                        template_name=verified_master["name"],
+                        template_language=verified_master["language"],
+                        branch_id=branch.id if is_extra_branch else None,
+                    )
             db.session.commit()
         except Exception as exc:
             # The WhatsApp connection is already committed. A template-permission
@@ -981,13 +1027,16 @@ def vendor_whatsapp_templates():
     if not connection.get("enabled") or not connection.get("access_token"):
         return jsonify({"success": False, "error": "Conectá primero el WhatsApp de esta sucursal."}), 409
     try:
-        templates = _load_whatsapp_templates(connection)
+        all_templates = _list_campaign_whatsapp_templates(connection)
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 502
-    approved = [item for item in templates if item["status"] == "APPROVED"]
+
+    compatible = [item for item in all_templates if item.get("campaign_compatible")]
+    incompatible_count = sum(1 for item in all_templates if not item.get("campaign_compatible"))
     return jsonify({
         "success": True,
-        "templates": approved,
+        "templates": compatible,
+        "incompatible_count": incompatible_count,
         "selected": {
             "name": str(connection.get("template_name") or ""),
             "language": str(connection.get("template_language") or "es_AR"),
@@ -1026,21 +1075,36 @@ def vendor_whatsapp_templates_provision():
         # this WhatsApp channel. Never overwrite a selection already made by the merchant.
         if not str(connection.get("template_name") or "").strip():
             approved_master = next(
-                (item for item in results if item.get("status") == "APPROVED"),
+                (
+                    item for item in results
+                    if item.get("key") == "marketing_general" and item.get("status") == "APPROVED"
+                ),
                 None,
             )
             if approved_master:
-                configure_whatsapp_connection(
-                    company,
-                    phone_number_id=connection.get("phone_number_id"),
-                    access_token=None,
-                    business_account_id=connection.get("business_account_id"),
-                    display_phone_number=connection.get("display_phone_number"),
-                    enabled=True,
-                    template_name=approved_master["name"],
-                    template_language=approved_master["language"],
-                    branch_id=branch.id if not branch.is_default else None,
-                )
+                try:
+                    from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
+
+                    verified_master = get_campaign_template(
+                        connection,
+                        selected_name=approved_master["name"],
+                        selected_language=approved_master["language"],
+                        allow_single_auto_select=False,
+                    )
+                except ValueError:
+                    verified_master = None
+                if verified_master:
+                    configure_whatsapp_connection(
+                        company,
+                        phone_number_id=connection.get("phone_number_id"),
+                        access_token=None,
+                        business_account_id=connection.get("business_account_id"),
+                        display_phone_number=connection.get("display_phone_number"),
+                        enabled=True,
+                        template_name=verified_master["name"],
+                        template_language=verified_master["language"],
+                        branch_id=branch.id if not branch.is_default else None,
+                    )
         db.session.commit()
         updated_connection = get_whatsapp_connection(company, branch_id=branch.id)
         return jsonify({
@@ -1073,7 +1137,7 @@ def vendor_whatsapp_template_save():
     name = str(payload.get("name") or "").strip()
     language = str(payload.get("language") or "").strip()
     if not name or not language:
-        return jsonify({"success": False, "error": "Seleccioná una plantilla aprobada y su idioma."}), 400
+        return jsonify({"success": False, "error": "Seleccioná una plantilla MARKETING compatible y su idioma."}), 400
 
     from app import Branch
     from stockarmobile.branch_context import get_default_branch_id
@@ -1088,15 +1152,16 @@ def vendor_whatsapp_template_save():
         return jsonify({"success": False, "error": "Conectá primero el WhatsApp de esta sucursal."}), 409
 
     try:
-        approved = _load_whatsapp_templates(connection)
+        from services.ai_agent.whatsapp_campaign_template_service import get_campaign_template
+
+        match = get_campaign_template(
+            connection,
+            selected_name=name,
+            selected_language=language,
+            allow_single_auto_select=False,
+        )
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 502
-    match = next((
-        item for item in approved
-        if item["status"] == "APPROVED" and item["name"] == name and item["language"] == language
-    ), None)
-    if match is None:
-        return jsonify({"success": False, "error": "La plantilla ya no figura aprobada en Meta. Actualizá el listado."}), 409
+        return jsonify({"success": False, "error": str(exc)}), 409
 
     try:
         configure_whatsapp_connection(
@@ -1403,11 +1468,15 @@ def campaign_detail(campaign_id):
     template = campaign_system_data.get("whatsapp_template") or {}
     template_preview = ""
     if template.get("body_text"):
-        from services.ai_agent.tenant_campaign_service import _render_content
+        from services.ai_agent.tenant_campaign_service import (
+            _render_content,
+            _template_includes_opt_out,
+        )
         try:
             copy = _render_content(
                 campaign,
                 SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
+                include_opt_out=not _template_includes_opt_out(template),
             )
             template_preview = template["body_text"]
             for variable, value in (
@@ -1441,6 +1510,37 @@ def campaign_detail(campaign_id):
     except ValueError:
         sender_connection = {}
     campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
+    from services.ai_agent.tenant_campaign_preflight import tenant_campaign_preflight
+    from services.campaign_template_engine import (
+        SCOPE_MERCHANT_CLIENTS,
+        get_goal,
+        goal_options,
+        variable_options,
+        message_templates,
+        parse_defaults,
+    )
+    campaign_preflight = tenant_campaign_preflight(campaign, _current_active_company())
+    try:
+        campaign_goal = get_goal(
+            SCOPE_MERCHANT_CLIENTS,
+            campaign_system_data.get("campaign_goal") or "customer_marketing",
+        )["key"]
+    except ValueError:
+        campaign_goal = "customer_marketing"
+    campaign_parameter_defaults = parse_defaults(
+        SCOPE_MERCHANT_CLIENTS,
+        campaign_system_data.get("parameter_defaults"),
+    )
+    campaign_parameter_fields = campaign_system_data.get("whatsapp_parameter_fields") or []
+    campaign_template_options = []
+    if sender_connection and campaign.status in {"BORRADOR", "PENDIENTE_APROBACION"}:
+        try:
+            campaign_template_options = [
+                item for item in _list_campaign_whatsapp_templates(sender_connection)
+                if item.get("campaign_compatible")
+            ]
+        except ValueError:
+            campaign_template_options = []
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
     ).order_by(TenantCampaignRecipient.id.asc()).limit(100).all()
@@ -1450,7 +1550,15 @@ def campaign_detail(campaign_id):
         campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
         detected_audience_count=detected_audience_count,
         campaign_template=template,
-        campaign_template_preview=template_preview,
+        campaign_template_options=campaign_template_options,
+        campaign_preflight=campaign_preflight,
+        campaign_goal_options=goal_options(SCOPE_MERCHANT_CLIENTS),
+        campaign_goal=campaign_goal,
+        campaign_variable_options=variable_options(SCOPE_MERCHANT_CLIENTS),
+        campaign_copy_templates=message_templates(SCOPE_MERCHANT_CLIENTS),
+        campaign_parameter_fields=campaign_parameter_fields,
+        campaign_parameter_defaults=campaign_parameter_defaults,
+        campaign_template_preview=campaign_preflight.get("preview_message") or template_preview,
         campaign_recipients=recipient_rows,
         campaign_schedule_local=_campaign_schedule_local(campaign),
         campaign_sender_phone=campaign_sender_phone,
@@ -1552,7 +1660,17 @@ def campaign_wizard():
         CAMPAIGN_OPT_OUT_TEXT,
         _fetch_campaign_template,
         _render_content,
+        _template_includes_opt_out,
         resolve_tenant_campaign_sender,
+    )
+    from services.campaign_template_engine import (
+        SCOPE_MERCHANT_CLIENTS,
+        get_goal,
+        goal_options,
+        message_templates,
+        normalize_mapping,
+        parse_defaults,
+        variable_options,
     )
 
     entitlement = can_use_ai_feature(_current_active_company(), "marketing")
@@ -1563,6 +1681,21 @@ def campaign_wizard():
     company = _current_active_company()
     template = None
     template_error = None
+    template_options = []
+    template_selected = False
+    template_auto_selected = False
+    requested_goal = (
+        request.form.get("campaign_goal")
+        if request.method == "POST"
+        else request.args.get("campaign_goal")
+    )
+    try:
+        selected_goal = get_goal(SCOPE_MERCHANT_CLIENTS, requested_goal or "customer_marketing")
+    except ValueError:
+        selected_goal = get_goal(SCOPE_MERCHANT_CLIENTS, "customer_marketing")
+    campaign_goal_options = goal_options(SCOPE_MERCHANT_CLIENTS)
+    campaign_variable_options = variable_options(SCOPE_MERCHANT_CLIENTS)
+    campaign_copy_templates = message_templates(SCOPE_MERCHANT_CLIENTS)
     campaign_branch_id = get_active_branch_id()
     if campaign_branch_id is None:
         from stockarmobile.branch_context import get_default_branch_id
@@ -1594,9 +1727,52 @@ def campaign_wizard():
             raise ValueError(
                 "Conectá y habilitá el WhatsApp propio de esta sucursal desde Vendedor IA mediante Meta Embedded Signup."
             )
-        template = _fetch_campaign_template(connection)
+        template_options = [
+            item for item in _list_campaign_whatsapp_templates(connection)
+            if item.get("campaign_compatible")
+        ]
+        if not template_options:
+            raise ValueError(
+                "Esta sucursal todavía no tiene plantillas MARKETING aprobadas y compatibles. "
+                "Sincronizá la plantilla maestra o aprobá una plantilla con {{1}}, {{2}} y {{3}} en Meta."
+            )
+        configured_name = str(connection.get("template_name") or "").strip()
+        configured_language = str(connection.get("template_language") or "es_AR").strip()
+        configured = next(
+            (
+                item for item in template_options
+                if item["name"] == configured_name and item["language"] == configured_language
+            ),
+            None,
+        )
+        goal_master = next(
+            (
+                item for item in template_options
+                if item.get("campaign_goal") == selected_goal["key"]
+            ),
+            None,
+        )
+        if configured and (
+            not configured.get("campaign_goal")
+            or configured.get("campaign_goal") == selected_goal["key"]
+        ):
+            template = configured
+            template_selected = True
+        elif goal_master:
+            template = goal_master
+            template_selected = True
+            template_auto_selected = True
+        elif len(template_options) == 1:
+            template = template_options[0]
+            template_selected = True
+            template_auto_selected = True
+        else:
+            # Require explicit selection when more than one compatible template exists.
+            template = template_options[0]
     except ValueError as exc:
         template_error = str(exc)
+        template = None
+        template_options = []
 
     campaign_sender_phone = str(connection.get("display_phone_number") or "").strip()
     template_admin_url = (
@@ -1606,11 +1782,17 @@ def campaign_wizard():
 
     products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
     if request.method == "POST":
-        if template is None:
-            flash(template_error or "No se puede validar la plantilla aprobada.", "danger")
+        if not template_options:
+            flash(template_error or "No se puede validar una plantilla MARKETING compatible.", "danger")
             return render_template(
                 "ai_agents/campaign_wizard.html",
                 template=None,
+                template_options=[],
+                template_selected=False,
+                campaign_goal_options=campaign_goal_options,
+                campaign_goal=selected_goal["key"],
+                campaign_variable_options=campaign_variable_options,
+                campaign_parameter_defaults=dict(selected_goal.get("default_values") or {}),
                 template_error=template_error,
                 products=products,
                 opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
@@ -1621,6 +1803,53 @@ def campaign_wizard():
                 template_auto_selected=False,
                 **_context(),
             ), 409
+
+        selected_template = str(request.form.get("whatsapp_template") or "").strip()
+        selected_name, separator, selected_language = selected_template.partition("|")
+        if not separator or not selected_name.strip() or not selected_language.strip():
+            flash("Elegí una plantilla aprobada compatible para esta campaña.", "warning")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+        try:
+            # Re-read Meta on POST. Never trust a name supplied by the browser.
+            template = _fetch_campaign_template(
+                connection,
+                selected_name=selected_name.strip(),
+                selected_language=selected_language.strip(),
+                allow_single_auto_select=False,
+            )
+            if template.get("campaign_goal") and template["campaign_goal"] != selected_goal["key"]:
+                raise ValueError("La plantilla maestra seleccionada corresponde a otro objetivo. Elegí una plantilla para el objetivo de esta campaña.")
+            template_selected = True
+            template_auto_selected = False
+            body_positions = {
+                int(value)
+                for value in re.findall(
+                    r"\{\{\s*(\d+)\s*\}\}",
+                    str(template.get("body_text") or ""),
+                )
+            }
+            expected_parameters = len(body_positions)
+            if body_positions != set(range(1, expected_parameters + 1)):
+                raise ValueError("La plantilla seleccionada no utiliza variables consecutivas compatibles.")
+            master_mapping = template.get("default_parameter_fields") or selected_goal.get("default_mapping") or []
+            mapping_value = request.form.get("whatsapp_parameter_fields") or master_mapping
+            parameter_fields, mapping_errors = normalize_mapping(
+                SCOPE_MERCHANT_CLIENTS,
+                mapping_value,
+                expected_count=expected_parameters,
+                goal_key=selected_goal["key"],
+            )
+            if mapping_errors:
+                raise ValueError(" ".join(mapping_errors))
+            default_values = dict(selected_goal.get("default_values") or {})
+            default_values.update(parse_defaults(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("whatsapp_parameter_defaults") or "{}",
+            ))
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("ai_agents.campaign_wizard"))
+
         title = str(request.form.get("title") or "").strip()
         objective = str(request.form.get("objective") or "").strip()
         content = str(request.form.get("content") or "").strip()
@@ -1670,6 +1899,10 @@ def campaign_wizard():
                 content=content,
                 system_data={
                     "channel": "whatsapp",
+                    "audience_scope": SCOPE_MERCHANT_CLIENTS,
+                    "campaign_goal": selected_goal["key"],
+                    "whatsapp_parameter_fields": parameter_fields,
+                    "parameter_defaults": default_values,
                     "client_segment": client_segment if audience_choice == "notes" else "",
                     "days": days,
                     "branch_id": campaign_branch_id,
@@ -1683,6 +1916,7 @@ def campaign_wizard():
             preview = _render_content(
                 draft,
                 SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
+                include_opt_out=not _template_includes_opt_out(template),
             )
             if len(preview) > 900:
                 raise ValueError("El mensaje, incluida la instrucción de baja, supera los 900 caracteres.")
@@ -1697,19 +1931,26 @@ def campaign_wizard():
 
     audience_count = (
         _campaign_audience_preview(current_user.company_id, "all")["eligible"]
-        if template else 0
+        if template_options else 0
     )
     inactive_audience_count = (
         _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
-        if template else 0
+        if template_options else 0
     )
     return render_template(
         "ai_agents/campaign_wizard.html",
         template=template,
+        template_options=template_options,
+        template_selected=template_selected,
+        campaign_goal_options=campaign_goal_options,
+        campaign_goal=selected_goal["key"],
+        campaign_variable_options=campaign_variable_options,
+        campaign_copy_templates=campaign_copy_templates,
+        campaign_parameter_defaults=dict(selected_goal.get("default_values") or {}),
         template_error=template_error,
         campaign_sender_phone=campaign_sender_phone,
         template_admin_url=template_admin_url,
-        template_auto_selected=bool(template and template.get("auto_selected")),
+        template_auto_selected=template_auto_selected,
         products=products,
         opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
         audience_count=audience_count,
@@ -1717,7 +1958,6 @@ def campaign_wizard():
         schedule_local="",
         **_context(),
     )
-
 
 @bp.post("/campanas/audiencia-preview")
 @company_admin_required
@@ -1768,7 +2008,14 @@ def campaign_edit(campaign_id):
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
     try:
-        campaign = CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
+        campaign = CampaignService.update_draft(
+            company_id=current_user.company_id,
+            campaign_id=campaign_id,
+            title=request.form.get("title", ""),
+            objective=request.form.get("objective", ""),
+            content=request.form.get("content", ""),
+            user_id=current_user.id,
+        )
         if campaign.status in {"BORRADOR", "PENDIENTE_APROBACION"}:
             campaign.channel = "whatsapp"
             try:
@@ -1778,6 +2025,72 @@ def campaign_edit(campaign_id):
             if not isinstance(campaign_data, dict):
                 campaign_data = {}
             campaign_data["channel"] = "whatsapp"
+            from services.campaign_template_engine import (
+                SCOPE_MERCHANT_CLIENTS,
+                get_goal,
+                normalize_mapping,
+                parse_defaults,
+            )
+            selected_goal = get_goal(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("campaign_goal") or campaign_data.get("campaign_goal") or "customer_marketing",
+            )
+            campaign_data["audience_scope"] = SCOPE_MERCHANT_CLIENTS
+            campaign_data["campaign_goal"] = selected_goal["key"]
+            campaign_data["parameter_defaults"] = dict(selected_goal.get("default_values") or {})
+            campaign_data["parameter_defaults"].update(parse_defaults(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("whatsapp_parameter_defaults") or campaign_data.get("parameter_defaults"),
+            ))
+
+            selected_template = request.form.get("whatsapp_template")
+            if selected_template is not None:
+                selected_name, separator, selected_language = str(selected_template or "").strip().partition("|")
+                if not separator or not selected_name or not selected_language:
+                    raise ValueError("Elegí una plantilla aprobada compatible para esta campaña.")
+                from services.ai_agent.tenant_campaign_service import (
+                    _campaign_branch_id,
+                    _fetch_campaign_template,
+                    resolve_tenant_campaign_sender,
+                )
+                branch, connection = resolve_tenant_campaign_sender(
+                    _current_active_company(),
+                    _campaign_branch_id(campaign),
+                    require_ready=True,
+                )
+                campaign_data["whatsapp_template"] = _fetch_campaign_template(
+                    connection,
+                    selected_name=selected_name,
+                    selected_language=selected_language,
+                    allow_single_auto_select=False,
+                )
+                if (
+                    campaign_data["whatsapp_template"].get("campaign_goal")
+                    and campaign_data["whatsapp_template"]["campaign_goal"] != selected_goal["key"]
+                ):
+                    raise ValueError("La plantilla maestra seleccionada corresponde a otro objetivo de campaña.")
+                campaign_data["branch_id"] = int(branch.id)
+
+            template_for_mapping = campaign_data.get("whatsapp_template") or {}
+            positions = {
+                int(value)
+                for value in re.findall(
+                    r"\{\{\s*(\d+)\s*\}\}",
+                    str(template_for_mapping.get("body_text") or ""),
+                )
+            }
+            expected_parameters = len(positions)
+            if positions != set(range(1, expected_parameters + 1)):
+                raise ValueError("La plantilla debe usar variables consecutivas en el cuerpo.")
+            mapping, mapping_errors = normalize_mapping(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("whatsapp_parameter_fields") or campaign_data.get("whatsapp_parameter_fields"),
+                expected_count=expected_parameters,
+                goal_key=selected_goal["key"],
+            )
+            if mapping_errors:
+                raise ValueError(" ".join(mapping_errors))
+            campaign_data["whatsapp_parameter_fields"] = mapping
             campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
             raw_schedule = str(
                 request.form.get("scheduled_at_utc") or request.form.get("scheduled_at") or ""
@@ -1787,7 +2100,7 @@ def campaign_edit(campaign_id):
             else:
                 campaign.scheduled_at = None
         db.session.commit()
-        flash("Campaña actualizada.", "success")
+        flash("Campaña actualizada y plantilla verificada con Meta.", "success")
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "warning")
@@ -1816,7 +2129,19 @@ def campaign_transition(campaign_id):
         if not isinstance(campaign_data, dict):
             campaign_data = {}
         campaign_data["channel"] = "whatsapp"
+        campaign_data.setdefault("audience_scope", "merchant_clients")
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
+        if target_status.strip().upper() == "APROBADA":
+            from services.ai_agent.tenant_campaign_preflight import tenant_campaign_preflight
+
+            preflight = tenant_campaign_preflight(campaign, _current_active_company())
+            if not preflight.get("ready"):
+                first = (preflight.get("issues") or [{}])[0]
+                explanation = str(first.get("resolution") or "Revisá los bloqueos del preflight.")
+                raise ValueError(
+                    f"No se puede aprobar: {first.get('label') or 'validación pendiente'}. "
+                    f"{first.get('detail') or ''} {explanation}"
+                )
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
         if target_status.upper() == "APROBADA":
             prepare_recipients(campaign.id, company_id=current_user.company_id)

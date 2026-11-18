@@ -18,12 +18,14 @@ import requests
 MASTER_TEMPLATES = (
     {
         "key": "marketing_general",
+        "goal_key": "customer_marketing",
         "name": "campana_marketing_es_ar",
         "display_name": "Campaña de marketing general",
         "language": "es_AR",
         "language_label": "Español (Argentina)",
         "category": "MARKETING",
         "description": "Plantilla predeterminada para promociones, productos y novedades del comercio.",
+        "default_parameter_fields": ["contacto", "producto", "mensaje"],
         "body_text": (
             "¡Hola, {{1}}! 👋\n\n"
             "Queremos compartirte novedades de nuestro comercio.\n\n"
@@ -38,6 +40,63 @@ MASTER_TEMPLATES = (
             "Esta semana tenemos novedades y beneficios especiales. ¡Vení a conocerlos!",
         ],
     },
+    {
+        "key": "customer_reactivation",
+        "goal_key": "customer_reactivation",
+        "name": "campana_reactivacion_es_ar",
+        "display_name": "Recuperación de clientes inactivos",
+        "language": "es_AR",
+        "language_label": "Español (Argentina)",
+        "category": "MARKETING",
+        "description": "Invita a volver a clientes que hace tiempo no realizan compras.",
+        "default_parameter_fields": ["contacto", "comercio", "mensaje"],
+        "body_text": (
+            "¡Hola, {{1}}! 👋\n\n"
+            "Hace un tiempo que no te vemos por {{2}}.\n\n"
+            "{{3}}\n\n"
+            "Para dejar de recibir mensajes promocionales, respondé BAJA.\n\n"
+            "¡Nos encantaría volver a verte!"
+        ),
+        "examples": ["María", "nuestro comercio", "Tenemos una propuesta especial para tu próxima visita."],
+    },
+    {
+        "key": "customer_loyalty",
+        "goal_key": "customer_loyalty",
+        "name": "campana_fidelizacion_es_ar",
+        "display_name": "Fidelización de clientes",
+        "language": "es_AR",
+        "language_label": "Español (Argentina)",
+        "category": "MARKETING",
+        "description": "Agradece la preferencia y comunica beneficios a clientes habituales.",
+        "default_parameter_fields": ["contacto", "comercio", "mensaje"],
+        "body_text": (
+            "¡Hola, {{1}}! 💚\n\n"
+            "Gracias por elegir {{2}} y acompañarnos.\n\n"
+            "{{3}}\n\n"
+            "Para dejar de recibir mensajes promocionales, respondé BAJA.\n\n"
+            "¡Gracias por tu confianza!"
+        ),
+        "examples": ["María", "nuestro comercio", "Tenemos beneficios especiales para agradecer tu preferencia."],
+    },
+    {
+        "key": "customer_new_product",
+        "goal_key": "customer_new_product",
+        "name": "campana_novedad_producto_es_ar",
+        "display_name": "Nuevos productos y novedades",
+        "language": "es_AR",
+        "language_label": "Español (Argentina)",
+        "category": "MARKETING",
+        "description": "Presenta productos nuevos, lanzamientos y novedades del comercio.",
+        "default_parameter_fields": ["contacto", "producto", "mensaje"],
+        "body_text": (
+            "¡Hola, {{1}}! ✨\n\n"
+            "Tenemos una novedad en {{2}}.\n\n"
+            "{{3}}\n\n"
+            "Para dejar de recibir mensajes promocionales, respondé BAJA.\n\n"
+            "¡Te esperamos!"
+        ),
+        "examples": ["María", "nuestro comercio", "Conocé los nuevos productos que llegaron esta semana."],
+    }
 )
 
 MAX_TEMPLATE_PAGES = 20
@@ -57,6 +116,8 @@ def list_master_templates() -> list[dict]:
             "category": item["category"],
             "description": item["description"],
             "body_text": item["body_text"],
+            "goal_key": str(item.get("goal_key") or item["key"]),
+            "default_parameter_fields": list(item.get("default_parameter_fields") or ["contacto", "producto", "mensaje"]),
         }
         for item in MASTER_TEMPLATES
     ]

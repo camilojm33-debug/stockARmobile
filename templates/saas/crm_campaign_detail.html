@@ -1,5 +1,6 @@
 {% extends "base_master.html" %}
-{% block title %}{{ campaign.name }} · SuperAdmin{% endblock %}
+{% block title %}{{ campaign.name }} · SuperAdmin
+{% endblock %}
 {% block content %}
 <style>
 #editCampaignModal{--campaign-modal-margin:12px;}
@@ -170,11 +171,27 @@
           <div class="min-w-0">
             <div class="fw-semibold small">{{ check.label }}</div>
             <div class="small text-muted">{{ check.detail }}</div>
+            {% if not check.ok and check.resolution %}<div class="small mt-2"><strong>Cómo resolverlo:</strong> {{ check.resolution }}</div>{% endif %}
           </div>
         </div>
       </div>
       {% endfor %}
     </div>
+    {% if preflight.preview_message %}
+    <div class="mt-3">
+      <div class="small fw-semibold mb-1">Vista previa personalizada de WhatsApp con el primer prospecto elegible</div>
+      <div class="campaign-message-preview">{{ preflight.preview_message }}</div>
+    </div>
+    {% endif %}
+    {% if preflight.preview_email_subject or preflight.preview_email_text %}
+    <div class="mt-3">
+      <div class="small fw-semibold mb-1">Vista previa personalizada de email</div>
+      <div class="border rounded-3 p-3">
+        <div class="small text-muted">Asunto</div><div class="fw-semibold mb-2">{{ preflight.preview_email_subject }}</div>
+        <div class="small text-muted">Mensaje</div><div class="campaign-message-preview">{{ preflight.preview_email_text }}</div>
+      </div>
+    </div>
+    {% endif %}
   </section>
 
   <div class="row g-4">
@@ -224,7 +241,7 @@
         {% if segment_filters %}
           <div class="d-flex flex-wrap gap-2">
           {% for key,value in segment_filters.items() %}
-            {% if value not in [None, ''] %}
+            {% if key in segment_labels and value not in [None, ''] %}
               <span class="campaign-meta-pill"><span class="text-muted">{{ segment_labels.get(key,key|replace('_',' ')|title) }}</span><strong>{{ value }}</strong></span>
             {% endif %}
           {% endfor %}
@@ -520,6 +537,17 @@
               <i class="bi bi-shield-check fs-5 me-1"></i>
               Los filtros se vuelven a aplicar y los destinatarios anteriores se descartan al guardar.
             </div>
+            <div class="row g-3 mb-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Objetivo comercial</label>
+                <select class="form-select" name="campaign_goal" data-campaign-goal>
+                  {% for option in campaign_goal_options %}
+                  <option value="{{ option.key }}" data-default-fields='{{ option.default_mapping|tojson }}' data-default-values='{{ option.default_values|tojson }}' {% if segment_filters.get('campaign_goal', 'saas_acquisition') == option.key %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Campañas de captación y conversión de prospectos. No se mezclan con los clientes de los comercios.</div>
+              </div>
+            </div>
             <div class="row g-3">
               <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ segment_filters.get('industry','') }}" placeholder="Ferretería"></div>
               <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ segment_filters.get('province','') }}" placeholder="Chaco"></div>
@@ -532,6 +560,21 @@
           <div class="campaign-form-section">
             <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
             <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label fw-semibold">Biblioteca de mensajes maestros</label>
+              <select class="form-select" data-campaign-copy-picker
+                data-goal-field="campaign_goal" data-subject-field="subject"
+                data-text-field="body_text" data-html-field="body_html">
+                <option value="">Elegí una propuesta base para completar…</option>
+                {% for copy in campaign_copy_templates %}
+                <option value="{{ copy.key }}" data-goal="{{ copy.goal_key }}"
+                  data-subject="{{ copy.subject|default('')|forceescape }}"
+                  data-text="{{ (copy.body_text or copy.content or '')|forceescape }}"
+                  data-html="{{ copy.body_html|default('')|forceescape }}">{{ copy.label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Podés editar el contenido después de aplicar el mensaje base. La biblioteca corresponde a la audiencia de este CRM.</div>
+            </div>
               <div class="col-12">
                 <label class="form-label fw-semibold">Texto</label>
                 <textarea class="form-control" name="body_text" rows="7" required>{{ campaign.body_text or '' }}</textarea>
@@ -566,6 +609,7 @@
                 <pre class="small text-muted bg-light rounded-3 p-3 mb-2 text-wrap" data-whatsapp-template-preview>Vista previa de la plantilla seleccionada.</pre>
                 <div data-whatsapp-parameter-controls></div>
                 <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="{{ campaign.whatsapp_parameter_fields or '' }}">
+                <input type="hidden" name="whatsapp_parameter_defaults" data-whatsapp-defaults value='{{ segment_filters.get("parameter_defaults", {"producto":"StockARmobile"})|tojson }}'>
               </div>
             </div>
             <div class="small text-muted mt-2">Los datos de las variables se completan con la ficha del prospecto y el texto de la campaña. Este selector usa únicamente el WhatsApp Comercial interno de SuperAdmin.</div>
@@ -582,4 +626,5 @@
 </div>
 
 <script src="{{ url_for('static', filename='assets/js/superadmin-campaign-template-picker.js') }}?v=20261118-1"></script>
+<script src="{{ url_for('static', filename='assets/js/campaign-copy-template-picker.js') }}?v=20261118-1"></script>
 {% endblock %}

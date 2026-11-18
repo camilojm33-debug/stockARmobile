@@ -25,13 +25,149 @@ def _consent_evidence():
 def mock_approved_campaign_template(monkeypatch):
     monkeypatch.setattr(
         "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
-        lambda connection: {
-            "name": connection.get("template_name"),
-            "language": connection.get("template_language") or "es_AR",
+        lambda connection, **kwargs: {
+            "name": kwargs.get("selected_name") or connection.get("template_name"),
+            "language": kwargs.get("selected_language") or connection.get("template_language") or "es_AR",
             "body_text": "Hola {{1}}, {{2}}. {{3}}",
             "status": "APPROVED",
+            "category": "MARKETING",
+            "campaign_compatible": True,
         },
     )
+
+
+
+def test_campaign_uses_selected_tenant_waba_template_through_preparation_and_send(app, monkeypatch):
+    import json
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import _send_whatsapp
+
+    with app.app_context():
+        company = Company(name="Tenant Template Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="tenant-template-admin",
+            email="tenant-template@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente de prueba",
+            email="tenant-template-client@example.com",
+            whatsapp="5491122334455",
+            company_id=company.id,
+            email_marketing_consent="unknown",
+            whatsapp_marketing_consent="opted_in",
+            active=True,
+            **_consent_evidence(),
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+
+        tenant_connection = {
+            "enabled": True,
+            "phone_number_id": f"merchant-phone-{company.id}",
+            "business_account_id": f"merchant-waba-{company.id}",
+            "access_token": "merchant-only-token",
+            "template_name": "vendedor_ia_default",
+            "template_language": "es_AR",
+            "display_phone_number": "+54 9 362 400-0000",
+        }
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
+            lambda company, branch_id=None, require_ready=True: (
+                SimpleNamespace(id=branch_id or 11, is_default=True),
+                tenant_connection,
+            ),
+        )
+        selected_calls = []
+
+        def validate_selected(connection, **kwargs):
+            selected_calls.append((connection["business_account_id"], kwargs))
+            return {
+                "name": kwargs.get("selected_name") or connection["template_name"],
+                "language": kwargs.get("selected_language") or "es_AR",
+                "body_text": "Hola {{1}}, {{2}}. {{3}}",
+                "status": "APPROVED",
+                "category": "MARKETING",
+                "campaign_compatible": True,
+                "auto_selected": False,
+            }
+
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service._fetch_campaign_template",
+            validate_selected,
+        )
+        selected_template = {
+            "name": "campana_marketing_es_ar",
+            "language": "es_AR",
+            "body_text": "Hola {{1}}, {{2}}. {{3}}",
+            "status": "APPROVED",
+            "category": "MARKETING",
+            "campaign_compatible": True,
+        }
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña con plantilla propia",
+            objective="Promocionar un producto",
+            campaign_type="general",
+            content="Tenemos novedades para vos",
+            system_data={
+                "channel": "whatsapp",
+                "branch_id": 11,
+                "whatsapp_template": selected_template,
+            },
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        campaign.status = "APROBADA"
+        db.session.commit()
+
+        prepared = prepare_recipients(campaign.id, company_id=company.id)
+        data = json.loads(campaign.system_data_json or "{}")
+        recipient = TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            company_id=company.id,
+            client_id=client.id,
+        ).first()
+
+        assert prepared["added"] == 1
+        assert selected_calls[0][0] == tenant_connection["business_account_id"]
+        assert selected_calls[0][1]["selected_name"] == "campana_marketing_es_ar"
+        assert data["whatsapp_template"]["name"] == "campana_marketing_es_ar"
+        assert data["whatsapp_sender"]["business_account_id"] == tenant_connection["business_account_id"]
+
+        from services.ai_agent.whatsapp_service import WhatsAppService
+        sent = {}
+
+        def fake_send(*args, **kwargs):
+            sent.update(kwargs)
+            return {"messages": [{"id": "wamid-tenant-template"}]}
+
+        monkeypatch.setattr(WhatsAppService, "send_template", fake_send)
+        success, status, provider_id = _send_whatsapp(recipient, campaign)
+
+        assert success is True
+        assert status == "sent"
+        assert provider_id == "wamid-tenant-template"
+        assert sent["template_name"] == "campana_marketing_es_ar"
+        assert sent["connection"]["business_account_id"] == tenant_connection["business_account_id"]
+        assert "Para dejar de recibir mensajes" in sent["body_parameters"][2]
+
+
+def test_master_template_static_baja_instruction_is_not_duplicated_in_message_parameter():
+    from services.ai_agent.tenant_campaign_service import _render_content
+
+    campaign = SimpleNamespace(content="Esta semana tenemos promociones especiales.")
+    client = SimpleNamespace(name="María", whatsapp="5491122334455")
+    rendered = _render_content(campaign, client, include_opt_out=False)
+
+    assert rendered == "Esta semana tenemos promociones especiales."
+    assert rendered.lower().count("baja") == 0
 
 
 def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch):
@@ -1576,3 +1712,77 @@ def test_tenant_campaign_send_uses_exact_merchant_waba_and_rejects_changed_sende
         assert not called["send"]
 
 
+def test_tenant_campaign_parameter_resolution_uses_company_and_client_fields_with_defaults():
+    from services.ai_agent.tenant_campaign_service import _tenant_campaign_parameter_resolution
+
+    campaign = SimpleNamespace(
+        title="Fidelización",
+        objective="Fidelizar",
+        content="Gracias por elegirnos.",
+        product=None,
+        system_data_json=__import__("json").dumps({
+            "audience_scope": "merchant_clients",
+            "campaign_goal": "customer_loyalty",
+            "whatsapp_parameter_fields": ["contacto", "comercio", "mensaje"],
+            "parameter_defaults": {},
+        }),
+    )
+    client = SimpleNamespace(
+        name="Ana",
+        whatsapp="5493624000000",
+        email="ana@example.com",
+        city="Resistencia",
+        province="Chaco",
+        customer_type="minorista",
+    )
+    company = SimpleNamespace(name="Comercio Demo")
+    template = {
+        "body_text": "Hola {{1}}, gracias por elegir {{2}}. {{3}}",
+        "status": "APPROVED",
+        "campaign_compatible": True,
+    }
+
+    resolved = _tenant_campaign_parameter_resolution(campaign, client, company, template)
+
+    assert resolved["valid"] is True
+    assert resolved["fields"] == ["contacto", "comercio", "mensaje"]
+    assert resolved["values"][0] == "Ana"
+    assert resolved["values"][1] == "Comercio Demo"
+    assert "Gracias por elegirnos." in resolved["values"][2]
+
+
+def test_tenant_campaign_parameter_resolution_blocks_missing_contact_fields():
+    from services.ai_agent.tenant_campaign_service import _tenant_campaign_parameter_resolution
+
+    campaign = SimpleNamespace(
+        title="Novedades",
+        objective="Informar",
+        content="Te contamos las novedades.",
+        product=None,
+        system_data_json=__import__("json").dumps({
+            "audience_scope": "merchant_clients",
+            "campaign_goal": "customer_marketing",
+            "whatsapp_parameter_fields": ["contacto", "email", "mensaje"],
+            "parameter_defaults": {},
+        }),
+    )
+    client = SimpleNamespace(
+        name="Ana",
+        whatsapp="5493624000000",
+        email="",
+        city="Resistencia",
+        province="Chaco",
+        customer_type="minorista",
+    )
+    company = SimpleNamespace(name="Comercio Demo")
+    template = {
+        "body_text": "Hola {{1}}, te escribimos a {{2}}. {{3}}",
+        "status": "APPROVED",
+        "campaign_compatible": True,
+    }
+
+    resolved = _tenant_campaign_parameter_resolution(campaign, client, company, template)
+
+    assert resolved["valid"] is False
+    assert resolved["missing_fields"] == ["email"]
+    assert resolved["values"][1] == ""

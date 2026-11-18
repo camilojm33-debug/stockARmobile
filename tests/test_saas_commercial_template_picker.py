@@ -131,12 +131,15 @@ def test_superadmin_campaign_forms_load_meta_templates_and_map_each_variable():
     assert "@superadmin_required\ndef whatsapp_commercial_templates():" in route_source
 
 
-def test_campaign_preflight_checks_the_number_of_whatsapp_parameters():
+def test_campaign_preflight_checks_the_number_and_mapping_of_whatsapp_parameters():
     source = (ROOT / "services/saas_campaign_preflight.py").read_text(encoding="utf-8")
 
-    assert "expected_parameters = int(validation.get(\"variable_count\") or 0)" in source
-    assert "len(parameter_fields) == expected_parameters" in source
-    assert "COMMERCIAL_WHATSAPP_PARAMETER_FIELDS" in source
+    assert 'expected_parameters = int(template_validation.get("variable_count") or 0)' in source
+    assert "normalize_mapping(" in source
+    assert "expected_count=expected_parameters" in source
+    assert '"whatsapp_mapping"' in source
+    assert '"recipient_data"' in source
+    assert "missing_fields" in source
 
 
 
@@ -198,3 +201,50 @@ def test_commercial_campaign_parameter_field_defaults_are_consistent():
         "contacto", "producto", "mensaje"
     ]
     assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="none")) == []
+
+
+def test_saas_goal_and_copy_library_keep_prospect_scope_separate():
+    from services.campaign_template_engine import (
+        SCOPE_MERCHANT_CLIENTS,
+        SCOPE_SAAS_PROSPECTS,
+        goal_options,
+        message_templates,
+        variable_options,
+    )
+
+    saas_goals = {item["key"] for item in goal_options(SCOPE_SAAS_PROSPECTS)}
+    merchant_goals = {item["key"] for item in goal_options(SCOPE_MERCHANT_CLIENTS)}
+    assert saas_goals == {"saas_acquisition", "saas_trial_conversion", "saas_lead_followup"}
+    assert merchant_goals == {"customer_marketing", "customer_reactivation", "customer_loyalty", "customer_new_product"}
+    assert all(item["goal_key"].startswith("saas_") for item in message_templates(SCOPE_SAAS_PROSPECTS))
+    assert all(item["goal_key"].startswith("customer_") for item in message_templates(SCOPE_MERCHANT_CLIENTS))
+    saas_fields = {item["key"] for item in variable_options(SCOPE_SAAS_PROSPECTS)}
+    assert {"contacto", "empresa", "telefono", "email", "provincia", "producto", "trial_url"} <= saas_fields
+
+
+def test_commercial_campaign_parameter_builder_uses_defaults_and_rejects_missing_values():
+    from services.saas_commercial_service import _whatsapp_template_parameters
+
+    flask_app = Flask(__name__)
+    flask_app.config["APP_URL"] = "https://app.stockarmobile.com"
+    campaign = SimpleNamespace(
+        whatsapp_parameter_fields="contacto,empresa,producto,mensaje,trial_url",
+        body_text="Hola {{contacto}} de {{empresa}}, conocé {{producto}}. Podemos mostrarte opciones para tu comercio.",
+        subject="Conocé StockARmobile",
+        segment_json='{"campaign_goal":"saas_acquisition","parameter_defaults":{"producto":"StockARmobile"}}',
+    )
+    lead = SimpleNamespace(
+        company_name="Comercio Demo",
+        contact_name="Carla",
+        industry="Ferretería",
+        locality="Resistencia",
+        whatsapp="5493624000000",
+    )
+    with flask_app.app_context():
+        result = _whatsapp_template_parameters(campaign, lead)
+
+    assert result[0] == "Carla"
+    assert result[1] == "Comercio Demo"
+    assert result[2] == "StockARmobile"
+    assert "Hola Carla de Comercio Demo" in result[3]
+    assert result[4].endswith("/auth/register?selected_plan=trial")
