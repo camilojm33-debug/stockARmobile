@@ -144,5 +144,5 @@ def test_publication_is_blocked_when_commercial_channel_is_not_ready(template_pu
 
     assert response.status_code == 409
     assert response.get_json()["success"] is False
-    assert "deshabilitado" in response.get_json()["error"].lower()
+    assert "habilitá primero" in response.get_json()["error"].lower()
     assert meta_calls == []
