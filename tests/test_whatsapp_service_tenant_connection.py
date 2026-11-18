@@ -62,3 +62,45 @@ def test_template_send_uses_exact_resolved_tenant_phone_and_token(monkeypatch):
     assert call["payload"]["to"] == "5493624200001"
     assert call["payload"]["template"]["name"] == "merchant_marketing"
     assert call["payload"]["template"]["language"]["code"] == "es_AR"
+
+
+
+def test_template_send_normalizes_whitespace_in_body_parameters(monkeypatch):
+    calls = []
+    connection = {
+        "enabled": True,
+        "phone_number_id": "TEST_PHONE_NUMBER_ID",
+        "business_account_id": "TEST_WABA_ID",
+        "access_token": "test-token",
+    }
+
+    def fake_post(url, *, json, headers, timeout):
+        calls.append(json)
+        return _FakeResponse()
+
+    monkeypatch.setattr(
+        "services.ai_agent.whatsapp_service.requests.post",
+        fake_post,
+    )
+
+    WhatsAppService.send_template(
+        SimpleNamespace(id=456),
+        to="5493624200001",
+        template_name="campana_marketing_es_ar",
+        template_language="es_AR",
+        body_parameters=[
+            "  María\tGómez\n  ",
+            "Producto     premium",
+            "Hola,\n\nte\tcontactamos.     Tenemos    novedades.",
+        ],
+        connection=connection,
+    )
+
+    parameters = calls[0]["template"]["components"][0]["parameters"]
+    assert [item["text"] for item in parameters] == [
+        "María Gómez",
+        "Producto premium",
+        "Hola, te contactamos. Tenemos novedades.",
+    ]
+    assert all(chr(10) not in item["text"] and chr(9) not in item["text"] for item in parameters)
+    assert all("     " not in item["text"] for item in parameters)
