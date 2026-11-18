@@ -117,12 +117,20 @@
     });
     preview.textContent = result;
   }
+  function selectTemplateForGoal() {
+    const target = goal.value;
+    const match = Array.from(template.options).find(option => option.value && option.dataset.goal === target);
+    if (match) template.value = match.value;
+  }
   template.addEventListener("change", () => {
     const choice = template.selectedOptions[0];
     if (choice && choice.dataset.goal) goal.value = choice.dataset.goal;
     render(false);
   });
-  goal.addEventListener("change", () => render(false));
+  goal.addEventListener("change", () => {
+    selectTemplateForGoal();
+    render(false);
+  });
   content.addEventListener("input", updatePreview);
   form.addEventListener("submit", event => {
     if (!write()) {
