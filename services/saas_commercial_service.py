@@ -980,7 +980,12 @@ COMMERCIAL_WHATSAPP_PARAMETER_FIELDS = {
 
 
 def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
-    """Resolve the ordered fields used for positional BODY parameters."""
+    """Resolve the ordered fields used for positional BODY parameters.
+
+    The default order is shared with the merchant Marketing IA dispatcher and
+    the master Meta template, so CRM-created and AI-created campaigns send the
+    same three values without a per-campaign mapping step.
+    """
     fields = [
         part.strip().lower()
         for part in _clean(getattr(campaign, "whatsapp_parameter_fields", "")).split(",")
@@ -988,7 +993,10 @@ def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
     ]
     if fields == ["none"]:
         return []
-    return fields or ["contacto", "producto", "mensaje"]
+    if fields:
+        return fields
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+    return list(MASTER_TEMPLATE_PARAMETER_FIELDS)
 
 
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
