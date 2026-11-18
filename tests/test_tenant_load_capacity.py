@@ -16,7 +16,7 @@ from app import Client, Company, CompanyMembership, Product, Sale, SaleItem, Use
 
 
 TENANT_COUNT = 100
-REQUEST_CONCURRENCY = 20
+REQUEST_CONCURRENCY = 5
 REQUEST_TIMEOUT_SECONDS = 45
 
 
