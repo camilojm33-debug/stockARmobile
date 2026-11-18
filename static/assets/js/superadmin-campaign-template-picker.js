@@ -112,7 +112,7 @@
       const matched = templates.find(item =>
         item.name === storedName && item.language === storedLanguage && item.campaign_compatible
       );
-      currentTemplate = matched || templates.find(item => item.campaign_compatible) || null;
+      currentTemplate = matched || (!form.dataset.currentName ? templates.find(item => item.campaign_compatible) : null) || null;
 
       if (currentTemplate) {
         picker.value = currentTemplate.name + "||" + currentTemplate.language;
