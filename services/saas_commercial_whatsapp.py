@@ -159,6 +159,7 @@ def validate_commercial_whatsapp_template(template_name: str, language: str = "e
             "language": lang,
             "variable_count": int(compatibility.get("variable_count") or 0),
             "campaign_compatible": bool(compatibility.get("campaign_compatible")),
+            "body_text": str(compatibility.get("body_text") or ""),
             "detail": detail,
         }
     except Exception as exc:
