@@ -973,28 +973,44 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     detail = "; ".join(connection_failures) or "sin detalle"
     return False, f"No se pudo conectar/autenticar al SMTP ({detail})."
 
+COMMERCIAL_WHATSAPP_PARAMETER_FIELDS = {
+    "empresa", "comercio", "contacto", "rubro", "localidad",
+    "producto", "mensaje", "asunto", "trial_url",
+}
+
+
+def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
+    """Resolve the ordered fields used for positional BODY parameters."""
+    fields = [
+        part.strip().lower()
+        for part in _clean(getattr(campaign, "whatsapp_parameter_fields", "")).split(",")
+        if part.strip()
+    ]
+    if fields == ["none"]:
+        return []
+    return fields or ["contacto", "producto", "mensaje"]
+
+
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
 
+    campaign_message = render_merge(_clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject), lead)
     values = {
         "empresa": _clean(lead.company_name),
         "comercio": _clean(lead.company_name),
         "contacto": _clean(lead.contact_name),
         "rubro": _clean(lead.industry),
         "localidad": _clean(lead.locality),
+        "producto": "StockArMobile",
+        "mensaje": campaign_message,
+        "asunto": render_merge(_clean(campaign.subject), lead),
         "trial_url": (
             f"{_clean(current_app.config.get('APP_URL')).rstrip('/')}/auth/register?selected_plan=trial"
             if _clean(current_app.config.get("APP_URL"))
             else ""
         ),
     }
-    fields = [
-        part.strip().lower()
-        for part in _clean(campaign.whatsapp_parameter_fields).split(",")
-        if part.strip()
-    ]
-    if fields == ["none"]:
-        return []
+    fields = get_commercial_whatsapp_parameter_fields(campaign)
     unknown = [field for field in fields if field not in values]
     if unknown:
         raise ValueError(f"Campos de plantilla WhatsApp no soportados: {', '.join(unknown)}")
@@ -1150,8 +1166,30 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
                 )
             except Exception as exc:
                 template_check = {"ok": False, "detail": str(exc)[:240]}
+            if template_check.get("ok"):
+                parameter_fields = get_commercial_whatsapp_parameter_fields(campaign)
+                expected_parameters = int(template_check.get("variable_count") or 0)
+                mapping_valid = (
+                    len(parameter_fields) == expected_parameters
+                    and all(field in COMMERCIAL_WHATSAPP_PARAMETER_FIELDS for field in parameter_fields)
+                )
+                if not mapping_valid:
+                    template_check = {
+                        **template_check,
+                        "ok": False,
+                        "detail": (
+                            f"La plantilla requiere {expected_parameters} parámetro(s), "
+                            f"pero la campaña tiene {len(parameter_fields)}. "
+                            "Volvé a editar la campaña y asigná un campo a cada variable."
+                        ),
+                    }
             if not template_check.get("ok"):
                 summary["blocked"] += 1
+                current_app.logger.warning(
+                    "Commercial campaign id=%s blocked before WhatsApp dispatch: %s",
+                    campaign.id,
+                    str(template_check.get("detail") or "template or variable mapping is not ready")[:240],
+                )
                 continue
 
         campaign.status = "ENVIANDO"

@@ -686,7 +686,7 @@ def test_commercial_template_validation_requires_meta_approved_marketing(commerc
     monkeypatch.setattr(
         "services.ai_agent.whatsapp_master_template_service._list_waba_templates",
         lambda waba_id, access_token: [
-            {"name": "approved_marketing", "language": "es_AR", "status": "APPROVED", "category": "MARKETING"},
+            {"name": "approved_marketing", "language": "es_AR", "status": "APPROVED", "category": "MARKETING", "components": [{"type": "BODY", "text": "Hola {{1}}, {{2}}, {{3}}"}]},
             {"name": "pending_marketing", "language": "es_AR", "status": "PENDING", "category": "MARKETING"},
             {"name": "approved_utility", "language": "es_AR", "status": "APPROVED", "category": "UTILITY"},
         ],

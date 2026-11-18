@@ -2505,7 +2505,7 @@ class SaaSCampaign(db.Model):
     body_text = db.Column(db.Text)
     whatsapp_template_name = db.Column(db.String(120))
     whatsapp_template_language = db.Column(db.String(20), nullable=False, default="es_AR")
-    whatsapp_parameter_fields = db.Column(db.Text, nullable=False, default="contacto,empresa")
+    whatsapp_parameter_fields = db.Column(db.Text, nullable=False, default="contacto,producto,mensaje")
     segment_json = db.Column(db.Text, nullable=False, default="{}")
     scheduled_at = db.Column(db.DateTime, index=True)
     started_at = db.Column(db.DateTime)

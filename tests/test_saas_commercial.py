@@ -335,13 +335,25 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         monkeypatch.setattr("services.saas_commercial_service._send_whatsapp", fake_whatsapp)
         monkeypatch.setattr(
             "services.saas_commercial_whatsapp.validate_commercial_whatsapp_template",
-            lambda *args, **kwargs: {"ok": True, "status": "APPROVED", "category": "MARKETING", "detail": "approved"},
+            lambda *args, **kwargs: {"ok": True, "status": "APPROVED", "category": "MARKETING", "variable_count": 2, "detail": "approved"},
         )
         recipient_before = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
         assert recipient_before is not None
         assert recipient_before.status == "pending"
         assert campaign.status == "APROBADA"
 
+        campaign.whatsapp_parameter_fields = "contacto"
+        db.session.commit()
+        blocked = dispatch_due_campaigns(db.session, per_campaign=50)
+        recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
+        assert blocked["blocked"] == 1
+        assert blocked["sent"] == 0
+        assert calls == []
+        assert recipient.status == "pending"
+        assert campaign.status == "APROBADA"
+
+        campaign.whatsapp_parameter_fields = "contacto,empresa"
+        db.session.commit()
         result = dispatch_due_campaigns(db.session, per_campaign=50)
 
         recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()

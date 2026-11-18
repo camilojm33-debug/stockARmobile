@@ -2703,7 +2703,7 @@ def crm_campaigns():
         body_text = (request.form.get("body_text") or "").strip() or None
         whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
         whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
-        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,empresa").strip()[:500] or "contacto,empresa"
+        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,producto,mensaje").strip()[:500] or "contacto,producto,mensaje"
         if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
             flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
             return redirect(url_for("saas.crm_campaigns"))
@@ -2974,7 +2974,7 @@ def crm_campaign_edit(campaign_id):
     body_text = (request.form.get("body_text") or "").strip() or None
     whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
     whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
-    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,empresa").strip()[:500] or "contacto,empresa"
+    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,producto,mensaje").strip()[:500] or "contacto,producto,mensaje"
 
     if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
         flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
@@ -7106,10 +7106,10 @@ def whatsapp_master_templates():
 
 
 def _fetch_commercial_whatsapp_templates(connection: dict) -> list[dict]:
-    """List approved platform templates with the same compatibility rules as tenant campaigns."""
-    from services.ai_agent.whatsapp_campaign_template_service import list_approved_campaign_templates
+    """List templates from the isolated SuperAdmin WABA with CRM-specific compatibility."""
+    from services.saas_commercial_templates import list_commercial_campaign_templates
 
-    return list_approved_campaign_templates(connection)
+    return list_commercial_campaign_templates(connection)
 
 @bp.get("/whatsapp-comercial/plantillas")
 @superadmin_required
@@ -7165,7 +7165,7 @@ def whatsapp_commercial_template_save():
     if not match.get("campaign_compatible"):
         return jsonify({
             "success": False,
-            "error": "La plantilla debe incluir {{1}} cliente, {{2}} producto y {{3}} mensaje editable para las campañas del CRM.",
+            "error": "La plantilla debe estar aprobada como MARKETING y usar variables posicionales consecutivas solo en el cuerpo del mensaje.",
         }), 409
 
     env_template = str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip()
