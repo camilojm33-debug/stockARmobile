@@ -1510,6 +1510,7 @@ def campaign_detail(campaign_id):
         get_goal,
         goal_options,
         variable_options,
+        message_templates,
         parse_defaults,
     )
     campaign_preflight = tenant_campaign_preflight(campaign, _current_active_company())
@@ -1548,6 +1549,7 @@ def campaign_detail(campaign_id):
         campaign_goal_options=goal_options(SCOPE_MERCHANT_CLIENTS),
         campaign_goal=campaign_goal,
         campaign_variable_options=variable_options(SCOPE_MERCHANT_CLIENTS),
+        campaign_copy_templates=message_templates(SCOPE_MERCHANT_CLIENTS),
         campaign_parameter_fields=campaign_parameter_fields,
         campaign_parameter_defaults=campaign_parameter_defaults,
         campaign_template_preview=campaign_preflight.get("preview_message") or template_preview,
@@ -1659,6 +1661,7 @@ def campaign_wizard():
         SCOPE_MERCHANT_CLIENTS,
         get_goal,
         goal_options,
+        message_templates,
         normalize_mapping,
         parse_defaults,
         variable_options,
@@ -1686,6 +1689,7 @@ def campaign_wizard():
         selected_goal = get_goal(SCOPE_MERCHANT_CLIENTS, "customer_marketing")
     campaign_goal_options = goal_options(SCOPE_MERCHANT_CLIENTS)
     campaign_variable_options = variable_options(SCOPE_MERCHANT_CLIENTS)
+    campaign_copy_templates = message_templates(SCOPE_MERCHANT_CLIENTS)
     campaign_branch_id = get_active_branch_id()
     if campaign_branch_id is None:
         from stockarmobile.branch_context import get_default_branch_id
@@ -1933,6 +1937,7 @@ def campaign_wizard():
         campaign_goal_options=campaign_goal_options,
         campaign_goal=selected_goal["key"],
         campaign_variable_options=campaign_variable_options,
+        campaign_copy_templates=campaign_copy_templates,
         campaign_parameter_defaults=dict(selected_goal.get("default_values") or {}),
         template_error=template_error,
         campaign_sender_phone=campaign_sender_phone,
