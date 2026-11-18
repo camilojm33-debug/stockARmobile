@@ -683,6 +683,145 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
     }
 
 
+
+def campaign_selectable_leads(
+    db_session,
+    campaign,
+    channel: str,
+    *,
+    search: str = "",
+    limit: int | None = 500,
+    lead_ids: set[int] | None = None,
+) -> list[tuple[object, str]]:
+    """Return only contacts eligible for a campaign channel.
+
+    Reuses the exact filters, consent policy, suppression checks and destination
+    validation used by dispatch, so manual selection cannot bypass eligibility.
+    """
+    from app import SaaSLead
+    from sqlalchemy import or_
+
+    channel = str(channel or "").strip().lower()
+    if channel not in {"email", "whatsapp"}:
+        raise ValueError("Canal de campaña no soportado.")
+
+    query = _eligible_leads_query(channel, parse_segment_json(campaign.segment_json))
+    if lead_ids is not None:
+        if not lead_ids:
+            return []
+        query = query.filter(SaaSLead.id.in_(sorted(lead_ids)))
+
+    search = _clean(search)
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(or_(
+            SaaSLead.company_name.ilike(pattern),
+            SaaSLead.contact_name.ilike(pattern),
+            SaaSLead.industry.ilike(pattern),
+            SaaSLead.province.ilike(pattern),
+            SaaSLead.locality.ilike(pattern),
+            SaaSLead.email.ilike(pattern),
+            SaaSLead.whatsapp.ilike(pattern),
+            SaaSLead.phone.ilike(pattern),
+        ))
+
+    rows: list[tuple[object, str]] = []
+    for lead in query.order_by(SaaSLead.lead_score.desc(), SaaSLead.id.asc()).yield_per(500):
+        destination = normalize_email(lead.email) if channel == "email" else _lead_whatsapp_destination(lead)
+        if channel == "email" and not _campaign_email_is_valid(lead, destination):
+            continue
+        if not destination:
+            continue
+        rows.append((lead, destination))
+        if limit is not None and len(rows) >= max(1, int(limit)):
+            break
+    return rows
+
+
+def add_selected_campaign_recipients(
+    db_session,
+    campaign_id: int,
+    selections: list[tuple[str, int]] | None = None,
+    *,
+    search: str = "",
+    select_all: bool = False,
+) -> dict:
+    """Add manually selected, already-consented contacts to a draft campaign."""
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
+
+    campaign = db_session.get(SaaSCampaign, int(campaign_id))
+    if campaign is None:
+        raise ValueError("Campaña no encontrada.")
+    if campaign.status != "BORRADOR":
+        raise ValueError("Solo se pueden seleccionar destinatarios para un borrador.")
+
+    channels = ["email", "whatsapp"] if campaign.channel == "both" else [campaign.channel]
+    if any(channel not in {"email", "whatsapp"} for channel in channels):
+        raise ValueError("Canal de campaña no soportado.")
+
+    selected_by_channel: dict[str, set[int]] = {channel: set() for channel in channels}
+    for channel, lead_id in selections or []:
+        normalized_channel = str(channel or "").strip().lower()
+        if normalized_channel not in selected_by_channel:
+            continue
+        try:
+            normalized_id = int(lead_id)
+        except (TypeError, ValueError):
+            continue
+        if normalized_id > 0:
+            selected_by_channel[normalized_channel].add(normalized_id)
+
+    existing = {
+        (int(row.lead_id), str(row.channel))
+        for row in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+    }
+    added = 0
+    now = utcnow()
+
+    for channel in channels:
+        ids = None if select_all else selected_by_channel[channel]
+        candidates = campaign_selectable_leads(
+            db_session,
+            campaign,
+            channel,
+            search=search,
+            limit=None,
+            lead_ids=ids,
+        )
+        for lead, destination in candidates:
+            key = (int(lead.id), channel)
+            if key in existing:
+                continue
+            recipient = SaaSCampaignRecipient(
+                campaign_id=campaign.id,
+                lead_id=lead.id,
+                channel=channel,
+                destination=destination,
+                status="pending",
+            )
+            db_session.add(recipient)
+            db_session.add(SaaSCampaignEvent(
+                campaign_id=campaign.id,
+                recipient=recipient,
+                event_type="recipient_prepared",
+                metadata_json=json.dumps(
+                    {"lead_score": lead.lead_score, "channel": channel, "selected_manually": not select_all},
+                    ensure_ascii=False,
+                ),
+                created_at=now,
+            ))
+            existing.add(key)
+            added += 1
+
+    campaign.target_count = len(existing)
+    db_session.flush()
+    return {
+        "added": added,
+        "target_count": campaign.target_count,
+        "selected": sum(len(ids) for ids in selected_by_channel.values()),
+    }
+
+
 def build_campaign_recipients(db_session, campaign_id: int) -> dict:
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, SaaSLead, utcnow
 
@@ -992,6 +1131,12 @@ def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
         if part.strip()
     ]
     if fields == ["none"]:
+        # Older SuperAdmin campaign forms could persist "none" before the
+        # hidden Meta template picker finished loading. The shared marketing
+        # master template always requires the three positional BODY values.
+        if _clean(getattr(campaign, "whatsapp_template_name", "")).lower() == "campana_marketing_es_ar":
+            from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+            return list(MASTER_TEMPLATE_PARAMETER_FIELDS)
         return []
     if fields:
         return fields
