@@ -752,14 +752,28 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
 
 
 def render_merge(text: str, lead) -> str:
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, parse_defaults
+
     rendered = text or ""
-    for source, value in {
-        "{{empresa}}": _clean(lead.company_name),
-        "{{comercio}}": _clean(lead.company_name),
-        "{{contacto}}": _clean(lead.contact_name),
-        "{{rubro}}": _clean(lead.industry),
-        "{{localidad}}": _clean(lead.locality),
-    }.items():
+    try:
+        from flask import current_app
+        app_url = _clean(current_app.config.get("APP_URL"))
+    except RuntimeError:
+        app_url = ""
+    values = {
+        "{{empresa}}": _clean(getattr(lead, "company_name", "")),
+        "{{comercio}}": _clean(getattr(lead, "company_name", "")),
+        "{{contacto}}": _clean(getattr(lead, "contact_name", "")),
+        "{{rubro}}": _clean(getattr(lead, "industry", "")),
+        "{{localidad}}": _clean(getattr(lead, "locality", "")),
+        "{{provincia}}": _clean(getattr(lead, "province", "")),
+        "{{telefono}}": _clean(getattr(lead, "whatsapp", "") or getattr(lead, "phone", "")),
+        "{{email}}": _clean(getattr(lead, "email", "")),
+        "{{producto}}": "StockARmobile",
+        "{{asunto}}": "",
+        "{{trial_url}}": f"{app_url.rstrip('/')}/auth/register?selected_plan=trial" if app_url else "",
+    }
+    for source, value in values.items():
         rendered = rendered.replace(source, value)
     return rendered
 
@@ -1014,6 +1028,9 @@ def _commercial_lead_variable_context(campaign, lead) -> dict:
         "empresa": _clean(lead.company_name),
         "comercio": _clean(lead.company_name),
         "contacto": _clean(lead.contact_name),
+        "telefono": _clean(getattr(lead, "whatsapp", "") or getattr(lead, "phone", "")),
+        "email": _clean(getattr(lead, "email", "")),
+        "provincia": _clean(getattr(lead, "province", "")),
         "rubro": _clean(lead.industry),
         "localidad": _clean(lead.locality),
         "producto": "StockARmobile",
