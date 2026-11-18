@@ -259,7 +259,7 @@
               </div>
               <div class="col-12">
                 <label class="form-label fw-semibold">Mensaje</label>
-                <textarea class="form-control" name="body_text" rows="7" required>Hola {{contacto}},
+                <textarea class="form-control" name="body_text" rows="7" required>Hola {% raw %}{{contacto}}{% endraw %},
 
 Te presentamos StockArMobile, una plataforma para gestionar stock, ventas, clientes y presupuestos.
 
@@ -277,7 +277,7 @@ Probalo gratis durante 10 días.</textarea>
               <summary class="small fw-semibold text-primary" style="cursor:pointer;">Diseño avanzado de Email (opcional)</summary>
               <div class="mt-2">
                 <label class="form-label fw-semibold">Diseño del correo</label>
-                <textarea class="form-control font-monospace" name="body_html" rows="8" required>&lt;p&gt;Hola {{contacto}},&lt;/p&gt;
+                <textarea class="form-control font-monospace" name="body_html" rows="8" required>&lt;p&gt;Hola {% raw %}{{contacto}}{% endraw %},&lt;/p&gt;
 &lt;p&gt;Te presentamos &lt;strong&gt;StockArMobile&lt;/strong&gt;, una plataforma para gestionar stock, ventas, clientes y presupuestos.&lt;/p&gt;
 &lt;p&gt;&lt;strong&gt;Probalo gratis durante 10 días.&lt;/strong&gt;&lt;/p&gt;
 &lt;p&gt;&lt;a href="https://www.stockarmobile.com"&gt;Conocé StockArMobile&lt;/a&gt;&lt;/p&gt;</textarea>
