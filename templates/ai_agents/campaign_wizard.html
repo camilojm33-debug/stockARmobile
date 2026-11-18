@@ -1,5 +1,182 @@
 {% extends "base_master.html" %}
-{% block title %}Crear campaña - Marketing IA{% endblock %}
+{% block title %}Crear campaña - Marketing IA
+<script>
+(function () {
+  const form = document.getElementById("campaignWizardForm");
+  if (!form) return;
+  const goal = document.getElementById("campaignGoal");
+  const template = document.getElementById("campaignTemplate");
+  const content = document.getElementById("campaignContent");
+  const preview = document.getElementById("campaignTemplatePreview");
+  const panel = document.getElementById("campaignVariablePanel");
+  const controls = document.getElementById("campaignVariableControls");
+  const mappingInput = document.getElementById("campaignParameterFields");
+  const defaultsInput = document.getElementById("campaignParameterDefaults");
+  const feedback = document.getElementById("campaignVariableFeedback");
+  if (!goal || !template || !panel || !controls || !mappingInput || !defaultsInput) return;
+
+  let fields = [];
+  let defaults = {};
+  let options = [];
+  try { options = JSON.parse(panel.dataset.variableOptions || "[]"); } catch (_error) { options = []; }
+  try { defaults = JSON.parse(defaultsInput.value || "{}") || {}; } catch (_error) { defaults = {}; }
+
+  function preset() {
+    const choice = goal.selectedOptions[0];
+    let mapping = [], fallback = {};
+    try { mapping = JSON.parse(choice && choice.dataset.defaultFields || "[]"); } catch (_error) { mapping = []; }
+    try { fallback = JSON.parse(choice && choice.dataset.defaultValues || "{}"); } catch (_error) { fallback = {}; }
+    return {mapping: Array.isArray(mapping) ? mapping : [], defaults: fallback && typeof fallback === "object" ? fallback : {}};
+  }
+  function selectedBody() {
+    const option = template.selectedOptions[0];
+    return option ? option.dataset.body || "" : "";
+  }
+  function writeValues() {
+    const selects = Array.from(controls.querySelectorAll("[data-variable-field]"));
+    fields = selects.map(select => select.value);
+    const nextDefaults = {};
+    selects.forEach(select => {
+      const input = controls.querySelector('[data-variable-default="' + select.dataset.position + '"]');
+      const value = String(input && input.value || "").trim();
+      if (value) nextDefaults[select.value] = value;
+    });
+    defaults = nextDefaults;
+    mappingInput.value = fields.join(",");
+    defaultsInput.value = JSON.stringify(defaults);
+    const duplicates = fields.filter((field, index) => fields.indexOf(field) !== index);
+    feedback.textContent = duplicates.length ? "Asigná un campo diferente a cada parámetro." : "Los valores predeterminados se aplican solo cuando el dato falta en la ficha.";
+    feedback.className = duplicates.length ? "small mt-2 text-danger" : "small mt-2 text-muted";
+    return duplicates.length === 0;
+  }
+  function renderControls(preserve) {
+    controls.textContent = "";
+    const body = selectedBody();
+    const positions = Array.from(body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)).map(match => Number(match[1]));
+    const count = positions.length ? Math.max.apply(null, positions) : 0;
+    if (!count || positions.slice().sort((a,b) => a-b).join(",") !== Array.from({length:count}, (_,i)=>i+1).join(",")) {
+      feedback.textContent = "La plantilla necesita variables posicionales consecutivas en su cuerpo.";
+      feedback.className = "small mt-2 text-danger";
+      mappingInput.value = "";
+      return;
+    }
+    const goalPreset = preset();
+    const templateFields = (() => { try { return JSON.parse(template.selectedOptions[0].dataset.fields || "[]"); } catch (_error) { return []; } })();
+    const previousFields = fields.slice();
+    const nextDefaults = preserve ? Object.assign({}, defaults) : Object.assign({}, goalPreset.defaults);
+    for (let i = 0; i < count; i += 1) {
+      const row = document.createElement("div");
+      row.className = "row g-2 align-items-end border-bottom pb-2 mb-2";
+      const left = document.createElement("div");
+      left.className = "col-md-6";
+      const label = document.createElement("label");
+      label.className = "form-label small fw-semibold";
+      label.textContent = "Variable {{" + (i + 1) + "}} · campo del cliente";
+      const select = document.createElement("select");
+      select.className = "form-select form-select-sm";
+      select.dataset.variableField = "1";
+      select.dataset.position = String(i + 1);
+      options.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.key;
+        option.textContent = item.label;
+        select.appendChild(option);
+      });
+      const field = (preserve && previousFields[i]) || templateFields[i] || goalPreset.mapping[i] || options[0]?.key || "mensaje";
+      select.value = field;
+      const right = document.createElement("div");
+      right.className = "col-md-6";
+      const defaultLabel = document.createElement("label");
+      defaultLabel.className = "form-label small";
+      defaultLabel.textContent = "Valor predeterminado (opcional)";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "form-control form-control-sm";
+      input.maxLength = 300;
+      input.placeholder = "Usar el dato de la ficha";
+      input.dataset.variableDefault = String(i + 1);
+      input.value = nextDefaults[select.value] || "";
+      select.addEventListener("change", () => {
+        input.value = nextDefaults[select.value] || goalPreset.defaults[select.value] || "";
+        updatePreview();
+        writeValues();
+      });
+      input.addEventListener("input", () => { updatePreview(); writeValues(); });
+      left.appendChild(label);
+      left.appendChild(select);
+      right.appendChild(defaultLabel);
+      right.appendChild(input);
+      row.appendChild(left);
+      row.appendChild(right);
+      controls.appendChild(row);
+    }
+    writeValues();
+    updatePreview();
+  }
+  function updatePreview() {
+    const body = selectedBody();
+    if (!body || !content) return;
+    const product = document.getElementById("campaignProduct");
+    const productName = product && product.value ? product.selectedOptions[0].textContent : "";
+    const productPrice = product && product.value ? product.selectedOptions[0].dataset.price || "" : "";
+    const context = {
+      contacto: "Cliente de ejemplo",
+      empresa: "Tu comercio",
+      comercio: "Tu comercio",
+      telefono: "5491100000000",
+      email: "cliente@ejemplo.com",
+      localidad: "Tu localidad",
+      provincia: "Tu provincia",
+      rubro: "minorista",
+      producto: productName || "Producto destacado",
+      precio: productPrice,
+      mensaje: (content.value || "").trim(),
+      asunto: form.elements.objective.value || "Novedades",
+    };
+    const selectedGoal = preset();
+    const currentSelects = Array.from(controls.querySelectorAll("[data-variable-field]"));
+    const selectedFields = currentSelects.map(select => select.value);
+    const paramValues = selectedFields.map(field => context[field] || defaults[field] || selectedGoal.defaults[field] || "");
+    const hasOptOut = /\bBAJA\b/i.test(body) && /(dejar de recibir|no recibir)/i.test(body);
+    if (!hasOptOut) {
+      const last = paramValues.length - 1;
+      if (last >= 0 && !/para dejar de recibir mensajes, respondé baja\./i.test(paramValues[last])) {
+        paramValues[last] = paramValues[last] ? paramValues[last] + "\n\n" + (preview.dataset.optOut || "") : (preview.dataset.optOut || "");
+      }
+    }
+    let rendered = body;
+    paramValues.forEach((value, index) => {
+      const expression = new RegExp("\\{\\{\\s*" + (index + 1) + "\\s*\\}\\}", "g");
+      rendered = rendered.replace(expression, value);
+    });
+    preview.textContent = rendered;
+  }
+
+  function chooseTemplateForGoal() {
+    const choice = goal.value;
+    const matching = Array.from(template.options).find(option => option.dataset.goal === choice);
+    if (matching && matching.value) template.value = matching.value;
+  }
+  template.addEventListener("change", () => renderControls(false));
+  goal.addEventListener("change", () => {
+    chooseTemplateForGoal();
+    renderControls(false);
+  });
+  content.addEventListener("input", updatePreview);
+  const product = document.getElementById("campaignProduct");
+  if (product) product.addEventListener("change", updatePreview);
+  form.addEventListener("submit", event => {
+    if (!writeValues()) {
+      event.preventDefault();
+      showStep(3);
+      return;
+    }
+  });
+  renderControls(true);
+})();
+</script>
+
+{% endblock %}
 {% block extra_css %}
 <style>
 .campaign-wizard{max-width:980px;margin:0 auto}
@@ -60,6 +237,14 @@
         <div class="row g-3">
           <div class="col-md-7"><label class="form-label">Nombre de campaña</label><input class="form-control" name="title" maxlength="180" required placeholder="Ej. Volvé a visitarnos"></div>
           <div class="col-md-5"><label class="form-label">Objetivo</label><select class="form-select" name="objective" required><option value="">Elegir objetivo…</option><option>Recuperar clientes</option><option>Promocionar un producto</option><option>Informar una novedad</option><option>Fidelizar clientes</option></select></div>
+          <div class="col-12"><label class="form-label fw-semibold" for="campaignGoal">Tipo de campaña para clientes</label>
+            <select class="form-select" name="campaign_goal" id="campaignGoal" required>
+              {% for option in campaign_goal_options %}
+              <option value="{{ option.key }}" data-default-fields='{{ option.default_mapping|tojson }}' data-default-values='{{ option.default_values|tojson }}' {% if option.key == campaign_goal %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Este CRM trabaja solo con clientes de tu comercio. La captación de nuevos comercios de StockARmobile se administra desde SuperAdmin.</div>
+          </div>
         </div>
       </section>
       <section class="campaign-pane" data-step="2">
@@ -78,14 +263,22 @@
         <select class="form-select mb-2" name="whatsapp_template" id="campaignTemplate" required>
           <option value="">Elegí una plantilla MARKETING compatible…</option>
           {% for option in template_options %}
-          <option value="{{ option.name }}|{{ option.language }}" data-body="{{ option.body_text }}" {% if template_selected and option.name == template.name and option.language == template.language %}selected{% endif %}>{{ option.name }} · {{ option.language }} · {{ option.category }}</option>
+          <option value="{{ option.name }}|{{ option.language }}" data-body="{{ option.body_text }}" data-goal="{{ option.campaign_goal or '' }}" data-fields='{{ option.default_parameter_fields|tojson }}' {% if template_selected and option.name == template.name and option.language == template.language %}selected{% endif %}>{{ option.display_name or option.name }} · {{ option.language }} · {{ option.category }}</option>
           {% endfor %}
         </select>
-        <div class="form-text mb-3">Solo se ofrecen plantillas aprobadas por Meta, de categoría MARKETING y compatibles con los tres parámetros del CRM. La elección afecta únicamente a esta campaña y usa el WhatsApp de la sucursal activa.</div>
+        <div class="form-text mb-3">Solo se ofrecen plantillas aprobadas por Meta, de categoría MARKETING y compatibles con los parámetros del CRM.</div>
+        <div class="border rounded-3 p-3 mb-3" id="campaignVariablePanel" data-variable-options="{{ campaign_variable_options|tojson|forceescape }}">
+          <div class="fw-semibold mb-1">Variables inteligentes y valores predeterminados</div>
+          <div class="small text-muted mb-3">Cada parámetro se completa con los datos del cliente. Podés definir un valor alternativo para las fichas que no tengan ese dato.</div>
+          <div id="campaignVariableControls"></div>
+          <input type="hidden" name="whatsapp_parameter_fields" id="campaignParameterFields" value="">
+          <input type="hidden" name="whatsapp_parameter_defaults" id="campaignParameterDefaults" value='{{ campaign_parameter_defaults|tojson }}'>
+          <div id="campaignVariableFeedback" class="small mt-2" role="status" aria-live="polite"></div>
+        </div>
         <label class="form-label">Mensaje para el cliente</label><textarea class="form-control" name="content" id="campaignContent" rows="6" maxlength="900" required placeholder="Escribí el texto que recibirán tus clientes"></textarea>
         <div class="d-flex justify-content-between small text-muted mt-1"><span>Máximo 900 caracteres, incluida la instrucción de baja.</span><span><span id="campaignContentLength">0</span>/900</span></div>
         <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
-        <div class="small text-muted mt-2">Se agrega la instrucción “{{ opt_out_text }}” y se reemplazan cliente y producto antes del envío.</div>
+        <div class="small text-muted mt-2">La vista previa utiliza datos de ejemplo. Antes de aprobar, el preflight valida los datos reales de cada destinatario y muestra los campos faltantes.</div>
         <div class="mt-3"><label class="form-label">Producto (opcional)</label><select class="form-select" name="product_id" id="campaignProduct"><option value="">Varios / sin producto</option>{% for product in products %}<option value="{{ product.id }}" data-price="{{ product.price }}">{{ product.name }}</option>{% endfor %}</select></div>
       </section>
       <section class="campaign-pane" data-step="4">
