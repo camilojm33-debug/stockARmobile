@@ -335,7 +335,7 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         monkeypatch.setattr("services.saas_commercial_service._send_whatsapp", fake_whatsapp)
         monkeypatch.setattr(
             "services.saas_commercial_whatsapp.validate_commercial_whatsapp_template",
-            lambda *args, **kwargs: {"ok": True, "status": "APPROVED", "category": "MARKETING", "detail": "approved"},
+            lambda *args, **kwargs: {"ok": True, "status": "APPROVED", "category": "MARKETING", "variable_count": 2, "detail": "approved"},
         )
         recipient_before = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
         assert recipient_before is not None
