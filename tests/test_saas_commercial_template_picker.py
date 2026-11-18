@@ -137,3 +137,54 @@ def test_campaign_preflight_checks_the_number_of_whatsapp_parameters():
     assert "expected_parameters = int(validation.get(\"variable_count\") or 0)" in source
     assert "len(parameter_fields) == expected_parameters" in source
     assert "COMMERCIAL_WHATSAPP_PARAMETER_FIELDS" in source
+
+
+
+def test_campaign_preflight_blocks_a_wrong_whatsapp_parameter_count(app, monkeypatch):
+    from services.saas_campaign_preflight import campaign_preflight
+
+    campaign = SimpleNamespace(
+        name="Campaña de prueba",
+        subject="Conocé StockArMobile",
+        body_html="<p>Hola</p>",
+        body_text="Hola",
+        channel="whatsapp",
+        target_count=1,
+        whatsapp_template_name="stockarmobile_presentacion",
+        whatsapp_template_language="es_AR",
+        whatsapp_parameter_fields="contacto,producto",
+        segment_json="{}",
+    )
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        monkeypatch.setattr(
+            "services.saas_commercial_service.campaign_audience_metrics",
+            lambda db_session, current_campaign: {"eligible_whatsapp": 1},
+        )
+        monkeypatch.setattr(
+            "services.saas_commercial_service.crm_campaign_dispatch_worker_started",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.commercial_whatsapp_summary",
+            lambda: {"connected": True, "display_phone_number": "+54 9 11 5555-1234"},
+        )
+        monkeypatch.setattr(
+            "services.saas_commercial_whatsapp.validate_commercial_whatsapp_template",
+            lambda *args, **kwargs: {
+                "ok": True,
+                "status": "APPROVED",
+                "category": "MARKETING",
+                "variable_count": 3,
+                "detail": "Plantilla aprobada.",
+            },
+        )
+
+        report = campaign_preflight(None, campaign)
+
+    assert report["ready"] is False
+    whatsapp_check = next(check for check in report["checks"] if check["code"] == "whatsapp_config")
+    assert whatsapp_check["ok"] is False
+    assert "requiere 3 parámetro(s)" in whatsapp_check["detail"]
+    assert "tiene 2" in whatsapp_check["detail"]
