@@ -18,6 +18,7 @@ import requests
 MASTER_TEMPLATES = (
     {
         "key": "marketing_general",
+        "goal_key": "customer_marketing",
         "name": "campana_marketing_es_ar",
         "display_name": "Campaña de marketing general",
         "language": "es_AR",
@@ -37,7 +38,7 @@ MASTER_TEMPLATES = (
             "Productos seleccionados",
             "Esta semana tenemos novedades y beneficios especiales. ¡Vení a conocerlos!",
         ],
-    },,
+    },
     {
         "key": "customer_reactivation",
         "goal_key": "customer_reactivation",
