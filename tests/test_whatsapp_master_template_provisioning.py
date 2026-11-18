@@ -94,6 +94,8 @@ def test_provision_is_idempotent_when_matching_master_is_already_approved(monkey
     results = service.provision_master_templates(_connection())
 
     assert results[0]["status"] == "APPROVED"
+    assert results[0]["category"] == "MARKETING"
+    assert results[0]["campaign_compatible"] is True
     assert results[0]["created"] is False
     assert "lista" in results[0]["message"]
     assert post_calls == []
@@ -296,7 +298,9 @@ def test_provisioning_state_is_saved_without_tokens_for_default_company_and_bran
         "key": "marketing_general",
         "name": "campana_marketing_es_ar",
         "language": "es_AR",
+        "category": "MARKETING",
         "status": "PENDING",
+        "campaign_compatible": False,
         "created": True,
         "message": "Pendiente de aprobación",
         "access_token": "must-not-be-saved",
