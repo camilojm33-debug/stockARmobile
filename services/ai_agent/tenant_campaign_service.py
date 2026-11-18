@@ -353,29 +353,22 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     campaign_data["branch_id"] = int(branch.id)
     stored_template = campaign_data.get("whatsapp_template")
     if isinstance(stored_template, dict) and stored_template.get("name"):
-        configured_name = str(connection.get("template_name") or "").strip()
-        configured_language = str(connection.get("template_language") or "es_AR").strip()
-        if configured_name and (
-            configured_name != str(stored_template.get("name") or "").strip()
-            or configured_language != str(stored_template.get("language") or "").strip()
-        ):
-            raise ValueError(
-                "La plantilla oficial cambió desde que creaste el borrador. "
-                "Volvé a revisar la vista previa y guardá una nueva propuesta."
-            )
-        if configured_name:
-            template = _fetch_campaign_template(connection)
-        else:
-            template = _fetch_campaign_template(
-                connection,
-                selected_name=str(stored_template.get("name") or ""),
-                selected_language=str(stored_template.get("language") or "es_AR"),
-                allow_single_auto_select=False,
-            )
-            template["auto_selected"] = True
+        # Campaign templates are selected per draft from this branch's WABA.
+        # They are intentionally independent from the Vendedor IA default template.
+        template = _fetch_campaign_template(
+            connection,
+            selected_name=str(stored_template.get("name") or ""),
+            selected_language=str(stored_template.get("language") or "es_AR"),
+            allow_single_auto_select=False,
+        )
     else:
+        # Backward compatibility for older drafts that predate the campaign picker.
         template = _fetch_campaign_template(connection)
-    if not _render_content(campaign, type("PreviewClient", (), {"name": "Cliente"})()).strip():
+    if not _render_content(
+        campaign,
+        type("PreviewClient", (), {"name": "Cliente", "whatsapp": ""})(),
+        include_opt_out=not _template_includes_opt_out(template),
+    ).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
     campaign_data["whatsapp_sender"] = current_sender_binding
@@ -431,7 +424,16 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     return {"eligible": eligible, "added": added, "target_count": campaign.target_count}
 
 
-def _render_content(campaign, client):
+def _template_includes_opt_out(template: dict | None) -> bool:
+    """Whether Meta's static template body already contains an unsubscribe instruction."""
+    body = str((template or {}).get("body_text") or "")
+    return bool(
+        re.search(r"\bBAJA\b", body, re.IGNORECASE)
+        and re.search(r"(dejar de recibir|no recibir)", body, re.IGNORECASE)
+    )
+
+
+def _render_content(campaign, client, *, include_opt_out: bool = True):
     replacements = {
         "{{cliente}}": str(client.name or ""),
         "{{nombre}}": str(client.name or ""),
@@ -445,7 +447,7 @@ def _render_content(campaign, client):
     content = content.strip()
     if not content:
         raise ValueError("El mensaje de campaña está vacío.")
-    if CAMPAIGN_OPT_OUT_TEXT.lower() not in content.lower():
+    if include_opt_out and CAMPAIGN_OPT_OUT_TEXT.lower() not in content.lower():
         content = f"{content}\n\n{CAMPAIGN_OPT_OUT_TEXT}"
     if len(content) > MAX_CAMPAIGN_COPY_LENGTH:
         raise ValueError(
@@ -522,16 +524,12 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     template = campaign_data.get("whatsapp_template") or {}
     template_name = str(template.get("name") or "").strip()
     language = str(template.get("language") or "").strip()
-    configured_template_name = str(connection.get("template_name") or "").strip()
-    configured_template_language = str(connection.get("template_language") or "es_AR").strip()
-    template_was_auto_selected = bool(template.get("auto_selected"))
     if (
         not template_name
         or not language
         or not template.get("body_text")
-        or (configured_template_name and template_name != configured_template_name)
-        or (configured_template_name and language != configured_template_language)
-        or (not configured_template_name and not template_was_auto_selected)
+        or str(template.get("status") or "APPROVED").upper() != "APPROVED"
+        or template.get("campaign_compatible") is False
     ):
         return False, "La plantilla aprobada cambió desde que se preparó la campaña; volvé a validar y aprobar.", ""
 
@@ -539,7 +537,11 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
         params = [
             str(client.name or "Cliente")[:1024],
             str(campaign.product.name if campaign.product else "Varios")[:1024],
-            _render_content(campaign, client),
+            _render_content(
+                campaign,
+                client,
+                include_opt_out=not _template_includes_opt_out(template),
+            ),
         ]
     except ValueError as exc:
         return False, str(exc), ""
