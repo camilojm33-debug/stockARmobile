@@ -117,7 +117,11 @@
     });
     preview.textContent = result;
   }
-  template.addEventListener("change", () => render(false));
+  template.addEventListener("change", () => {
+    const choice = template.selectedOptions[0];
+    if (choice && choice.dataset.goal) goal.value = choice.dataset.goal;
+    render(false);
+  });
   goal.addEventListener("change", () => render(false));
   content.addEventListener("input", updatePreview);
   form.addEventListener("submit", event => {
