@@ -112,7 +112,9 @@
     {% for label,value,icon in [
       ('Destinatarios',metrics.total,'bi-people'),
       ('Pendientes',metrics.pending,'bi-hourglass-split'),
-      ('Enviados',metrics.sent,'bi-send-check'),
+      ('Aceptados / enviados',metrics.sent,'bi-send-check'),
+      ('Entregados',metrics.delivered,'bi-check2-all'),
+      ('Leídos',metrics.opened,'bi-eye'),
       ('Fallos',metrics.failed,'bi-exclamation-octagon'),
       ('Omitidos',metrics.skipped,'bi-slash-circle')
     ] %}
