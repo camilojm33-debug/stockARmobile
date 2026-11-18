@@ -152,9 +152,9 @@
   const updatePreview = function () {
     const option = templateSelect ? templateSelect.selectedOptions[0] : null;
     const templateBody = (option && option.dataset.body) || preview.dataset.templateBody || "";
-    const templateHasOptOut = /\\bBAJA\\b/i.test(templateBody) && /(dejar de recibir|no recibir)/i.test(templateBody);
+    const templateHasOptOut = /\bBAJA\b/i.test(templateBody) && /(dejar de recibir|no recibir)/i.test(templateBody);
     let message = (content.value || "").trim();
-    if (message && !templateHasOptOut && !/para dejar de recibir mensajes, respondé baja\\./i.test(message)) message += "\\n\\n{{optout}}";
+    if (message && !templateHasOptOut && !/para dejar de recibir mensajes, respondé baja\./i.test(message)) message += "\n\n{{optout}}";
     const product = document.getElementById("campaignProduct");
     const productName = product.selectedOptions.length && product.value ? product.selectedOptions[0].textContent : "Varios";
     const productPrice = product.selectedOptions.length && product.value ? (product.selectedOptions[0].dataset.price || "") : "";
