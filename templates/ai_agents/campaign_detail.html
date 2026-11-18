@@ -106,17 +106,17 @@
     if (!content || !preview) return;
     const option = templateSelect && templateSelect.selectedOptions[0];
     const body = (option && option.dataset.body) || preview.dataset.templateBody || "";
-    const hasOptOut = /\\bBAJA\\b/i.test(body) && /(dejar de recibir|no recibir)/i.test(body);
+    const hasOptOut = /\bBAJA\b/i.test(body) && /(dejar de recibir|no recibir)/i.test(body);
     let message = (content.value || "").trim();
-    if (message && !hasOptOut && !/para dejar de recibir mensajes, respondé baja\\./i.test(message)) {
-      message += "\\n\\nPara dejar de recibir mensajes, respondé BAJA.";
+    if (message && !hasOptOut && !/para dejar de recibir mensajes, respondé baja\./i.test(message)) {
+      message += "\n\nPara dejar de recibir mensajes, respondé BAJA.";
     }
-    message = message.replace(/\\{\\{cliente\\}\\}|\\{\\{nombre\\}\\}/gi, "Cliente de ejemplo")
-      .replace(/\\{\\{producto\\}\\}/gi, "Varios");
+    message = message.replace(/\{\{cliente\}\}|\{\{nombre\}\}/gi, "Cliente de ejemplo")
+      .replace(/\{\{producto\}\}/gi, "Varios");
     const rendered = body
-      .replace(/\\{\\{\\s*1\\s*\\}\\}/g, "Cliente de ejemplo")
-      .replace(/\\{\\{\\s*2\\s*\\}\\}/g, "Varios")
-      .replace(/\\{\\{\\s*3\\s*\\}\\}/g, message);
+      .replace(/\{\{\s*1\s*\}\}/g, "Cliente de ejemplo")
+      .replace(/\{\{\s*2\s*\}\}/g, "Varios")
+      .replace(/\{\{\s*3\s*\}\}/g, message);
     preview.textContent = rendered || "La vista previa estará disponible luego de validar una plantilla compatible.";
   };
   if (templateSelect) templateSelect.addEventListener("change", updatePreview);
