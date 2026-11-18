@@ -2966,7 +2966,7 @@ def crm_campaign_prepare(campaign_id):
 @bp.route("/crm/campaigns/<int:campaign_id>/edit", methods=["POST"])
 @superadmin_required
 def crm_campaign_edit(campaign_id):
-    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
+    from app import SaaSCampaign, SaaSCampaignRecipient, db, record_audit
     from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
 
     _require_superadmin()
@@ -3043,32 +3043,119 @@ def crm_campaign_edit(campaign_id):
 @bp.post("/crm/campaigns/<int:campaign_id>/audience-all-email")
 @superadmin_required
 def crm_campaign_audience_all_email(campaign_id):
-    from app import SaaSCampaign, db, record_audit
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
     if campaign.status != "BORRADOR":
         flash("Solo se puede cambiar la audiencia de un borrador.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
-    if campaign.channel not in {"email", "both"}:
-        flash("Esta acción requiere Email.", "warning")
+    if campaign.channel not in {"email", "whatsapp", "both"}:
+        flash("Esta acción no está disponible para este canal.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
     campaign.segment_json = json.dumps(
         {"industry": "", "province": "", "locality": "", "segment": "", "min_score": 0},
         ensure_ascii=False,
     )
-    campaign.target_count = 0
+    # Removing filters widens the audience, so the previously selected
+    # recipients remain valid. Keep them and synchronize the displayed count.
+    campaign.target_count = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).count()
     record_audit(
         action="saas_campaign_audience_scope",
         entity="saas_campaign",
         entity_id=campaign.id,
-        detail="Audiencia configurada para toda la base de Email elegible.",
+        detail="Audiencia configurada para todos los contactos elegibles del canal seleccionado.",
         user_id=current_user.id,
     )
     db.session.commit()
-    flash("Audiencia configurada para toda la base de Email. Ahora prepará la audiencia.", "success")
+    flash("Filtros quitados. Ahora seleccioná los contactos habilitados para esta campaña.", "success")
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
+
+@bp.route("/crm/campaigns/<int:campaign_id>/recipients", methods=["GET", "POST"])
+@superadmin_required
+def crm_campaign_select_recipients(campaign_id):
+    from app import SaaSCampaign, SaaSCampaignRecipient, db, record_audit
+    from services.saas_commercial_service import (
+        add_selected_campaign_recipients,
+        campaign_audience_metrics,
+        campaign_selectable_leads,
+        parse_segment_json,
+    )
+
+    _require_superadmin()
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status != "BORRADOR":
+        flash("Solo podés modificar destinatarios mientras la campaña está en Borrador.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    search = str(request.values.get("q") or "").strip()[:120]
+    channels = ["email", "whatsapp"] if campaign.channel == "both" else [campaign.channel]
+
+    if request.method == "POST":
+        selections = []
+        for raw in request.form.getlist("recipient_selection"):
+            try:
+                channel, raw_id = str(raw).split(":", 1)
+                selections.append((channel, int(raw_id)))
+            except (TypeError, ValueError):
+                continue
+        select_all = request.form.get("select_all_eligible") == "1"
+        try:
+            result = add_selected_campaign_recipients(
+                db.session, campaign.id, selections, search=search, select_all=select_all,
+            )
+            record_audit(
+                action="saas_campaign_recipients_selected",
+                entity="saas_campaign", entity_id=campaign.id,
+                detail=(
+                    f"Destinatarios seleccionados: agregados={result['added']}; "
+                    f"total={result['target_count']}; seleccionar_todos={select_all}."
+                ),
+                user_id=current_user.id,
+            )
+            db.session.commit()
+            if result["added"]:
+                flash(
+                    f"Se agregaron {result['added']} destinatarios habilitados. La campaña sigue en Borrador.",
+                    "success",
+                )
+            else:
+                flash("No se agregaron destinatarios nuevos. Revisá la selección o los permisos de los contactos.", "warning")
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"No se pudieron guardar los destinatarios: {exc}", "danger")
+        return redirect(url_for(
+            "saas.crm_campaign_select_recipients", campaign_id=campaign.id, q=search or None,
+        ))
+
+    filters = parse_segment_json(campaign.segment_json)
+    audience = campaign_audience_metrics(db.session, campaign)
+    existing = {
+        (int(row.lead_id), str(row.channel))
+        for row in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+    }
+    rows_by_channel = {"email": [], "whatsapp": []}
+    totals_by_channel = {
+        "email": int(audience.get("eligible_email") or 0),
+        "whatsapp": int(audience.get("eligible_whatsapp") or 0),
+    }
+    for channel in channels:
+        rows = campaign_selectable_leads(db.session, campaign, channel, search=search, limit=500)
+        for lead, destination in rows:
+            rows_by_channel[channel].append({
+                "lead": lead, "destination": destination,
+                "already_added": (int(lead.id), channel) in existing,
+            })
+
+    return render_template(
+        "saas/crm_campaign_recipients.html",
+        campaign=campaign, audience=audience, filters=filters, search=search,
+        channels=channels, rows_by_channel=rows_by_channel,
+        totals_by_channel=totals_by_channel, existing_count=len(existing), result_limit=500,
+    )
 
 
 @bp.post("/crm/campaigns/<int:campaign_id>/approve")

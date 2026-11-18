@@ -17,7 +17,7 @@ def test_campaign_ui_discloses_the_commercial_whatsapp_sender_status():
 
     assert "commercial_whatsapp.connected" in listing
     assert "commercial_whatsapp.display_phone_number" in listing
-    assert "WhatsApp emisor" in detail
+    assert "El mensaje saldrá desde el WhatsApp comercial de StockARmobile." in detail
     assert "WhatsApp comercial" in crm
 
 
@@ -94,7 +94,7 @@ def test_campaign_creation_modal_and_edit_modal_keep_footer_outside_scroll():
     css = (ROOT / "static/assets/css/superadmin.css").read_text(encoding="utf-8")
 
     assert 'id="newCampaignModal"' in create_template
-    assert '>Crear borrador y continuar</button>' in create_template
+    assert '>Guardar y revisar destinatarios</button>' in create_template
     assert 'id="editCampaignModal"' in edit_template
     assert '>Guardar cambios</button>' in edit_template
     for modal_id in ("newCampaignModal", "editCampaignModal"):
@@ -177,3 +177,18 @@ def test_superadmin_inbox_can_sync_gmail_without_leaving_the_conversation():
     assert 'name="return_to_inbox" value="1"' in template
     assert 'if request.form.get("return_to_inbox") == "1":' in source
     assert 'url_for("saas.crm_inbox", conversation_id=conversation_id)' in source
+
+
+def test_campaign_detail_offers_manual_recipient_selection_and_audience_reset():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    selector = (ROOT / "templates/saas/crm_campaign_recipients.html").read_text(encoding="utf-8")
+    assert "Seleccionar destinatarios" in template
+    assert "crm_campaign_select_recipients" in template
+    assert 'def crm_campaign_select_recipients(campaign_id):' in source
+    assert "recipient_selection" in selector
+    assert "select_all_eligible" in selector
+    assert "Quitar filtros y ampliar la audiencia" in template
+    assert 'channels = ["email", "whatsapp"] if campaign.channel == "both"' in source
+    assert 'SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).count()' in source
+    assert 'Removing filters widens the audience' in source

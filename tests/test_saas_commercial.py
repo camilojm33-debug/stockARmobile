@@ -1371,3 +1371,83 @@ def test_superadmin_campaign_email_uses_gmail_api_without_smtp(app, monkeypatch)
     assert message["To"] == "prospect@example.com"
     assert message["X-StockArMobile-Campaign"] == "12"
     assert message["X-StockArMobile-Recipient"] == "31"
+
+
+
+def test_manual_campaign_recipient_selection_only_adds_selected_consented_contacts(app):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent, User, db
+    from services.saas_commercial_service import add_selected_campaign_recipients
+
+    with app.app_context():
+        user = User(
+            username="recipient-picker-admin",
+            email="recipient-picker-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        email_ok = SaaSLead(
+            company_name="Comercio con Email autorizado",
+            contact_name="Ana",
+            email="ana@example.com",
+            email_status="valid",
+            email_consent_status="opted_in",
+            whatsapp_consent_status="unknown",
+            created_by_user_id=user.id,
+        )
+        email_unknown = SaaSLead(
+            company_name="Comercio sin permiso",
+            contact_name="Luis",
+            email="luis@example.com",
+            email_status="valid",
+            email_consent_status="unknown",
+            created_by_user_id=user.id,
+        )
+        whatsapp_ok = SaaSLead(
+            company_name="Comercio con WhatsApp autorizado",
+            contact_name="Eva",
+            whatsapp="5493624000000",
+            whatsapp_consent_status="opted_in",
+            email_consent_status="unknown",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([email_ok, email_unknown, whatsapp_ok])
+        db.session.flush()
+        db.session.add_all([
+            SaaSLeadConsent(lead_id=email_ok.id, unsubscribe_token="recipient-email-ok"),
+            SaaSLeadConsent(lead_id=email_unknown.id, unsubscribe_token="recipient-email-unknown"),
+            SaaSLeadConsent(lead_id=whatsapp_ok.id, unsubscribe_token="recipient-whatsapp-ok"),
+        ])
+        campaign = SaaSCampaign(
+            name="Selector manual",
+            subject="Prueba",
+            channel="both",
+            body_html="<p>Hola</p>",
+            body_text="Hola",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.commit()
+
+        result = add_selected_campaign_recipients(
+            db.session,
+            campaign.id,
+            [
+                ("email", email_ok.id),
+                ("email", email_unknown.id),
+                ("whatsapp", whatsapp_ok.id),
+                ("whatsapp", email_ok.id),
+            ],
+        )
+        db.session.commit()
+        recipients = {
+            (row.lead_id, row.channel)
+            for row in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+        }
+
+        assert result["added"] == 2
+        assert recipients == {(email_ok.id, "email"), (whatsapp_ok.id, "whatsapp")}
+        assert campaign.target_count == 2

@@ -96,7 +96,7 @@ def test_superadmin_review_collapses_technical_checks_and_uses_simple_actions():
     assert "Revisión automática" in detail
     assert "Ver detalles de la revisión" in detail
     assert "Canales de envío" in detail
-    assert "Revisar destinatarios" in detail
+    assert "Seleccionar destinatarios" in detail
     assert "Confirmar y enviar" in detail
     assert "Plantilla WhatsApp:</span>" not in detail
     assert "Motor comercial" not in detail
