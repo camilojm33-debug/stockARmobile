@@ -16,7 +16,7 @@ from app import Client, Company, CompanyMembership, Product, Sale, SaleItem, Use
 
 
 TENANT_COUNT = 100
-REQUEST_TIMEOUT_SECONDS = 150
+REQUEST_TIMEOUT_SECONDS = 90
 
 
 def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
@@ -128,7 +128,6 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
         response = client.get("/dashboard/")
         elapsed_seconds = perf_counter() - started_at
         html = response.get_data(as_text=True)
-        client.close()
 
         assert response.status_code == 200, (
             f"Tenant {tenant['company_id']} recibió HTTP {response.status_code}: "
