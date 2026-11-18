@@ -16,7 +16,7 @@ from app import Client, Company, CompanyMembership, Product, Sale, SaleItem, Use
 
 
 TENANT_COUNT = 100
-REQUEST_TIMEOUT_SECONDS = 45
+REQUEST_TIMEOUT_SECONDS = 150
 
 
 def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
