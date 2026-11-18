@@ -988,7 +988,10 @@ def get_commercial_whatsapp_parameter_fields(campaign) -> list[str]:
     ]
     if fields == ["none"]:
         return []
-    return fields or ["contacto", "producto", "mensaje"]
+    if fields:
+        return fields
+    settings = _commercial_campaign_settings(campaign)
+    return list(settings.get("whatsapp_parameter_fields") or ["contacto", "producto", "mensaje"])
 
 
 def _commercial_campaign_settings(campaign) -> dict:
