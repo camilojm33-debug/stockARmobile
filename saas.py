@@ -2750,9 +2750,11 @@ def crm_campaigns():
     marketing_send_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     smtp_configured = bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER"))
     from services.saas_commercial_whatsapp import commercial_whatsapp_summary
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, goal_options
     commercial_whatsapp = commercial_whatsapp_summary()
     return render_template(
         "saas/crm_campaigns.html",
+        campaign_goal_options=goal_options(SCOPE_SAAS_PROSPECTS),
         campaigns=campaigns,
         summary=summary,
         marketing_send_enabled=marketing_send_enabled,
@@ -2905,9 +2907,11 @@ def crm_campaign_detail(campaign_id):
         ).order_by(SaaSLead.id.asc()).limit(200).all()
         consent_candidates.extend(("whatsapp", lead) for lead in candidates if lead.whatsapp_consent_status != "opted_in")
 
+    from services.campaign_template_engine import SCOPE_SAAS_PROSPECTS, goal_options
     return render_template(
         "saas/crm_campaign_detail.html",
         campaign=campaign,
+        campaign_goal_options=goal_options(SCOPE_SAAS_PROSPECTS),
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
         segment_filters=segment_filters,
