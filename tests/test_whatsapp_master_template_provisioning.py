@@ -225,6 +225,8 @@ def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
     assert "provision_master_templates(connection)" in source
     assert 'item.get("campaign_compatible") is True' in source
     assert 'str(item.get("category") or "").upper() == "MARKETING"' in source
+    assert 'approved = [' in source
+    assert 'and item["status"] == "APPROVED"' not in source
     assert '@bp.post("/vendedor/whatsapp/plantillas/predeterminadas")' in source
     assert "@tenant_required" in source
     assert "@company_admin_required" in source
