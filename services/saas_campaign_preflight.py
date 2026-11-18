@@ -89,6 +89,7 @@ def campaign_preflight(db_session, campaign) -> dict:
         if not ok:
             issues.append(row)
 
+    filters = parse_segment_json(campaign.segment_json)
     settings = _commercial_campaign_settings(campaign)
     stored_goal_key = str(filters.get("campaign_goal") or "saas_acquisition").strip()
     goal_key = settings.get("campaign_goal")
@@ -102,7 +103,6 @@ def campaign_preflight(db_session, campaign) -> dict:
         if goal_is_valid else "El objetivo comercial no pertenece al catálogo de captación.",
         "Elegí un objetivo de captación o conversión de prospectos en el editor de campaña.",
     )
-    filters = parse_segment_json(campaign.segment_json)
     scope_ok = filters.get("audience_scope", SCOPE_SAAS_PROSPECTS) == SCOPE_SAAS_PROSPECTS
     add(
         "audience_scope",
