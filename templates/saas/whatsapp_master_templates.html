@@ -6,7 +6,7 @@
     <div>
       <div class="small text-uppercase fw-bold text-primary mb-1">SuperAdmin · WhatsApp</div>
       <h1 class="h3 fw-bold mb-1">Biblioteca de plantillas maestras</h1>
-      <p class="text-muted mb-0">Definiciones centrales que StockARmobile replica en la cuenta WABA de cada comercio conectado.</p>
+      <p class="text-muted mb-0">Una plantilla MARKETING maestra por WABA, compartida por las campañas del CRM y Marketing IA.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('saas.whatsapp_commercial_settings') }}"><i class="bi bi-arrow-left me-1"></i>WhatsApp Comercial</a>
   </div>
@@ -16,8 +16,16 @@
     <div>
       <strong>Una definición maestra, una copia por cuenta de WhatsApp.</strong>
       Meta mantiene las plantillas dentro de cada WABA y revisa cada copia de forma independiente.
-      Los comercios no comparten emisores, números ni aprobaciones.
+      Los comercios no comparten emisores, números ni aprobaciones. Una vez aprobada, esta misma plantilla sirve
+      para promociones, campañas comerciales, reactivación y seguimiento de prospectos.
     </div>
+  </div>
+  <div class="alert alert-light border small">
+    <strong>El mismo orden de variables en todos los envíos:</strong>
+    1) contacto · 2) producto o tema · 3) mensaje completo generado por la campaña.
+    El CRM de Super Admin y las campañas de Marketing IA envían esos tres datos en el mismo orden.
+    Los seguimientos de ventas y reactivación son MARKETING; las actualizaciones de pedidos o pagos
+    deben usar una plantilla UTILITY específica y no esta plantilla promocional.
   </div>
 
   {% for item in master_templates %}
@@ -42,9 +50,22 @@
           </div>
           <div class="col-md-4">
             <div class="small text-muted">Variables que completa el CRM</div>
-            <strong>{{ "{{1}}" }} · {{ "{{2}}" }} · {{ "{{3}}" }}</strong>
+            <strong>
+              {% for field in item.parameter_fields %}
+                {{ loop.index }} → {{ item.parameter_labels.get(field, field) }}{% if not loop.last %} · {% endif %}
+              {% endfor %}
+            </strong>
           </div>
         </div>
+        {% if item.supported_use_cases %}
+          <hr class="my-3">
+          <h3 class="h6 fw-bold">Usos admitidos</h3>
+          <div class="d-flex flex-wrap gap-2">
+            {% for use_case in item.supported_use_cases %}
+              <span class="badge rounded-pill text-bg-light border">{{ use_case }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
         <hr class="my-3">
         <h3 class="h6 fw-bold">Contenido base</h3>
         <pre class="bg-body-tertiary border rounded-3 p-3 mb-0 text-wrap" style="white-space:pre-wrap;font:inherit;">{{ item.body_text }}</pre>
