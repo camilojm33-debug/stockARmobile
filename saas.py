@@ -2699,10 +2699,11 @@ def crm_campaigns():
 
         filters = segment_filters_from_request(request)
         channel = (request.form.get("channel") or "email").strip().lower()
-        name = (request.form.get("name") or "").strip()[:180]
         subject = (request.form.get("subject") or "").strip()[:255]
         body_html = (request.form.get("body_html") or "").strip()
         body_text = (request.form.get("body_text") or "").strip() or None
+        # The public form keeps the internal campaign name hidden; derive it on the server too.
+        name = (request.form.get("name") or "").strip()[:180] or subject[:180] or (body_text or "")[:180] or "Campaña comercial"
         whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
         whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
         whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or default_whatsapp_parameter_fields).strip()[:500] or default_whatsapp_parameter_fields
