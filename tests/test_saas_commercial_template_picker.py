@@ -229,7 +229,7 @@ def test_commercial_campaign_parameter_builder_uses_defaults_and_rejects_missing
     flask_app.config["APP_URL"] = "https://app.stockarmobile.com"
     campaign = SimpleNamespace(
         whatsapp_parameter_fields="contacto,empresa,producto,mensaje,trial_url",
-        body_text="Hola {{contacto}} de {{empresa}}, conocé {{producto}}. {{mensaje}}",
+        body_text="Hola {{contacto}} de {{empresa}}, conocé {{producto}}. Podemos mostrarte opciones para tu comercio.",
         subject="Conocé StockARmobile",
         segment_json='{"campaign_goal":"saas_acquisition","parameter_defaults":{"producto":"StockARmobile"}}',
     )
