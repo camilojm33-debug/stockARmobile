@@ -63,8 +63,8 @@ def test_superadmin_create_and_edit_forms_hide_technical_whatsapp_setup():
         assert 'name="whatsapp_parameter_fields"' in form
         assert "data-whatsapp-template-feedback" in form
 
-    assert re.search(r'class="d-none"[^>]*aria-hidden="true">[\\s\\S]*?data-whatsapp-template-picker', create_form)
-    assert re.search(r'class="d-none"[^>]*aria-hidden="true">[\\s\\S]*?data-whatsapp-template-picker', edit_form)
+    assert re.search(r'(?s)class="d-none"[^>]*aria-hidden="true">.*?data-whatsapp-template-picker', create_form)
+    assert re.search(r'(?s)class="d-none"[^>]*aria-hidden="true">.*?data-whatsapp-template-picker', edit_form)
     assert "Plantilla aprobada en tu cuenta de WhatsApp" not in create_form
     assert "Plantillas de Meta" not in edit_form
     assert "Configuración automática" in edit_form
