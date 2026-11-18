@@ -3043,7 +3043,7 @@ def crm_campaign_edit(campaign_id):
 @bp.post("/crm/campaigns/<int:campaign_id>/audience-all-email")
 @superadmin_required
 def crm_campaign_audience_all_email(campaign_id):
-    from app import SaaSCampaign, db, record_audit
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
@@ -3058,7 +3058,20 @@ def crm_campaign_audience_all_email(campaign_id):
         {"industry": "", "province": "", "locality": "", "segment": "", "min_score": 0},
         ensure_ascii=False,
     )
+    # Filters changed: remove the previous draft audience so stale recipients
+    # cannot survive outside the newly selected scope.
+    db.session.query(SaaSCampaignEvent).filter(
+        SaaSCampaignEvent.campaign_id == campaign.id,
+        SaaSCampaignEvent.event_type == "recipient_prepared",
+    ).delete(synchronize_session=False)
+    db.session.query(SaaSCampaignRecipient).filter(
+        SaaSCampaignRecipient.campaign_id == campaign.id,
+    ).delete(synchronize_session=False)
     campaign.target_count = 0
+    campaign.sent_count = 0
+    campaign.failed_count = 0
+    campaign.skipped_count = 0
+    campaign.replied_count = 0
     record_audit(
         action="saas_campaign_audience_scope",
         entity="saas_campaign",
