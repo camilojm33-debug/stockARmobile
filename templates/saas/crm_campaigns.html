@@ -206,7 +206,8 @@
     <div class="modal-content border-0 shadow-lg">
       <form method="post" class="js-whatsapp-template-form"
             data-template-list-url="{{ url_for('saas.whatsapp_commercial_templates') }}"
-            data-current-name="" data-current-language="es_AR">
+            data-current-name="" data-current-language="es_AR"
+            data-default-fields="{{ default_whatsapp_parameter_fields }}">
         <div class="modal-header px-4 py-3">
           <div>
             <div class="page-kicker mb-1"><i class="bi bi-megaphone"></i> Nueva campaña comercial</div>
@@ -303,7 +304,7 @@ Probalo gratis durante 10 días.</textarea>
                 </div>
                 <pre class="small text-muted bg-light rounded-3 p-3 mb-2 text-wrap" data-whatsapp-template-preview>Vista previa de la plantilla seleccionada.</pre>
                 <div data-whatsapp-parameter-controls></div>
-                <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="contacto,producto,mensaje">
+                <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="{{ default_whatsapp_parameter_fields }}">
               </div>
             </div>
             <div class="small text-muted mt-2">Los datos de las variables se completan con la ficha del prospecto y el texto de la campaña. Este selector usa únicamente el WhatsApp Comercial interno de SuperAdmin.</div>
