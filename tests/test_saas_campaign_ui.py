@@ -190,5 +190,5 @@ def test_campaign_detail_offers_manual_recipient_selection_and_audience_reset():
     assert "select_all_eligible" in selector
     assert "Quitar filtros y ampliar la audiencia" in template
     assert '"email", "whatsapp", "both"' in source
-    assert 'SaaSCampaignRecipient.campaign_id == campaign.id' in source
-    assert 'campaign.sent_count = 0' in source
+    assert 'SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).count()' in source
+    assert 'Removing filters widens the audience' in source
