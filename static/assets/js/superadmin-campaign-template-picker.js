@@ -29,6 +29,8 @@
     const preview = form.querySelector("[data-whatsapp-template-preview]");
     const controls = form.querySelector("[data-whatsapp-parameter-controls]");
     const parametersInput = form.querySelector("[data-whatsapp-parameter-value]");
+    const defaultsInput = form.querySelector("[data-whatsapp-defaults]");
+    const goalSelect = form.querySelector("[data-campaign-goal]");
     const refreshButton = form.querySelector("[data-whatsapp-template-refresh]");
     const channelSelect = form.querySelector('[name="channel"]');
     if (!endpoint || !picker || !nameInput || !languageInput || !controls || !parametersInput) return;
@@ -37,6 +39,16 @@
     let loaded = false;
     let currentMapping = (form.dataset.currentFields || parametersInput.value || "")
       .split(",").map(value => value.trim().toLowerCase()).filter(Boolean);
+    let currentDefaults = {};
+    try { currentDefaults = JSON.parse(defaultsInput && defaultsInput.value || "{}") || {}; } catch (_error) { currentDefaults = {}; }
+
+    function goalPreset() {
+      const option = goalSelect && goalSelect.selectedOptions[0];
+      let mapping = [], defaults = {};
+      try { mapping = JSON.parse(option && option.dataset.defaultFields || "[]"); } catch (_error) { mapping = []; }
+      try { defaults = JSON.parse(option && option.dataset.defaultValues || "{}"); } catch (_error) { defaults = {}; }
+      return {mapping: Array.isArray(mapping) ? mapping : [], defaults: defaults && typeof defaults === "object" ? defaults : {}};
+    }
 
     function channelNeedsWhatsApp() {
       return ["whatsapp", "both"].includes(String(channelSelect && channelSelect.value || "").toLowerCase());
@@ -59,7 +71,14 @@
     function writeMapping() {
       const selects = Array.from(controls.querySelectorAll("[data-whatsapp-variable]"));
       const values = selects.map(select => select.value);
+      const defaults = {};
+      selects.forEach(select => {
+        const input = controls.querySelector('[data-whatsapp-variable-default="' + select.dataset.whatsappVariable + '"]');
+        const value = String(input && input.value || "").trim();
+        if (value) defaults[select.value] = value;
+      });
       parametersInput.value = values.length ? values.join(",") : "none";
+      if (defaultsInput) defaultsInput.value = JSON.stringify(defaults);
     }
 
     function renderVariables(template, preferredValues) {
@@ -101,13 +120,26 @@
           option.textContent = title;
           select.appendChild(option);
         });
-        const defaultValue = DEFAULT_FIELDS[index] || "mensaje";
+        const preset = goalPreset();
+        const defaultValue = (preset.mapping && preset.mapping[index]) || DEFAULT_FIELDS[index] || "mensaje";
         select.value = preferredValues[index] || defaultValue;
         if (!FIELD_OPTIONS.some(([value]) => value === select.value)) {
           select.value = defaultValue;
         }
-        select.addEventListener("change", writeMapping);
+        const defaultInput = document.createElement("input");
+        defaultInput.type = "text";
+        defaultInput.className = "form-control form-control-sm mt-2";
+        defaultInput.maxLength = 300;
+        defaultInput.placeholder = "Valor predeterminado si el prospecto no tiene este dato";
+        defaultInput.dataset.whatsappVariableDefault = String(index + 1);
+        defaultInput.value = currentDefaults[select.value] || (preset.defaults && preset.defaults[select.value]) || "";
+        select.addEventListener("change", function () {
+          defaultInput.value = currentDefaults[select.value] || (goalPreset().defaults && goalPreset().defaults[select.value]) || "";
+          writeMapping();
+        });
+        defaultInput.addEventListener("input", writeMapping);
         selectWrap.appendChild(select);
+        selectWrap.appendChild(defaultInput);
         row.appendChild(labelWrap);
         row.appendChild(selectWrap);
         controls.appendChild(row);
@@ -235,6 +267,12 @@
     });
     if (refreshButton) refreshButton.addEventListener("click", loadTemplates);
     if (channelSelect) channelSelect.addEventListener("change", updateRequired);
+    if (goalSelect) goalSelect.addEventListener("change", function () {
+      const preset = goalPreset();
+      currentMapping = preset.mapping || [];
+      currentDefaults = Object.assign({}, preset.defaults || {});
+      renderSelected(selectedTemplate(), false);
+    });
     form.addEventListener("submit", event => {
       const chosen = selectedTemplate();
       if (loaded && chosen && chosen.campaign_compatible) writeMapping();
