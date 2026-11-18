@@ -1188,7 +1188,7 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
                     }
             if not template_check.get("ok"):
                 summary["blocked"] += 1
-                logger.warning(
+                current_app.logger.warning(
                     "Commercial campaign id=%s blocked before WhatsApp dispatch: %s",
                     campaign.id,
                     str(template_check.get("detail") or "template or variable mapping is not ready")[:240],
