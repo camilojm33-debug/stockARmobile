@@ -2696,6 +2696,18 @@ def crm_campaigns():
         from services.saas_commercial_service import segment_filters_from_request
 
         filters = segment_filters_from_request(request)
+        from services.campaign_template_engine import (
+            SCOPE_SAAS_PROSPECTS,
+            parse_defaults,
+            get_goal,
+        )
+        goal = get_goal(SCOPE_SAAS_PROSPECTS, request.form.get("campaign_goal") or "saas_acquisition")
+        filters["audience_scope"] = SCOPE_SAAS_PROSPECTS
+        filters["campaign_goal"] = goal["key"]
+        filters["parameter_defaults"] = parse_defaults(
+            SCOPE_SAAS_PROSPECTS,
+            request.form.get("whatsapp_parameter_defaults") or "{}",
+        )
         channel = (request.form.get("channel") or "email").strip().lower()
         name = (request.form.get("name") or "").strip()[:180]
         subject = (request.form.get("subject") or "").strip()[:255]
@@ -2981,8 +2993,20 @@ def crm_campaign_edit(campaign_id):
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
     from services.saas_commercial_service import segment_filters_from_request
+    from services.campaign_template_engine import (
+        SCOPE_SAAS_PROSPECTS,
+        parse_defaults,
+        get_goal,
+    )
 
     filters = segment_filters_from_request(request)
+    goal = get_goal(SCOPE_SAAS_PROSPECTS, request.form.get("campaign_goal") or "saas_acquisition")
+    filters["audience_scope"] = SCOPE_SAAS_PROSPECTS
+    filters["campaign_goal"] = goal["key"]
+    filters["parameter_defaults"] = parse_defaults(
+        SCOPE_SAAS_PROSPECTS,
+        request.form.get("whatsapp_parameter_defaults") or "{}",
+    )
     scheduled_at = _parse_dt(request.form.get("scheduled_at"))
 
     old_snapshot = {
