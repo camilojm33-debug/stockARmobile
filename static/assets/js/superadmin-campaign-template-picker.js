@@ -12,7 +12,7 @@
     ["asunto", "Asunto / título"],
     ["trial_url", "Enlace para probar StockArMobile"]
   ];
-  const DEFAULT_FIELDS = ["contacto", "producto", "mensaje", "trial_url"];
+  const FALLBACK_DEFAULT_FIELDS = ["contacto", "producto", "mensaje", "trial_url"];
 
   function showFeedback(node, message, kind) {
     if (!node) return;
@@ -35,6 +35,9 @@
 
     let templates = [];
     let loaded = false;
+    const configuredDefaultFields = (form.dataset.defaultFields || "")
+      .split(",").map(value => value.trim().toLowerCase()).filter(Boolean);
+    const defaultFields = configuredDefaultFields.length ? configuredDefaultFields : FALLBACK_DEFAULT_FIELDS;
     let currentMapping = (form.dataset.currentFields || parametersInput.value || "")
       .split(",").map(value => value.trim().toLowerCase()).filter(Boolean);
 
@@ -101,7 +104,7 @@
           option.textContent = title;
           select.appendChild(option);
         });
-        const defaultValue = DEFAULT_FIELDS[index] || "mensaje";
+        const defaultValue = defaultFields[index] || "mensaje";
         select.value = preferredValues[index] || defaultValue;
         if (!FIELD_OPTIONS.some(([value]) => value === select.value)) {
           select.value = defaultValue;
