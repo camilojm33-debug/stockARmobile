@@ -1451,3 +1451,17 @@ def test_manual_campaign_recipient_selection_only_adds_selected_consented_contac
         assert result["added"] == 2
         assert recipients == {(email_ok.id, "email"), (whatsapp_ok.id, "whatsapp")}
         assert campaign.target_count == 2
+
+
+def test_argentine_whatsapp_numbers_are_normalized_to_international_format():
+    from types import SimpleNamespace
+    from services.saas_commercial_service import (
+        _lead_whatsapp_destination,
+        normalize_whatsapp_destination,
+    )
+
+    assert normalize_whatsapp_destination("3624228396") == "5493624228396"
+    assert normalize_whatsapp_destination("0362 15 422-8396") == "5493624228396"
+    assert normalize_whatsapp_destination("+54 9 362 422-8396") == "5493624228396"
+    assert normalize_whatsapp_destination("5493624228396") == "5493624228396"
+    assert _lead_whatsapp_destination(SimpleNamespace(whatsapp="3624228396")) == "5493624228396"
