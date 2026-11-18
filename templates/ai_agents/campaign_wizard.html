@@ -157,7 +157,11 @@
     const matching = Array.from(template.options).find(option => option.dataset.goal === choice);
     if (matching && matching.value) template.value = matching.value;
   }
-  template.addEventListener("change", () => renderControls(false));
+  template.addEventListener("change", () => {
+    const choice = template.selectedOptions[0];
+    if (choice && choice.dataset.goal) goal.value = choice.dataset.goal;
+    renderControls(false);
+  });
   goal.addEventListener("change", () => {
     chooseTemplateForGoal();
     renderControls(false);
