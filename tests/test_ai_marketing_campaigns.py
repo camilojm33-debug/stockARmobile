@@ -1712,3 +1712,77 @@ def test_tenant_campaign_send_uses_exact_merchant_waba_and_rejects_changed_sende
         assert not called["send"]
 
 
+def test_tenant_campaign_parameter_resolution_uses_company_and_client_fields_with_defaults():
+    from services.ai_agent.tenant_campaign_service import _tenant_campaign_parameter_resolution
+
+    campaign = SimpleNamespace(
+        title="Fidelización",
+        objective="Fidelizar",
+        content="Gracias por elegirnos.",
+        product=None,
+        system_data_json=__import__("json").dumps({
+            "audience_scope": "merchant_clients",
+            "campaign_goal": "customer_loyalty",
+            "whatsapp_parameter_fields": ["contacto", "comercio", "mensaje"],
+            "parameter_defaults": {},
+        }),
+    )
+    client = SimpleNamespace(
+        name="Ana",
+        whatsapp="5493624000000",
+        email="ana@example.com",
+        city="Resistencia",
+        province="Chaco",
+        customer_type="minorista",
+    )
+    company = SimpleNamespace(name="Comercio Demo")
+    template = {
+        "body_text": "Hola {{1}}, gracias por elegir {{2}}. {{3}}",
+        "status": "APPROVED",
+        "campaign_compatible": True,
+    }
+
+    resolved = _tenant_campaign_parameter_resolution(campaign, client, company, template)
+
+    assert resolved["valid"] is True
+    assert resolved["fields"] == ["contacto", "comercio", "mensaje"]
+    assert resolved["values"][0] == "Ana"
+    assert resolved["values"][1] == "Comercio Demo"
+    assert "Gracias por elegirnos." in resolved["values"][2]
+
+
+def test_tenant_campaign_parameter_resolution_blocks_missing_contact_fields():
+    from services.ai_agent.tenant_campaign_service import _tenant_campaign_parameter_resolution
+
+    campaign = SimpleNamespace(
+        title="Novedades",
+        objective="Informar",
+        content="Te contamos las novedades.",
+        product=None,
+        system_data_json=__import__("json").dumps({
+            "audience_scope": "merchant_clients",
+            "campaign_goal": "customer_marketing",
+            "whatsapp_parameter_fields": ["contacto", "email", "mensaje"],
+            "parameter_defaults": {},
+        }),
+    )
+    client = SimpleNamespace(
+        name="Ana",
+        whatsapp="5493624000000",
+        email="",
+        city="Resistencia",
+        province="Chaco",
+        customer_type="minorista",
+    )
+    company = SimpleNamespace(name="Comercio Demo")
+    template = {
+        "body_text": "Hola {{1}}, te escribimos a {{2}}. {{3}}",
+        "status": "APPROVED",
+        "campaign_compatible": True,
+    }
+
+    resolved = _tenant_campaign_parameter_resolution(campaign, client, company, template)
+
+    assert resolved["valid"] is False
+    assert resolved["missing_fields"] == ["email"]
+    assert resolved["values"][1] == ""
