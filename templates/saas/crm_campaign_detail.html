@@ -525,7 +525,7 @@
                 <label class="form-label fw-semibold">Objetivo comercial</label>
                 <select class="form-select" name="campaign_goal" data-campaign-goal>
                   {% for option in campaign_goal_options %}
-                  <option value="{{ option.key }}" {% if segment_filters.get('campaign_goal', 'saas_acquisition') == option.key %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
+                  <option value="{{ option.key }}" data-default-fields='{{ option.default_mapping|tojson }}' data-default-values='{{ option.default_values|tojson }}' {% if segment_filters.get('campaign_goal', 'saas_acquisition') == option.key %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
                   {% endfor %}
                 </select>
                 <div class="form-text">Campañas de captación y conversión de prospectos. No se mezclan con los clientes de los comercios.</div>
