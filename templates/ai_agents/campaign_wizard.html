@@ -275,6 +275,14 @@
           <input type="hidden" name="whatsapp_parameter_defaults" id="campaignParameterDefaults" value='{{ campaign_parameter_defaults|tojson }}'>
           <div id="campaignVariableFeedback" class="small mt-2" role="status" aria-live="polite"></div>
         </div>
+        <label class="form-label fw-semibold">Biblioteca de mensajes maestros</label>
+        <select class="form-select mb-3" data-campaign-copy-picker data-goal-field="campaign_goal" data-subject-field="objective" data-text-field="content" data-html-field="">
+          <option value="">Elegí una propuesta base para completar…</option>
+          {% for copy in campaign_copy_templates %}
+          <option value="{{ copy.key }}" data-goal="{{ copy.goal_key }}" data-subject="{{ copy.subject|forceescape }}" data-text="{{ copy.content|forceescape }}" data-html="">{{ copy.label }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text mb-3">Podés editar el mensaje antes de guardar el borrador.</div>
         <label class="form-label">Mensaje para el cliente</label><textarea class="form-control" name="content" id="campaignContent" rows="6" maxlength="900" required placeholder="Escribí el texto que recibirán tus clientes"></textarea>
         <div class="d-flex justify-content-between small text-muted mt-1"><span>Máximo 900 caracteres, incluida la instrucción de baja.</span><span><span id="campaignContentLength">0</span>/900</span></div>
         <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
