@@ -140,16 +140,12 @@ def campaign_preflight(db_session, campaign) -> dict:
                 template,
                 campaign.whatsapp_template_language or "es_AR",
             )
-            raw_fields = str(getattr(campaign, "whatsapp_parameter_fields", "") or "").strip()
-            parameter_fields = [
-                part.strip().lower()
-                for part in raw_fields.split(",")
-                if part.strip()
-            ]
-            if parameter_fields == ["none"]:
-                parameter_fields = []
+            from services.saas_commercial_service import (
+                COMMERCIAL_WHATSAPP_PARAMETER_FIELDS,
+                get_commercial_whatsapp_parameter_fields,
+            )
+            parameter_fields = get_commercial_whatsapp_parameter_fields(campaign)
             expected_parameters = int(validation.get("variable_count") or 0)
-            from services.saas_commercial_service import COMMERCIAL_WHATSAPP_PARAMETER_FIELDS
             mapping_valid = (
                 len(parameter_fields) == expected_parameters
                 and all(field in COMMERCIAL_WHATSAPP_PARAMETER_FIELDS for field in parameter_fields)
