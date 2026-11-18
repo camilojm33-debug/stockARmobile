@@ -19,18 +19,20 @@
     <div><span class="page-kicker"><i class="bi bi-stars"></i> Marketing IA · IA PRO</span><h1 class="h3 fw-bold mb-1">Crear campaña</h1><p class="text-muted mb-0">Definí la audiencia y el mensaje; la campaña queda como borrador para revisión y aprobación.</p></div>
     <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Volver a campañas</a>
   </div>
-  {% if template %}
+  {% if template_options %}
     <div class="alert alert-success campaign-readiness" role="status">
       <div class="d-flex flex-wrap justify-content-between gap-3">
         <div>
           <div class="readiness-label mb-1">WhatsApp propio conectado</div>
           <div class="fw-bold"><i class="bi bi-whatsapp me-1"></i>WhatsApp del comercio · Vendedor IA 24/7{% if campaign_sender_phone %} · {{ campaign_sender_phone }}{% endif %}</div>
-          <div class="small mt-1">Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }} · {{ template.category }}</div>
+          {% if template_selected %}<div class="small mt-1">Plantilla disponible para la campaña: <strong>{{ template.name }}</strong> · {{ template.language }} · {{ template.category }}</div>{% else %}<div class="small mt-1">Hay {{ template_options|length }} plantillas compatibles de esta sucursal. Elegí una al configurar el mensaje.</div>{% endif %}
         </div>
         <span class="badge text-bg-success align-self-start"><i class="bi bi-check-circle me-1"></i>Listo para crear borrador</span>
       </div>
       {% if template_auto_selected %}
         <div class="small mt-2">Detectamos una única plantilla compatible y la seleccionamos automáticamente. La plantilla pertenece a la cuenta WhatsApp Business del comercio.</div>
+      {% elif not template_selected %}
+        <div class="small mt-2">La selección queda guardada solo en este borrador; no modifica la plantilla predeterminada del Vendedor IA.</div>
       {% endif %}
     </div>
   {% else %}
@@ -46,7 +48,7 @@
       {% endif %}
     </div>
   {% endif %}
-  {% if template %}
+  {% if template_options %}
   <div class="card app-card"><div class="card-body p-3 p-md-4">
     <div class="campaign-steps mb-4" aria-label="Pasos de la campaña">
       {% for label in ['Objetivo','Audiencia','Mensaje','Programación','Confirmación'] %}<div class="campaign-step {% if loop.first %}active{% endif %}" data-step-indicator="{{ loop.index }}"><span>{{ loop.index }}. </span>{{ label }}</div>{% endfor %}
@@ -72,11 +74,14 @@
       </section>
       <section class="campaign-pane" data-step="3">
         <h2 class="h4 fw-bold">3. Escribí el mensaje</h2><p class="text-muted">El mensaje se envía en el parámetro editable de una plantilla Meta aprobada y compatible.</p>
-        {% if template %}
-        <div class="alert alert-success py-2"><i class="bi bi-patch-check me-1"></i>Plantilla aprobada: <strong>{{ template.name }}</strong> · {{ template.language }}</div>
-        {% else %}
-        <div class="alert alert-warning">Sin una plantilla aprobada compatible, la campaña no se puede aprobar.</div>
-        {% endif %}
+        <label class="form-label fw-semibold" for="campaignTemplate">Plantilla Meta para esta campaña</label>
+        <select class="form-select mb-2" name="whatsapp_template" id="campaignTemplate" required>
+          <option value="">Elegí una plantilla MARKETING compatible…</option>
+          {% for option in template_options %}
+          <option value="{{ option.name }}|{{ option.language }}" data-body="{{ option.body_text }}" {% if template_selected and option.name == template.name and option.language == template.language %}selected{% endif %}>{{ option.name }} · {{ option.language }} · {{ option.category }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text mb-3">Solo se ofrecen plantillas aprobadas por Meta, de categoría MARKETING y compatibles con los tres parámetros del CRM. La elección afecta únicamente a esta campaña y usa el WhatsApp de la sucursal activa.</div>
         <label class="form-label">Mensaje para el cliente</label><textarea class="form-control" name="content" id="campaignContent" rows="6" maxlength="900" required placeholder="Escribí el texto que recibirán tus clientes"></textarea>
         <div class="d-flex justify-content-between small text-muted mt-1"><span>Máximo 900 caracteres, incluida la instrucción de baja.</span><span><span id="campaignContentLength">0</span>/900</span></div>
         <h3 class="h6 fw-bold mt-4">Vista previa del mensaje completo</h3>        <div class="campaign-template-preview" id="campaignTemplatePreview" data-template-body="{{ template.body_text if template else '' }}" data-opt-out="{{ opt_out_text }}" aria-live="polite">La vista previa se actualizará al escribir el mensaje.</div>
@@ -91,7 +96,7 @@
       </section>
       <section class="campaign-pane" data-step="5">
         <h2 class="h4 fw-bold">5. Confirmá el borrador</h2><p class="text-muted">Todavía no se enviará ningún mensaje. Luego podrás revisar destinatarios, previsualización y resultados antes de aprobar.</p>
-        <div class="border rounded-3 p-3 mb-3"><div class="fw-semibold" id="campaignReviewTitle">Nombre de campaña</div><div class="small text-muted" id="campaignReviewObjective">Objetivo</div><hr><div class="small"><strong>Audiencia:</strong> <span id="campaignReviewAudience">Todos los clientes elegibles</span> · <span id="campaignReviewCount">{{ audience_count }}</span> elegibles</div><div class="small mt-2"><strong>Plantilla:</strong> {{ template.name if template else 'No disponible' }}</div></div>
+        <div class="border rounded-3 p-3 mb-3"><div class="fw-semibold" id="campaignReviewTitle">Nombre de campaña</div><div class="small text-muted" id="campaignReviewObjective">Objetivo</div><hr><div class="small"><strong>Audiencia:</strong> <span id="campaignReviewAudience">Todos los clientes elegibles</span> · <span id="campaignReviewCount">{{ audience_count }}</span> elegibles</div><div class="small mt-2"><strong>Plantilla:</strong> <span id="campaignReviewTemplate">{{ template.name if template else 'No disponible' }}</span></div></div>
         <label class="form-label">Resumen del mensaje</label><div class="campaign-template-preview" id="campaignReviewMessage"></div>
         <div class="alert alert-warning small mt-3 mb-0"><i class="bi bi-shield-check me-1"></i>Crear el borrador no envía nada. La aprobación requiere IA PRO, plantilla compatible y consentimiento documentado.</div>
       </section>
@@ -143,10 +148,13 @@
   back.addEventListener("click", function () { showStep(Math.max(1, step - 1)); });
   const content = document.getElementById("campaignContent");
   const preview = document.getElementById("campaignTemplatePreview");
+  const templateSelect = document.getElementById("campaignTemplate");
   const updatePreview = function () {
-    const templateBody = preview.dataset.templateBody || "";
+    const option = templateSelect ? templateSelect.selectedOptions[0] : null;
+    const templateBody = (option && option.dataset.body) || preview.dataset.templateBody || "";
+    const templateHasOptOut = /\\bBAJA\\b/i.test(templateBody) && /(dejar de recibir|no recibir)/i.test(templateBody);
     let message = (content.value || "").trim();
-    if (message && !/para dejar de recibir mensajes, respondé baja\./i.test(message)) message += "\n\n{{optout}}";
+    if (message && !templateHasOptOut && !/para dejar de recibir mensajes, respondé baja\\./i.test(message)) message += "\\n\\n{{optout}}";
     const product = document.getElementById("campaignProduct");
     const productName = product.selectedOptions.length && product.value ? product.selectedOptions[0].textContent : "Varios";
     const productPrice = product.selectedOptions.length && product.value ? (product.selectedOptions[0].dataset.price || "") : "";
@@ -157,18 +165,21 @@
     const rendered = templateBody
       .replace(/\{\{\s*1\s*\}\}/g, "Cliente de ejemplo")
       .replace(/\{\{\s*2\s*\}\}/g, productName)
-      .replace(/\{\{\s*3\s*\}\}/g, message.replace("{{optout}}", preview.dataset.optOut || ""));
+      .replace(/\{\{\s*3\s*\}\}/g, message.replace("{{optout}}", templateHasOptOut ? "" : (preview.dataset.optOut || "")));
     preview.textContent = rendered || "La vista previa se actualizará al escribir el mensaje.";
     document.getElementById("campaignContentLength").textContent = String(content.value.length);
   };
   content.addEventListener("input", updatePreview);
   document.getElementById("campaignProduct").addEventListener("change", updatePreview);
+  if (templateSelect) templateSelect.addEventListener("change", function () { updatePreview(); updateReview(); });
   const updateReview = function () {
     document.getElementById("campaignReviewTitle").textContent = form.elements.title.value || "Nombre de campaña";
     document.getElementById("campaignReviewObjective").textContent = form.elements.objective.value || "Objetivo";
     document.getElementById("campaignReviewMessage").textContent = preview.textContent;
     document.getElementById("campaignReviewAudience").textContent = document.getElementById("campaignAudience").selectedOptions[0].textContent;
     document.getElementById("campaignReviewCount").textContent = document.getElementById("campaignAudienceCount").textContent;
+    const templateOption = templateSelect && templateSelect.selectedOptions[0];
+    document.getElementById("campaignReviewTemplate").textContent = templateOption && templateOption.value ? templateOption.textContent : "Elegí una plantilla";
   };
   form.addEventListener("submit", function (event) {
     const requiredFields = Array.from(form.querySelectorAll("[required]"));
