@@ -4,7 +4,7 @@ import re
 import smtplib
 from flask import current_app
 
-_SUPPORTED_MERGE_FIELDS = {"empresa", "comercio", "contacto", "rubro", "localidad"}
+_SUPPORTED_MERGE_FIELDS = {"empresa", "comercio", "contacto", "telefono", "email", "provincia", "rubro", "localidad", "producto", "asunto", "trial_url"}
 _MERGE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 
 def _enabled(value) -> bool:
