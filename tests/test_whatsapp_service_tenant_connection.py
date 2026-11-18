@@ -102,5 +102,5 @@ def test_template_send_normalizes_whitespace_in_body_parameters(monkeypatch):
         "Producto premium",
         "Hola, te contactamos. Tenemos novedades.",
     ]
-    assert all("\\n" not in item["text"] and "\\t" not in item["text"] for item in parameters)
+    assert all(chr(10) not in item["text"] and chr(9) not in item["text"] for item in parameters)
     assert all("     " not in item["text"] for item in parameters)
