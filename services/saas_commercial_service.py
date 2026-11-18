@@ -694,6 +694,28 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
 
     filters = parse_segment_json(campaign.segment_json)
     channels = ["email", "whatsapp"] if campaign.channel == "both" else [campaign.channel]
+    if "whatsapp" in channels:
+        candidate_leads = _eligible_leads_query("whatsapp", filters).order_by(
+            SaaSLead.lead_score.desc(),
+            SaaSLead.id.asc(),
+        ).all()
+        candidate_leads = [
+            lead for lead in candidate_leads
+            if _lead_whatsapp_destination(lead)
+        ]
+        parameter_errors = []
+        for lead in candidate_leads:
+            try:
+                _whatsapp_template_parameters(campaign, lead)
+            except ValueError as exc:
+                parameter_errors.append((lead.company_name or lead.id, str(exc)))
+        if parameter_errors:
+            first_name, first_error = parameter_errors[0]
+            raise ValueError(
+                f"No se puede preparar la audiencia de WhatsApp: {len(parameter_errors)} "
+                f"prospecto(s) tienen variables faltantes. Primer caso: {first_name}: {first_error} "
+                "Completá las fichas o configurá valores predeterminados antes de preparar la campaña."
+            )
     existing = {
         (r.lead_id, r.channel)
         for r in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
