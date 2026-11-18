@@ -197,7 +197,7 @@
       const badge = document.createElement('span');
       const state = String(item.status || 'UNKNOWN').toUpperCase();
       badge.className = 'badge ' + (state === 'APPROVED' ? 'text-bg-success' : (['PENDING', 'IN_APPEAL'].includes(state) ? 'text-bg-warning' : (state === 'CONFLICT' || state === 'REJECTED' || state === 'ERROR' ? 'text-bg-danger' : 'text-bg-secondary')));
-      badge.textContent = state;
+      badge.textContent = state + (item.category ? ' · ' + String(item.category).toUpperCase() : '');
       row.append(copy, badge);
       results.append(row);
     });
