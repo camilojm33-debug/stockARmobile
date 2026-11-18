@@ -383,13 +383,13 @@
       templates = Array.isArray(data.templates) ? data.templates : [];
       select.innerHTML = '';
       if (!templates.length) {
-        const result = provisioning[0] || null;
+        const result = provisioning.find(item => item.key === 'marketing_general') || provisioning[0] || null;
         const masterPending = result && ['PENDING', 'IN_APPEAL'].includes(result.status);
         const masterRejected = result && result.status === 'REJECTED';
         const emptyLabel = masterPending
-          ? 'La plantilla maestra está pendiente de aprobación'
+          ? 'La plantilla general está pendiente de aprobación'
           : masterRejected
-            ? 'La plantilla maestra fue rechazada por Meta'
+            ? 'La plantilla general fue rechazada por Meta'
             : 'Todavía no hay plantillas aprobadas';
         select.innerHTML = '';
         const emptyOption = document.createElement('option');
@@ -414,7 +414,7 @@
       templates.forEach(function (item) {
         const option = document.createElement('option');
         option.value = item.name + '|' + item.language;
-        option.textContent = item.name + ' · ' + item.language + ' · ' + item.category;
+        option.textContent = (item.display_name || item.name) + ' · ' + item.language + ' · ' + item.category;
         select.appendChild(option);
       });
       const selected = data.selected || {};
@@ -427,19 +427,21 @@
       }
       select.disabled = false;
       save.disabled = false;
-      const approvedMaster = provisioning.find(item => item.status === 'APPROVED');
-      const pendingMaster = provisioning.find(item => ['PENDING', 'IN_APPEAL'].includes(item.status));
+      const approvedMaster = provisioning.find(item => item.key === 'marketing_general' && item.status === 'APPROVED');
+      const pendingMaster = provisioning.find(item => item.key === 'marketing_general' && ['PENDING', 'IN_APPEAL'].includes(item.status));
       const provisioningIssue = provisioning.find(item => ['ERROR', 'CONFLICT', 'REJECTED', 'UNCERTAIN'].includes(item.status));
+      const approvedCount = provisioning.filter(item => item.status === 'APPROVED').length;
+      const statusList = provisioning.map(item => (item.name || item.key) + ': ' + item.status).join(' · ');
       if (provisioningError) {
         setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + provisioningError, true);
       } else if (provisioningIssue) {
         setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + (provisioningIssue.message || 'Revisá la instalación de la plantilla maestra.'), true);
       } else if (approvedMaster) {
-        setStatus('La plantilla maestra está aprobada. ' + templates.length + ' plantilla(s) disponible(s).');
+        setStatus('La plantilla general está aprobada. ' + approvedCount + ' de ' + provisioning.length + ' plantillas maestras aprobadas. ' + templates.length + ' plantilla(s) disponibles. ' + statusList);
       } else if (pendingMaster) {
-        setStatus(templates.length + ' plantilla(s) aprobada(s) disponible(s). La plantilla maestra sigue pendiente de revisión.');
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. La plantilla general sigue pendiente de revisión. ' + statusList);
       } else {
-        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles.');
+        setStatus(templates.length + ' plantilla(s) aprobada(s) disponibles. ' + statusList);
       }
     } catch (error) {
       select.innerHTML = '<option value="">No se pudo sincronizar</option>';
