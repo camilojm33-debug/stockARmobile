@@ -274,6 +274,21 @@
           <div class="campaign-form-section">
             <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
             <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label fw-semibold">Biblioteca de mensajes maestros</label>
+              <select class="form-select" data-campaign-copy-picker
+                data-goal-field="campaign_goal" data-subject-field="subject"
+                data-text-field="body_text" data-html-field="body_html">
+                <option value="">Elegí una propuesta base para completar…</option>
+                {% for copy in campaign_copy_templates %}
+                <option value="{{ copy.key }}" data-goal="{{ copy.goal_key }}"
+                  data-subject="{{ copy.subject|default('')|forceescape }}"
+                  data-text="{{ (copy.body_text or copy.content or '')|forceescape }}"
+                  data-html="{{ copy.body_html|default('')|forceescape }}">{{ copy.label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Podés editar el contenido después de aplicar el mensaje base. La biblioteca corresponde a la audiencia de este CRM.</div>
+            </div>
               <div class="col-12">
                 <label class="form-label fw-semibold">Texto</label>
                 <textarea class="form-control" name="body_text" rows="6" required>Hola {{contacto}},
