@@ -188,3 +188,13 @@ def test_campaign_preflight_blocks_a_wrong_whatsapp_parameter_count(app, monkeyp
     assert whatsapp_check["ok"] is False
     assert "requiere 3 parámetro(s)" in whatsapp_check["detail"]
     assert "tiene 2" in whatsapp_check["detail"]
+
+
+
+def test_commercial_campaign_parameter_field_defaults_are_consistent():
+    from services.saas_commercial_service import get_commercial_whatsapp_parameter_fields
+
+    assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="")) == [
+        "contacto", "producto", "mensaje"
+    ]
+    assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="none")) == []
