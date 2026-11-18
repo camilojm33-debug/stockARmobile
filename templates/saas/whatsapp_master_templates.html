@@ -121,7 +121,7 @@
         {% for item in commercial_waba.templates %}
           <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 border rounded-3 p-2 mb-2">
             <div><strong>{{ item.name or item.key }}</strong><div class="small text-muted">{{ item.message or '' }}</div></div>
-            <span class="badge {% if item.status == 'APPROVED' %}text-bg-success{% elif item.status in ['PENDING', 'IN_APPEAL'] %}text-bg-warning{% elif item.status == 'CONFLICT' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ item.status or 'UNKNOWN' }}</span>
+            <span class="badge {% if item.status == 'APPROVED' and item.campaign_compatible %}text-bg-success{% elif item.status in ['PENDING', 'IN_APPEAL'] %}text-bg-warning{% elif item.status in ['CONFLICT', 'REJECTED', 'ERROR'] or (item.status == 'APPROVED' and not item.campaign_compatible) %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ item.status or 'UNKNOWN' }}{% if item.category %} · {{ item.category }}{% endif %}</span>
           </div>
         {% endfor %}
       </div>
