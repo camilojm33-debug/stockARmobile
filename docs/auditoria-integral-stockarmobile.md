@@ -1,5 +1,7 @@
 # Auditoría integral de StockArMobile
 
+> **Actualización complementaria (17/11/2026):** este documento conserva el corte histórico del 29/10/2026. Para la revisión de infraestructura, configuración del pool PostgreSQL y benchmark aislado de 100 comercios, consultar [Auditoría complementaria de infraestructura y capacidad](auditoria-capacidad-100-comercios-20261117.md). El resultado de esa prueba de concurrencia debe interpretarse según sus límites: no reemplaza una prueba HTTP externa en staging.
+
 **Corte:** 2026-10-29
 **Revisión:** `main` en `5122226`
 **Entorno:** Windows, Python 3.14.4, entorno virtual `.venv`, SQLite en memoria para pytest
