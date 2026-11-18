@@ -70,9 +70,8 @@ def campaign_template_compatibility(template: dict) -> tuple[bool, str, str]:
     if not body_text or body_variables != _REQUIRED_BODY_VARIABLES:
         return (
             False,
-            "El cuerpo debe incluir las variables posicionales consecutivas "
-            + f"{{{{1}}}} a {{{{{len(MASTER_TEMPLATE_PARAMETER_FIELDS)}}}}}}, "
-            + "en el mismo orden que contacto, producto/tema y mensaje de campaña.",
+            f"El cuerpo debe incluir {len(MASTER_TEMPLATE_PARAMETER_FIELDS)} variables posicionales consecutivas "
+            "desde {{1}}, en el mismo orden que contacto, producto/tema y mensaje de campaña.",
             body_text,
         )
 
