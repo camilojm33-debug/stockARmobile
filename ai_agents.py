@@ -1026,7 +1026,12 @@ def vendor_whatsapp_templates_provision():
         # this WhatsApp channel. Never overwrite a selection already made by the merchant.
         if not str(connection.get("template_name") or "").strip():
             approved_master = next(
-                (item for item in results if item.get("status") == "APPROVED"),
+                (
+                    item for item in results
+                    if item.get("status") == "APPROVED"
+                    and item.get("campaign_compatible") is True
+                    and str(item.get("category") or "").upper() == "MARKETING"
+                ),
                 None,
             )
             if approved_master:
