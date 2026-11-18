@@ -140,8 +140,34 @@ def campaign_preflight(db_session, campaign) -> dict:
                 template,
                 campaign.whatsapp_template_language or "es_AR",
             )
-            whatsapp_ok = bool(connection.get("connected") and validation.get("ok"))
-            detail = f"Emisor: {sender_label}. Plantilla: {template or 'sin configurar'}. {validation.get('detail') or ''}".strip()
+            raw_fields = str(getattr(campaign, "whatsapp_parameter_fields", "") or "").strip()
+            parameter_fields = [
+                part.strip().lower()
+                for part in raw_fields.split(",")
+                if part.strip()
+            ]
+            if parameter_fields == ["none"]:
+                parameter_fields = []
+            expected_parameters = int(validation.get("variable_count") or 0)
+            from services.saas_commercial_service import COMMERCIAL_WHATSAPP_PARAMETER_FIELDS
+            mapping_valid = (
+                len(parameter_fields) == expected_parameters
+                and all(field in COMMERCIAL_WHATSAPP_PARAMETER_FIELDS for field in parameter_fields)
+            )
+            whatsapp_ok = bool(connection.get("connected") and validation.get("ok") and mapping_valid)
+            mapping_detail = (
+                "Mapeo de variables correcto."
+                if mapping_valid
+                else (
+                    f"La plantilla requiere {expected_parameters} parámetro(s) en el cuerpo y "
+                    f"la campaña tiene {len(parameter_fields)}. Volvé a editar la campaña y asigná "
+                    "un campo a cada variable."
+                )
+            )
+            detail = (
+                f"Emisor: {sender_label}. Plantilla: {template or 'sin configurar'}. "
+                f"{validation.get('detail') or ''} {mapping_detail}"
+            ).strip()
         except Exception as exc:
             whatsapp_ok = False
             detail = f"No se pudo validar WhatsApp con Meta: {str(exc)[:250]}"
