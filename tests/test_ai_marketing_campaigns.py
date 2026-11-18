@@ -607,7 +607,10 @@ def test_tenant_crm_campaign_preparation_and_send_use_only_merchant_waba(app, mo
             "language": "es_AR",
             "category": "MARKETING",
             "status": "APPROVED",
-            "body_text": "Hola {{1}}. Producto {{2}}. {{3}}",
+            "body_text": (
+                "Hola {{1}}. Producto {{2}}. {{3}} "
+                "Para dejar de recibir mensajes promocionales, respondé BAJA."
+            ),
             "campaign_compatible": True,
             "auto_selected": False,
         }
@@ -716,6 +719,11 @@ def test_tenant_crm_campaign_preparation_and_send_use_only_merchant_waba(app, mo
         assert provider_id == "wamid.sent-from-merchant"
         assert sent["company_id"] == tenant.id
         assert sent["template_name"] == "merchant_master_marketing"
+        assert sent["body_parameters"] == [
+            "Cliente autorizado",
+            "Varios",
+            "Esta semana tenemos una promoción especial.",
+        ]
         assert sent["to"] == "5493624228396"
         assert sent["branch_id"] == branch.id
         assert sent["connection"]["phone_number_id"] == "merchant-own-phone-id"
