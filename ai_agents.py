@@ -1504,6 +1504,27 @@ def campaign_detail(campaign_id):
     except ValueError:
         sender_connection = {}
     campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
+    from services.ai_agent.tenant_campaign_preflight import tenant_campaign_preflight
+    from services.campaign_template_engine import (
+        SCOPE_MERCHANT_CLIENTS,
+        get_goal,
+        goal_options,
+        variable_options,
+        parse_defaults,
+    )
+    campaign_preflight = tenant_campaign_preflight(campaign, _current_active_company())
+    try:
+        campaign_goal = get_goal(
+            SCOPE_MERCHANT_CLIENTS,
+            campaign_system_data.get("campaign_goal") or "customer_marketing",
+        )["key"]
+    except ValueError:
+        campaign_goal = "customer_marketing"
+    campaign_parameter_defaults = parse_defaults(
+        SCOPE_MERCHANT_CLIENTS,
+        campaign_system_data.get("parameter_defaults"),
+    )
+    campaign_parameter_fields = campaign_system_data.get("whatsapp_parameter_fields") or []
     campaign_template_options = []
     if sender_connection and campaign.status in {"BORRADOR", "PENDIENTE_APROBACION"}:
         try:
@@ -1523,7 +1544,13 @@ def campaign_detail(campaign_id):
         detected_audience_count=detected_audience_count,
         campaign_template=template,
         campaign_template_options=campaign_template_options,
-        campaign_template_preview=template_preview,
+        campaign_preflight=campaign_preflight,
+        campaign_goal_options=goal_options(SCOPE_MERCHANT_CLIENTS),
+        campaign_goal=campaign_goal,
+        campaign_variable_options=variable_options(SCOPE_MERCHANT_CLIENTS),
+        campaign_parameter_fields=campaign_parameter_fields,
+        campaign_parameter_defaults=campaign_parameter_defaults,
+        campaign_template_preview=campaign_preflight.get("preview_message") or template_preview,
         campaign_recipients=recipient_rows,
         campaign_schedule_local=_campaign_schedule_local(campaign),
         campaign_sender_phone=campaign_sender_phone,
@@ -1985,6 +2012,23 @@ def campaign_edit(campaign_id):
             if not isinstance(campaign_data, dict):
                 campaign_data = {}
             campaign_data["channel"] = "whatsapp"
+            from services.campaign_template_engine import (
+                SCOPE_MERCHANT_CLIENTS,
+                get_goal,
+                normalize_mapping,
+                parse_defaults,
+            )
+            selected_goal = get_goal(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("campaign_goal") or campaign_data.get("campaign_goal") or "customer_marketing",
+            )
+            campaign_data["audience_scope"] = SCOPE_MERCHANT_CLIENTS
+            campaign_data["campaign_goal"] = selected_goal["key"]
+            campaign_data["parameter_defaults"] = dict(selected_goal.get("default_values") or {})
+            campaign_data["parameter_defaults"].update(parse_defaults(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("whatsapp_parameter_defaults") or campaign_data.get("parameter_defaults"),
+            ))
 
             selected_template = request.form.get("whatsapp_template")
             if selected_template is not None:
@@ -2009,6 +2053,26 @@ def campaign_edit(campaign_id):
                 )
                 campaign_data["branch_id"] = int(branch.id)
 
+            template_for_mapping = campaign_data.get("whatsapp_template") or {}
+            positions = {
+                int(value)
+                for value in re.findall(
+                    r"\{\{\s*(\d+)\s*\}\}",
+                    str(template_for_mapping.get("body_text") or ""),
+                )
+            }
+            expected_parameters = len(positions)
+            if positions != set(range(1, expected_parameters + 1)):
+                raise ValueError("La plantilla debe usar variables consecutivas en el cuerpo.")
+            mapping, mapping_errors = normalize_mapping(
+                SCOPE_MERCHANT_CLIENTS,
+                request.form.get("whatsapp_parameter_fields") or campaign_data.get("whatsapp_parameter_fields"),
+                expected_count=expected_parameters,
+                goal_key=selected_goal["key"],
+            )
+            if mapping_errors:
+                raise ValueError(" ".join(mapping_errors))
+            campaign_data["whatsapp_parameter_fields"] = mapping
             campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
             raw_schedule = str(
                 request.form.get("scheduled_at_utc") or request.form.get("scheduled_at") or ""
@@ -2047,7 +2111,19 @@ def campaign_transition(campaign_id):
         if not isinstance(campaign_data, dict):
             campaign_data = {}
         campaign_data["channel"] = "whatsapp"
+        campaign_data.setdefault("audience_scope", "merchant_clients")
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
+        if target_status.strip().upper() == "APROBADA":
+            from services.ai_agent.tenant_campaign_preflight import tenant_campaign_preflight
+
+            preflight = tenant_campaign_preflight(campaign, _current_active_company())
+            if not preflight.get("ready"):
+                first = (preflight.get("issues") or [{}])[0]
+                explanation = str(first.get("resolution") or "Revisá los bloqueos del preflight.")
+                raise ValueError(
+                    f"No se puede aprobar: {first.get('label') or 'validación pendiente'}. "
+                    f"{first.get('detail') or ''} {explanation}"
+                )
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
         if target_status.upper() == "APROBADA":
             prepare_recipients(campaign.id, company_id=current_user.company_id)
