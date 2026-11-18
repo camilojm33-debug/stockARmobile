@@ -120,7 +120,9 @@ jobs:
         run: pytest -q --tb=short tests/test_postgres_transaction_concurrency.py
       - name: Run 100-tenant dashboard concurrency benchmark
         env:
-          # Keep the same 5 + 10 capped pool as production defaults, but allow
-          # concurrent test-client requests to queue instead of failing at 30 s.
-          DB_POOL_TIMEOUT_SECONDS: "120"
+          # Dedicated, disposable CI Postgres (max_connections=100): exercise
+          # 100 in-flight tenants with a 50-connection cap, never production.
+          DB_POOL_SIZE: "20"
+          DB_MAX_OVERFLOW: "30"
+          DB_POOL_TIMEOUT_SECONDS: "90"
         run: pytest -q -s --tb=short tests/test_tenant_load_capacity.py
