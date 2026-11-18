@@ -120,9 +120,4 @@ jobs:
         run: pytest -q --tb=short tests/test_postgres_transaction_concurrency.py
       - name: Run 100-tenant dashboard concurrency benchmark
         env:
-          # Dedicated, disposable CI Postgres (max_connections=100): exercise
-          # 100 in-flight tenants with a 50-connection cap, never production.
-          DB_POOL_SIZE: "25"
-          DB_MAX_OVERFLOW: "25"
-          DB_POOL_TIMEOUT_SECONDS: "90"
         run: pytest -q -s --tb=short tests/test_tenant_load_capacity.py
