@@ -115,12 +115,14 @@
       writeMapping();
     }
 
-    function renderSelected(template, preserveMapping) {
+    function renderSelected(template, preserveMapping, clearHiddenWhenEmpty) {
       if (!template) {
-        nameInput.value = "";
-        languageInput.value = "";
+        if (clearHiddenWhenEmpty !== false) {
+          nameInput.value = "";
+          languageInput.value = "";
+          parametersInput.value = "";
+        }
         controls.textContent = "";
-        parametersInput.value = "";
         if (preview) preview.textContent = "Elegí una plantilla MARKETING aprobada y compatible de tu cuenta de Meta.";
         updateRequired();
         return;
@@ -174,7 +176,7 @@
         if (!matched) currentMapping = [];
       } else {
         picker.value = "";
-        renderSelected(null, false);
+        renderSelected(null, false, false);
         if (form.dataset.currentName) {
           showFeedback(feedback, "La plantilla guardada ya no aparece como aprobada y compatible en Meta. Seleccioná otra para poder enviar.", "danger");
         } else if (!templates.length) {
@@ -221,7 +223,7 @@
         picker.appendChild(option);
         picker.disabled = false;
         loaded = false;
-        renderSelected(null, false);
+        renderSelected(null, false, false);
         showFeedback(feedback, error.message || "No se pudo conectar con Meta.", "danger");
       }
     }
@@ -234,9 +236,10 @@
     if (refreshButton) refreshButton.addEventListener("click", loadTemplates);
     if (channelSelect) channelSelect.addEventListener("change", updateRequired);
     form.addEventListener("submit", event => {
-      writeMapping();
+      const chosen = selectedTemplate();
+      if (loaded && chosen && chosen.campaign_compatible) writeMapping();
       updateRequired();
-      if (channelNeedsWhatsApp() && (!loaded || !selectedTemplate() || !selectedTemplate().campaign_compatible)) {
+      if (channelNeedsWhatsApp() && (!loaded || !chosen || !chosen.campaign_compatible)) {
         event.preventDefault();
         picker.reportValidity();
         if (feedback) feedback.scrollIntoView({ behavior: "smooth", block: "center" });
