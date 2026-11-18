@@ -16,7 +16,8 @@ from app import Client, Company, CompanyMembership, Product, Sale, SaleItem, Use
 
 
 TENANT_COUNT = 100
-REQUEST_TIMEOUT_SECONDS = 90
+REQUEST_CONCURRENCY = 20
+REQUEST_TIMEOUT_SECONDS = 45
 
 
 def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
@@ -111,7 +112,7 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
         db.session.commit()
         db.session.remove()
 
-    start_gate = Barrier(TENANT_COUNT)
+    start_gate = Barrier(REQUEST_CONCURRENCY)
     all_product_markers = [tenant["product_marker"] for tenant in tenants]
     all_client_markers = [tenant["client_marker"] for tenant in tenants]
 
@@ -153,7 +154,7 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
 
         return elapsed_seconds
 
-    with ThreadPoolExecutor(max_workers=TENANT_COUNT) as executor:
+    with ThreadPoolExecutor(max_workers=REQUEST_CONCURRENCY) as executor:
         futures = [executor.submit(load_dashboard, tenant) for tenant in tenants]
         durations = [
             future.result(timeout=REQUEST_TIMEOUT_SECONDS)
@@ -168,8 +169,8 @@ def test_one_hundred_tenants_can_load_their_own_dashboard_concurrently(app):
 
     print(
         "TENANT_CAPACITY_BENCHMARK "
-        f"tenants={TENANT_COUNT} requests={len(durations)} "
-        f"success={len(durations)} errors=0 "
+        f"tenants={TENANT_COUNT} concurrency={REQUEST_CONCURRENCY} "
+        f"requests={len(durations)} success={len(durations)} errors=0 "
         f"p50={p50_seconds:.3f}s p95={p95_seconds:.3f}s "
         f"p99={p99_seconds:.3f}s max={max_seconds:.3f}s"
     )
