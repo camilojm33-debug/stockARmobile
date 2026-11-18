@@ -140,19 +140,25 @@ def validate_commercial_whatsapp_template(template_name: str, language: str = "e
             }
         status = str(match.get("status") or "UNKNOWN").strip().upper()
         category = str(match.get("category") or "").strip().upper()
+        from services.saas_commercial_templates import commercial_campaign_template_compatibility
+
+        compatibility = commercial_campaign_template_compatibility(match)
         approved = status == "APPROVED" and category == "MARKETING"
+        ok = approved and bool(compatibility.get("campaign_compatible"))
         if status != "APPROVED":
             detail = f"Meta informa el estado {status}; la plantilla debe estar APPROVED."
         elif category != "MARKETING":
             detail = f"La categoría de Meta es {category or 'desconocida'}; se requiere MARKETING."
         else:
-            detail = "Plantilla MARKETING aprobada por Meta."
+            detail = str(compatibility.get("compatibility_reason") or "Plantilla MARKETING aprobada por Meta.")
         return {
-            "ok": approved,
+            "ok": ok,
             "status": status,
             "category": category,
             "name": name,
             "language": lang,
+            "variable_count": int(compatibility.get("variable_count") or 0),
+            "campaign_compatible": bool(compatibility.get("campaign_compatible")),
             "detail": detail,
         }
     except Exception as exc:
