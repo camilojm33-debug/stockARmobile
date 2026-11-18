@@ -25,6 +25,7 @@ MASTER_TEMPLATES = (
         "language_label": "Español (Argentina)",
         "category": "MARKETING",
         "description": "Plantilla predeterminada para promociones, productos y novedades del comercio.",
+        "default_parameter_fields": ["contacto", "producto", "mensaje"],
         "body_text": (
             "¡Hola, {{1}}! 👋\n\n"
             "Queremos compartirte novedades de nuestro comercio.\n\n"
@@ -48,6 +49,7 @@ MASTER_TEMPLATES = (
         "language_label": "Español (Argentina)",
         "category": "MARKETING",
         "description": "Invita a volver a clientes que hace tiempo no realizan compras.",
+        "default_parameter_fields": ["contacto", "comercio", "mensaje"],
         "body_text": (
             "¡Hola, {{1}}! 👋\n\n"
             "Hace un tiempo que no te vemos por {{2}}.\n\n"
@@ -66,6 +68,7 @@ MASTER_TEMPLATES = (
         "language_label": "Español (Argentina)",
         "category": "MARKETING",
         "description": "Agradece la preferencia y comunica beneficios a clientes habituales.",
+        "default_parameter_fields": ["contacto", "comercio", "mensaje"],
         "body_text": (
             "¡Hola, {{1}}! 💚\n\n"
             "Gracias por elegir {{2}} y acompañarnos.\n\n"
@@ -84,6 +87,7 @@ MASTER_TEMPLATES = (
         "language_label": "Español (Argentina)",
         "category": "MARKETING",
         "description": "Presenta productos nuevos, lanzamientos y novedades del comercio.",
+        "default_parameter_fields": ["contacto", "producto", "mensaje"],
         "body_text": (
             "¡Hola, {{1}}! ✨\n\n"
             "Tenemos una novedad en {{2}}.\n\n"
@@ -113,7 +117,7 @@ def list_master_templates() -> list[dict]:
             "description": item["description"],
             "body_text": item["body_text"],
             "goal_key": str(item.get("goal_key") or item["key"]),
-            "default_parameter_fields": ["contacto", "producto", "mensaje"],
+            "default_parameter_fields": list(item.get("default_parameter_fields") or ["contacto", "producto", "mensaje"]),
         }
         for item in MASTER_TEMPLATES
     ]
