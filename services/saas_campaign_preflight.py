@@ -198,11 +198,13 @@ def campaign_preflight(db_session, campaign) -> dict:
             )
             mapping_ok = bool(template_validation.get("ok") and not mapping_errors)
             whatsapp_ok = bool(connection.get("connected") and mapping_ok)
+            mapping_detail = "Mapeo válido." if not mapping_errors else " ".join(mapping_errors)
             add(
                 "whatsapp_config",
                 "WhatsApp Comercial y plantilla Meta",
-                bool(connection.get("connected") and template_validation.get("ok")),
-                f"Emisor: {sender_label}. Plantilla: {template_name or 'sin configurar'}. {template_validation.get('detail') or 'No validada.'}",
+                bool(connection.get("connected") and template_validation.get("ok") and mapping_ok),
+                f"Emisor: {sender_label}. Plantilla: {template_name or 'sin configurar'}. "
+                f"{template_validation.get('detail') or 'No validada.'} {mapping_detail}",
                 "Conectá la WABA comercial de SuperAdmin y seleccioná una plantilla APPROVED de categoría MARKETING.",
             )
             add(
@@ -210,10 +212,9 @@ def campaign_preflight(db_session, campaign) -> dict:
                 "Parámetros de plantilla",
                 not mapping_errors,
                 "Cada variable posicional tiene un campo asignado."
-                if not mapping_errors else " ".join(mapping_errors),
+                if not mapping_errors else mapping_detail,
                 "En el editor, asigná un campo y un valor predeterminado a cada parámetro que no exista en todos los prospectos.",
             )
-            mapping_detail = "Mapeo válido." if not mapping_errors else " ".join(mapping_errors)
         except Exception as exc:
             whatsapp_ok = False
             template_validation = {}
