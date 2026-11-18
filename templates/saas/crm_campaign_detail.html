@@ -520,6 +520,17 @@
               <i class="bi bi-shield-check fs-5 me-1"></i>
               Los filtros se vuelven a aplicar y los destinatarios anteriores se descartan al guardar.
             </div>
+            <div class="row g-3 mb-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Objetivo comercial</label>
+                <select class="form-select" name="campaign_goal" data-campaign-goal>
+                  {% for option in campaign_goal_options %}
+                  <option value="{{ option.key }}" {% if segment_filters.get('campaign_goal', 'saas_acquisition') == option.key %}selected{% endif %}>{{ option.label }} · {{ option.description }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Campañas de captación y conversión de prospectos. No se mezclan con los clientes de los comercios.</div>
+              </div>
+            </div>
             <div class="row g-3">
               <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ segment_filters.get('industry','') }}" placeholder="Ferretería"></div>
               <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ segment_filters.get('province','') }}" placeholder="Chaco"></div>
@@ -566,6 +577,7 @@
                 <pre class="small text-muted bg-light rounded-3 p-3 mb-2 text-wrap" data-whatsapp-template-preview>Vista previa de la plantilla seleccionada.</pre>
                 <div data-whatsapp-parameter-controls></div>
                 <input type="hidden" name="whatsapp_parameter_fields" data-whatsapp-parameter-value value="{{ campaign.whatsapp_parameter_fields or '' }}">
+                <input type="hidden" name="whatsapp_parameter_defaults" data-whatsapp-defaults value='{{ segment_filters.get("parameter_defaults", {"producto":"StockARmobile"})|tojson }}'>
               </div>
             </div>
             <div class="small text-muted mt-2">Los datos de las variables se completan con la ficha del prospecto y el texto de la campaña. Este selector usa únicamente el WhatsApp Comercial interno de SuperAdmin.</div>
