@@ -982,7 +982,7 @@ COMMERCIAL_WHATSAPP_PARAMETER_FIELDS = {
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
 
-    campaign_message = _clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject)
+    campaign_message = render_merge(_clean(getattr(campaign, "body_text", None)) or _clean(campaign.subject), lead)
     values = {
         "empresa": _clean(lead.company_name),
         "comercio": _clean(lead.company_name),
@@ -991,7 +991,7 @@ def _whatsapp_template_parameters(campaign, lead) -> list[str]:
         "localidad": _clean(lead.locality),
         "producto": "StockArMobile",
         "mensaje": campaign_message,
-        "asunto": _clean(campaign.subject),
+        "asunto": render_merge(_clean(campaign.subject), lead),
         "trial_url": (
             f"{_clean(current_app.config.get('APP_URL')).rstrip('/')}/auth/register?selected_plan=trial"
             if _clean(current_app.config.get("APP_URL"))
