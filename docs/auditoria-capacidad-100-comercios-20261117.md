@@ -83,9 +83,13 @@ pytest -q -s --tb=short tests/test_tenant_load_capacity.py
 
 
 
+### Resultado del benchmark PostgreSQL en CI
+
+Commit probado: `fc4c7d005587a0aed26988c067c2cbadb85c6ac8`. GitHub Actions: workflows `CI` y `StockArMobile tests` finalizados en verde. Resultado de la prueba específica: **100 empresas, 100 solicitudes, 5 solicitudes simultáneas, 100 respuestas exitosas, cero errores**. Latencias de solicitud observadas: p50 **0,694 s**, p95 **0,716 s**, p99 **1,144 s** y máximo **1,149 s**. Los datos se generaron en PostgreSQL 18 efímero de CI, no en producción.
+
 ### Resultado del ensayo de sobrecarga previo
 
-Se probó también una ráfaga de 20 dashboards concurrentes con el pool predeterminado (5 conexiones + 10 de overflow). PostgreSQL agotó el pool y devolvió `QueuePool limit ... timeout 30.00`; un perfil de 100 solicitudes concurrentes tampoco terminó dentro de los 90 segundos con un pool de CI mayor. Por ese motivo no se presenta el perfil de 5 como certificación de 100 solicitudes simultáneas: es una comprobación reproducible de aislamiento para 100 comercios con una concurrencia compatible con el servicio actual, y la sobrecarga de 20/100 queda registrada como hallazgo de capacidad pendiente.
+Se probó también una ráfaga de 20 dashboards concurrentes con el pool predeterminado (5 conexiones + 10 de overflow). PostgreSQL agotó el pool y devolvió `QueuePool limit ... timeout 30.00`. Un perfil de 100 solicitudes concurrentes tampoco terminó dentro de los 90 segundos con un pool de CI mayor. Por eso **no se certifica capacidad para 20, 100 ni 100 solicitudes HTTP simultáneas**. El benchmark que quedó verde prueba aislamiento para 100 comercios con 5 solicitudes activas a la vez; la ráfaga de 20/100 queda registrada como hallazgo de capacidad pendiente.
 
 ## Decisiones de seguridad y estabilidad
 
@@ -112,9 +116,9 @@ Como criterios iniciales de aceptación de staging se propone: 100 sesiones tena
 - [x] Revisar el estado de CI y las regresiones PostgreSQL existentes.
 - [x] Inspeccionar configuración y límites observables de Render.
 - [x] Hacer explícitos y validables los límites del pool PostgreSQL sin cambiar los defaults.
-- [x] Agregar benchmark aislado para 100 empresas y 100 solicitudes concurrentes.
+- [x] Agregar benchmark PostgreSQL para 100 comercios y 100 solicitudes distribuidas en ráfagas de 5 concurrentes.
 - [x] Integrar el benchmark al job PostgreSQL de CI.
-- [ ] Obtener resultado verde del nuevo job y registrar sus percentiles.
+- [x] Obtener resultado verde de CI y registrar los percentiles del benchmark.
 - [ ] Ejecutar la etapa HTTP externa en staging para certificar capacidad real del despliegue.
 
 La auditoría general de módulos y rutas debe mantenerse diferenciada de esta prueba de capacidad: una suite verde no sustituye el recorrido E2E visual ni una matriz exhaustiva de autorización/IDOR para cada módulo.
