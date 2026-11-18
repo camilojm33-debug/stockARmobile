@@ -6,12 +6,33 @@ import sys
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    """Read a bounded integer setting without silently accepting unsafe values."""
+    raw_value = (os.environ.get(name) or "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{name} debe ser un número entero.") from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name} debe estar entre {minimum} y {maximum}.")
+    return value
+
+
 def _sqlite_engine_options(database_url: str):
-    """Return safe SQLAlchemy pool options for SQLite and PostgreSQL."""
+    """Return bounded SQLAlchemy pool options for SQLite and PostgreSQL."""
     if not database_url.startswith("sqlite"):
+        # Keep SQLAlchemy's existing QueuePool defaults (5 + 10 connections)
+        # unless an operator deliberately tunes them for the database plan.
         return {
             "pool_pre_ping": True,
             "pool_recycle": 1800,
+            "pool_size": _bounded_int_env("DB_POOL_SIZE", 5, minimum=1, maximum=25),
+            "max_overflow": _bounded_int_env("DB_MAX_OVERFLOW", 10, minimum=0, maximum=25),
+            "pool_timeout": _bounded_int_env(
+                "DB_POOL_TIMEOUT_SECONDS", 30, minimum=1, maximum=120
+            ),
         }
 
     options = {"connect_args": {"check_same_thread": False}}
