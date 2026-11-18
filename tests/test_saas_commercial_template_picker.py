@@ -202,3 +202,15 @@ def test_commercial_campaign_parameter_field_defaults_are_consistent():
         MASTER_TEMPLATE_PARAMETER_FIELDS
     )
     assert get_commercial_whatsapp_parameter_fields(SimpleNamespace(whatsapp_parameter_fields="none")) == []
+
+
+
+def test_legacy_master_template_campaign_recovers_its_three_parameter_mapping():
+    from services.saas_commercial_service import get_commercial_whatsapp_parameter_fields
+    from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
+
+    campaign = SimpleNamespace(
+        whatsapp_template_name="campana_marketing_es_ar",
+        whatsapp_parameter_fields="none",
+    )
+    assert get_commercial_whatsapp_parameter_fields(campaign) == list(MASTER_TEMPLATE_PARAMETER_FIELDS)
