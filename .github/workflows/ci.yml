@@ -119,5 +119,4 @@ jobs:
       - name: Run PostgreSQL transaction concurrency regressions
         run: pytest -q --tb=short tests/test_postgres_transaction_concurrency.py
       - name: Run 100-tenant dashboard concurrency benchmark
-        env:
         run: pytest -q -s --tb=short tests/test_tenant_load_capacity.py
