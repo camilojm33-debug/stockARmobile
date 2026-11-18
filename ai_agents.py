@@ -1817,6 +1817,8 @@ def campaign_wizard():
                 selected_language=selected_language.strip(),
                 allow_single_auto_select=False,
             )
+            if template.get("campaign_goal") and template["campaign_goal"] != selected_goal["key"]:
+                raise ValueError("La plantilla maestra seleccionada corresponde a otro objetivo. Elegí una plantilla para el objetivo de esta campaña.")
             template_selected = True
             template_auto_selected = False
             body_positions = {
@@ -2062,6 +2064,11 @@ def campaign_edit(campaign_id):
                     selected_language=selected_language,
                     allow_single_auto_select=False,
                 )
+                if (
+                    campaign_data["whatsapp_template"].get("campaign_goal")
+                    and campaign_data["whatsapp_template"]["campaign_goal"] != selected_goal["key"]
+                ):
+                    raise ValueError("La plantilla maestra seleccionada corresponde a otro objetivo de campaña.")
                 campaign_data["branch_id"] = int(branch.id)
 
             template_for_mapping = campaign_data.get("whatsapp_template") or {}
