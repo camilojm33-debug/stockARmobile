@@ -243,7 +243,7 @@ def campaign_preflight(db_session, campaign) -> dict:
         from services.campaign_template_engine import parse_defaults
         defaults = parse_defaults(SCOPE_SAAS_PROSPECTS, settings.get("parameter_defaults"))
         query = _eligible_leads_query("whatsapp", filters).order_by("lead_score", "id")
-        sample_leads = query.limit(200).all()
+        sample_leads = query.yield_per(500)
         missing_by_field = {}
         invalid_count = 0
         for lead in sample_leads:
