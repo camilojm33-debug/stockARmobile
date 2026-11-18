@@ -228,8 +228,8 @@
               <div class="col-lg-4">
                 <label class="form-label fw-semibold">Canal</label>
                 <select class="form-select" name="channel">
-                  <option value="whatsapp" selected>WhatsApp</option>
-                  <option value="email">Email</option>
+                  <option value="whatsapp" {% if commercial_whatsapp.connected %}selected{% endif %}>WhatsApp</option>
+                  <option value="email" {% if not commercial_whatsapp.connected %}selected{% endif %}>Email</option>
                   <option value="both">Email + WhatsApp</option>
                 </select>
               </div>
@@ -298,7 +298,7 @@ Probalo gratis durante 10 días.</textarea>
 
           <details class="campaign-form-section">
             <summary class="campaign-section-title" style="cursor:pointer;"><span class="section-dot"></span>Opciones avanzadas de WhatsApp (no hace falta modificarlas)</summary>
-            <p class="small text-muted mt-2 mb-3">StockARmobile selecciona automáticamente la plantilla aprobada de Marketing. Abrí esta sección solo para revisar o cambiar una configuración especial.</p>
+            <p class="small text-muted mt-2 mb-3">Si hay una plantilla de Marketing aprobada en la cuenta comercial, se selecciona sola. Si Meta todavía la está revisando, primero hay que esperar su aprobación.</p>
             <div class="row g-3">
               <div class="col-lg-9">
                 <label class="form-label fw-semibold">Plantilla aprobada en tu cuenta de WhatsApp</label>
@@ -336,4 +336,46 @@ Probalo gratis durante 10 días.</textarea>
   </div>
 </div>
 <script src="{{ url_for('static', filename='assets/js/superadmin-campaign-template-picker.js') }}?v=20261118-1"></script>
+<script>
+(function () {
+  const form = document.querySelector("#newCampaignModal form");
+  if (!form) return;
+  const message = form.querySelector('[name="body_text"]');
+  const emailHtml = form.querySelector('[name="body_html"]');
+  if (!message || !emailHtml) return;
+
+  let emailHtmlWasCustomized = false;
+  const escapeHtml = function (value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  };
+  const syncEmailHtml = function () {
+    if (emailHtmlWasCustomized) return;
+    const lines = escapeHtml(message.value || "").split(/\r?\n/);
+    const paragraphs = [];
+    let current = [];
+    lines.forEach(function (line) {
+      if (!line.trim()) {
+        if (current.length) paragraphs.push(current.join("<br>"));
+        current = [];
+      } else {
+        current.push(line);
+      }
+    });
+    if (current.length) paragraphs.push(current.join("<br>"));
+    emailHtml.value = paragraphs.map(function (paragraph) {
+      return "<p>" + paragraph + "</p>";
+    }).join("\n");
+  };
+  emailHtml.addEventListener("input", function () {
+    emailHtmlWasCustomized = true;
+  });
+  message.addEventListener("input", syncEmailHtml);
+  syncEmailHtml();
+})();
+</script>
 {% endblock %}
