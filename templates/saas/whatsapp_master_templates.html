@@ -32,17 +32,22 @@
           <span class="badge text-bg-success">{{ item.language_label }}</span>
         </div>
         <div class="row g-3">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <div class="small text-muted">Nombre técnico en Meta</div>
             <code class="fw-semibold">{{ item.name }}</code>
           </div>
-          <div class="col-md-4">
+          <div class="col-md-2">
             <div class="small text-muted">Idioma</div>
             <strong>{{ item.language }}</strong>
+          </div>
+          <div class="col-md-3">
+            <div class="small text-muted">Objetivo del CRM</div>
+            <strong>{{ item.goal_key|replace('_',' ')|title }}</strong>
           </div>
           <div class="col-md-4">
             <div class="small text-muted">Variables que completa el CRM</div>
             <strong>{{ "{{1}}" }} · {{ "{{2}}" }} · {{ "{{3}}" }}</strong>
+            <div class="small text-muted">{{ item.default_parameter_fields|join(' · ') }}</div>
           </div>
         </div>
         <hr class="my-3">
@@ -66,7 +71,7 @@
       <div class="table-responsive">
         <table class="table align-middle mb-0">
           <thead>
-            <tr><th>Comercio</th><th>Sucursal</th><th>WhatsApp</th><th>Plantilla maestra</th><th>Última sincronización</th></tr>
+            <tr><th>Comercio</th><th>Sucursal</th><th>WhatsApp</th><th>Estado de cada plantilla maestra</th><th>Última sincronización</th></tr>
           </thead>
           <tbody>
             {% for row in channel_rows %}
@@ -75,8 +80,19 @@
                 <td>{{ row.branch }}</td>
                 <td>{{ row.phone }}</td>
                 <td>
-                  <span class="badge {% if row.status == 'Aprobada' %}text-bg-success{% elif 'Pendiente' in row.status or 'revisión' in row.status %}text-bg-warning{% elif 'Sin WhatsApp' in row.status %}text-bg-secondary{% else %}text-bg-danger{% endif %}">{{ row.status }}</span>
-                  {% if row.detail %}<div class="small text-muted mt-1">{{ row.detail }}</div>{% endif %}
+                  <div class="d-flex flex-column gap-2">
+                  {% for item in row.template_statuses %}
+                    <div class="border rounded-3 p-2">
+                      <div class="d-flex justify-content-between align-items-center gap-2">
+                        <span class="small fw-semibold">{{ item.name }}</span>
+                        <span class="badge {% if item.raw_status == 'APPROVED' %}text-bg-success{% elif item.raw_status in ['PENDING','IN_APPEAL'] %}text-bg-warning{% elif item.raw_status in ['','UNKNOWN'] %}text-bg-secondary{% else %}text-bg-danger{% endif %}">{{ item.status }}</span>
+                      </div>
+                      <div class="small text-muted"><code>{{ item.meta_name }}</code></div>
+                      {% if item.detail %}<div class="small text-muted mt-1">{{ item.detail }}</div>{% endif %}
+                    </div>
+                  {% endfor %}
+                  <div class="small text-muted">{{ row.approved_count }}/{{ row.template_count }} aprobadas</div>
+                  </div>
                 </td>
                 <td class="small text-muted">{{ row.checked_at or 'Todavía no sincronizada' }}</td>
               </tr>
