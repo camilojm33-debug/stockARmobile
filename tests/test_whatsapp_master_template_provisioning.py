@@ -231,7 +231,7 @@ def test_onboarding_and_tenant_ui_use_idempotent_master_provisioning():
     assert "template_provision_url=url_for" in source
     assert "Instalar / sincronizar" in template
     assert "fetch(provisionUrl" in template
-    assert "Meta revisa cada copia por separado" in template
+    assert "Meta aprueba la copia de esta cuenta por separado" in template
     assert "Plantillas aprobadas disponibles" in template
     assert "Solo se muestran plantillas que Meta ya aprobó" in template
     assert "Estado de la plantilla maestra" in template
