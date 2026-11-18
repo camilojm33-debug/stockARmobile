@@ -131,17 +131,17 @@
   <section class="campaign-detail-card p-3 p-lg-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
       <div>
-        <h2 class="h5 fw-bold mb-1">Flujo de la campaña</h2>
-        <p class="small text-muted mb-0">Cada etapa mantiene la validación de consentimiento y la aprobación de SuperAdmin.</p>
+        <h2 class="h5 fw-bold mb-1">Qué sigue</h2>
+        <p class="small text-muted mb-0">Revisá los destinatarios y confirmá el envío cuando todo esté listo.</p>
       </div>
     </div>
     {% set flow_rank = {'BORRADOR':1,'APROBADA':2,'ENVIANDO':4,'ENVIADA':4,'ENVIADA_PARCIAL':4,'FALLIDA':4,'SIN_ENVIO':4,'CANCELADA':4}.get(campaign.status,1) %}
     <div class="campaign-flow">
       {% for step,label,sub in [
-        (1,'Borrador','Contenido y audiencia'),
-        (2,'Preparar','Destinatarios elegibles'),
-        (3,'Aprobar','Reautenticación SuperAdmin'),
-        (4,'Enviar','Worker comercial')
+        (1,'Borrador','Mensaje y público elegidos'),
+        (2,'Revisar','Quiénes recibirán el mensaje'),
+        (3,'Confirmar','Aprobación del envío'),
+        (4,'Enviar','Seguimiento de resultados')
       ] %}
       <div class="campaign-flow-step {{ 'is-done' if flow_rank > step else 'is-current' if flow_rank == step else '' }}">
         <div class="d-flex align-items-center gap-2 mb-2"><span class="step-number">{{ step }}</span><strong class="small">{{ label }}</strong></div>
@@ -154,27 +154,28 @@
   <section class="campaign-detail-card p-3 p-lg-4 mb-4">
     <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
       <div>
-        <h2 class="h5 fw-bold mb-1">Preflight de envío</h2>
-        <div class="small text-muted">La campaña sólo puede aprobarse cuando todas las puertas de seguridad están en verde.</div>
+        <h2 class="h5 fw-bold mb-1">Revisión automática</h2>
+        <div class="small text-muted">Comprobamos que el canal esté conectado y que los contactos puedan recibir el mensaje.</div>
       </div>
       <span class="campaign-status {{ 'status-sent' if preflight.ready else 'status-failed' }}">
         <i class="bi {{ 'bi-shield-check' if preflight.ready else 'bi-shield-exclamation' }}"></i>
-        {{ 'Lista para enviar' if preflight.ready else 'Bloqueada' }}
+        {{ 'Lista para enviar' if preflight.ready else 'Hay puntos para resolver' }}
       </span>
     </div>
-    <div class="row g-2">
-      {% for check in preflight.checks %}
-      <div class="col-md-6">
-        <div class="d-flex align-items-start gap-2 p-2 border rounded-3 h-100">
-          <i class="bi {{ 'bi-check-circle-fill text-success' if check.ok else 'bi-x-circle-fill text-danger' }} mt-1"></i>
-          <div class="min-w-0">
-            <div class="fw-semibold small">{{ check.label }}</div>
-            <div class="small text-muted">{{ check.detail }}</div>
+    <details class="mt-2">
+      <summary class="small fw-semibold text-primary" style="cursor:pointer;">Ver detalles de la revisión</summary>
+      <div class="row g-2 mt-2">
+        {% for check in preflight.checks %}
+        <div class="col-md-6">
+          <div class="d-flex align-items-start gap-2 p-2 border rounded-3 h-100">
+            <i class="bi {{ 'bi-check-circle-fill text-success' if check.ok else 'bi-x-circle-fill text-danger' }} mt-1"></i>
+            <div class="min-w-0"><div class="fw-semibold small">{{ check.label }}</div><div class="small text-muted">{{ check.detail }}</div></div>
           </div>
         </div>
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
+    </details>
+div>
   </section>
 
   <div class="row g-4">
@@ -187,8 +188,8 @@
           </div>
           <span class="campaign-channel"><i class="bi bi-chat-square-text"></i>{{ campaign.subject }}</span>
         </div>
-        {% if campaign.channel in ['whatsapp','both'] and campaign.whatsapp_template_name %}
-          <div class="small mb-3"><span class="text-muted">Plantilla WhatsApp:</span> <strong>{{ campaign.whatsapp_template_name }}</strong></div>
+        {% if campaign.channel in ['whatsapp','both'] %}
+          <div class="small mb-3 text-muted"><i class="bi bi-whatsapp me-1"></i>El mensaje saldrá desde el WhatsApp comercial de StockARmobile.</div>
         {% endif %}
         <div class="campaign-message-preview">{{ campaign.body_text or campaign.body_html }}</div>
       </section>
@@ -196,80 +197,14 @@
 
     <div class="col-lg-5">
       <section class="campaign-detail-card p-3 p-lg-4 mb-4">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <div><h2 class="h5 fw-bold mb-1">Audiencia</h2><div class="small text-muted">Elegibilidad calculada para esta campaña.</div></div>
-          <i class="bi bi-people text-primary fs-5"></i>
-        </div>
-        {% for label,value in [
-          ('Base filtrada',audience.total),
-          ('Bloqueados',audience.blocked),
-          ('Email disponible',audience.email_available),
-          ('Email con permiso',audience.email_optin),
-          ('WhatsApp disponible',audience.whatsapp_available),
-          ('WhatsApp con permiso',audience.whatsapp_optin)
-        ] %}
-        <div class="campaign-data-row">
-          <span class="small text-muted">{{ label }}</span>
-          <span class="campaign-audience-value">{{ value }}</span>
-        </div>
-        {% endfor %}
-        <div class="small text-muted mt-3 mb-2">Filtros guardados</div>
-        {% set segment_labels = {
-          'industry':'Rubro',
-          'province':'Provincia',
-          'locality':'Localidad',
-          'segment':'Segmento',
-          'min_score':'Score mínimo'
-        } %}
-        {% if segment_filters %}
-          <div class="d-flex flex-wrap gap-2">
-          {% for key,value in segment_filters.items() %}
-            {% if value not in [None, ''] %}
-              <span class="campaign-meta-pill"><span class="text-muted">{{ segment_labels.get(key,key|replace('_',' ')|title) }}</span><strong>{{ value }}</strong></span>
-            {% endif %}
-          {% endfor %}
-          </div>
-        {% else %}
-          <div class="small text-muted">Sin filtros específicos: se evalúa la base completa según consentimiento y reglas de elegibilidad.</div>
-        {% endif %}
-        {% if audience.total == 0 %}
-          <div class="alert alert-warning campaign-alert small mt-3 mb-0">
-            <i class="bi bi-funnel me-1"></i>
-            <strong>La audiencia filtrada está en 0.</strong>
-            Revisá los filtros guardados. Dejá Rubro, Provincia, Localidad y Segmento vacíos cuando quieras trabajar sobre toda la base.
-          </div>
-        {% elif (campaign.channel in ['email','both'] and audience.eligible_email == 0) or (campaign.channel in ['whatsapp','both'] and audience.eligible_whatsapp == 0) %}
-          <div class="alert alert-info campaign-alert small mt-3 mb-0">
-            <i class="bi bi-shield-check me-1"></i>
-            <strong>Hay contactos, pero no hay destinatarios habilitados para enviar.</strong>
-            Un dato importado no equivale a consentimiento de marketing. Para Email se excluyen bajas, bloqueos y direcciones inválidas; para WhatsApp se exige consentimiento <code>opted_in</code>.
-          </div>
-        {% endif %}
-      </section>
-
-      <section class="campaign-detail-card p-3 p-lg-4 mb-4">
-        <h2 class="h5 fw-bold mb-3">Configuración</h2>
+        <h2 class="h5 fw-bold mb-3">Canales de envío</h2>
         <div class="campaign-data-row">
           <span class="small text-muted">Email</span>
-          <span class="campaign-status {{ 'status-approved' if smtp_configured else 'status-draft' }}"><i class="bi {{ 'bi-check-circle' if smtp_configured else 'bi-exclamation-circle' }}"></i>{{ 'SMTP listo' if smtp_configured else 'SMTP pendiente' }}</span>
+          <span class="campaign-status {{ 'status-approved' if smtp_configured else 'status-draft' }}"><i class="bi {{ 'bi-check-circle' if smtp_configured else 'bi-exclamation-circle' }}"></i>{{ 'Listo' if smtp_configured else 'A revisar' }}</span>
         </div>
         <div class="campaign-data-row">
-          <span class="small text-muted">Motor comercial</span>
-          <span class="campaign-status {{ 'status-approved' if marketing_send_enabled else 'status-draft' }}"><i class="bi {{ 'bi-lightning-charge' if marketing_send_enabled else 'bi-pause-circle' }}"></i>{{ 'Habilitado' if marketing_send_enabled else 'Deshabilitado' }}</span>
-        </div>
-        <div class="campaign-data-row">
-          <span class="small text-muted">WhatsApp emisor</span>
-          <span class="small fw-semibold text-end">
-            {% if commercial_whatsapp.connected %}
-              {{ commercial_whatsapp.display_phone_number or 'Número comercial conectado' }}
-            {% else %}
-              No conectado
-            {% endif %}
-          </span>
-        </div>
-        <div class="campaign-data-row">
-          <span class="small text-muted">Plantilla</span>
-          <span class="small fw-semibold text-end">{{ campaign.whatsapp_template_name or commercial_whatsapp.template_name or 'Sin configurar' }}</span>
+          <span class="small text-muted">WhatsApp</span>
+          <span class="small fw-semibold text-end">{{ commercial_whatsapp.display_phone_number if commercial_whatsapp.connected and commercial_whatsapp.display_phone_number else ('Conectado' if commercial_whatsapp.connected else 'A revisar') }}</span>
         </div>
       </section>
 
@@ -329,26 +264,26 @@
 
       <section class="campaign-detail-card p-3 p-lg-4">
         <h2 class="h5 fw-bold mb-2">Acciones</h2>
-        <p class="small text-muted">Prepará antes de aprobar. Las acciones sensibles requieren reautenticación de SuperAdmin.</p>
+        <p class="small text-muted">Primero revisá quiénes recibirán el mensaje. Después confirmá con tu contraseña.</p>
         {% if campaign.status == 'BORRADOR' %}
           {% if campaign.channel in ['email','both'] %}
           <form method="post" action="{{ url_for('saas.crm_campaign_audience_all_email', campaign_id=campaign.id) }}" class="mb-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-light border w-100" type="submit"><i class="bi bi-envelope-paper me-1"></i>Toda la base de Email</button>
+            <button class="btn btn-light border w-100" type="submit"><i class="bi bi-envelope-paper me-1"></i>Incluir todos los contactos habilitados para Email</button>
           </form>
           {% endif %}
           <form method="post" action="{{ url_for('saas.crm_campaign_prepare',campaign_id=campaign.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-outline-primary w-100"><i class="bi bi-person-check me-1"></i>Preparar / actualizar audiencia</button>
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-people me-1"></i>Revisar destinatarios</button>
           </form>
           {% if preflight.ready %}
           <form method="post" action="{{ url_for('saas.crm_campaign_approve',campaign_id=campaign.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="password" name="step_up_password" class="form-control mt-2" placeholder="Contraseña para aprobar" autocomplete="current-password" required>
-            <button class="btn btn-success w-100 mt-2"><i class="bi bi-shield-check me-1"></i>Aprobar campaña</button>
+            <input type="password" name="step_up_password" class="form-control mt-2" placeholder="Tu contraseña para confirmar" autocomplete="current-password" required>
+            <button class="btn btn-success w-100 mt-2"><i class="bi bi-shield-check me-1"></i>Confirmar y enviar</button>
           </form>
           {% else %}
-          <div class="alert alert-warning campaign-alert small mt-2 mb-0"><i class="bi bi-shield-exclamation me-1"></i>{{ preflight.summary }} Revisá el preflight antes de aprobar.</div>
+          <div class="alert alert-warning campaign-alert small mt-2 mb-0"><i class="bi bi-shield-exclamation me-1"></i>La campaña todavía no está lista. Consultá los detalles de la revisión automática para ver qué falta.</div>
           {% endif %}
           <div class="mt-3 pt-3 border-top">
             <button class="btn btn-outline-danger w-100" type="button" data-bs-toggle="modal" data-bs-target="#deleteCampaignModal">
