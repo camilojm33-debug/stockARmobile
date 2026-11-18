@@ -247,7 +247,9 @@ def campaign_preflight(db_session, campaign) -> dict:
         sample_leads = query.yield_per(500)
         missing_by_field = {}
         invalid_count = 0
+        total_leads = 0
         for lead in sample_leads:
+            total_leads += 1
             try:
                 resolved = resolve_parameters(
                     SCOPE_SAAS_PROSPECTS,
@@ -268,14 +270,14 @@ def campaign_preflight(db_session, campaign) -> dict:
                     )
             except Exception:
                 invalid_count += 1
-        recipient_validation_ok = bool(sample_leads) and invalid_count == 0
-        if not sample_leads:
+        recipient_validation_ok = total_leads > 0 and invalid_count == 0
+        if total_leads == 0:
             recipient_detail = "No hay prospectos con WhatsApp válido y consentimiento vigente para esta segmentación."
         elif invalid_count:
             detail = ", ".join(f"{field}: {count}" for field, count in sorted(missing_by_field.items()))
-            recipient_detail = f"{invalid_count} de {len(sample_leads)} prospecto(s) tienen parámetros sin resolver. {detail}."
+            recipient_detail = f"{invalid_count} de {total_leads} prospecto(s) tienen parámetros sin resolver. {detail}."
         else:
-            recipient_detail = f"{len(sample_leads)} prospecto(s) revisados; todos los parámetros tienen datos o valores predeterminados."
+            recipient_detail = f"{total_leads} prospecto(s) revisados; todos los parámetros tienen datos o valores predeterminados."
         add(
             "recipient_data",
             "Datos por destinatario",
