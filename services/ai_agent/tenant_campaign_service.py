@@ -706,6 +706,23 @@ def _render_content(campaign, client, *, include_opt_out=True):
         )
         if not re.search(r"\$\s*\d[\d.,]*", content) and "precio" in content.lower():
             content = f"{content.rstrip()}\nPrecio por unidad: {rendered_price}."
+
+        # The personalized product price is the only fixed amount that may be
+        # rewritten. Keep explicitly labeled freight charges, but refuse to
+        # send any other ambiguous hard-coded amount.
+        primary_price_seen = False
+        for amount_match in re.finditer(r"\$\s*\d[\d.,]*", content):
+            if not primary_price_seen and amount_match.group(0).replace(" ", "") == rendered_price.replace(" ", ""):
+                primary_price_seen = True
+                continue
+            nearby_prefix = content[max(0, amount_match.start() - 45):amount_match.start()].lower()
+            if re.search(r"\b(?:env[ií]o|flete|cargo de env[ií]o|costo de env[ií]o)\b", nearby_prefix):
+                continue
+            raise ValueError(
+                "El mensaje contiene otro importe fijo que no puedo identificar como precio del producto. "
+                "Dejá el precio del producto en {{precio}} y etiquetá claramente cualquier costo de envío."
+            )
+
         if (
             is_wholesale
             and resolved_min_quantity > 1
