@@ -564,7 +564,7 @@ def _campaign_wholesale_quantity(campaign, client) -> Decimal:
     if not price_list_is_current(price_list):
         return Decimal("1")
 
-    quantities = []
+    product_quantities = []
     if campaign.product_id:
         product_tiers = PriceListItem.query.filter(
             PriceListItem.company_id == int(campaign.company_id),
@@ -572,23 +572,39 @@ def _campaign_wholesale_quantity(campaign, client) -> Decimal:
             PriceListItem.product_id == int(campaign.product_id),
             PriceListItem.active.is_(True),
         ).with_entities(PriceListItem.min_quantity).all()
-        quantities.extend(row[0] for row in product_tiers if row[0] is not None)
+        product_quantities.extend(row[0] for row in product_tiers if row[0] is not None)
     general_tiers = PriceListDiscountRule.query.filter(
         PriceListDiscountRule.company_id == int(campaign.company_id),
         PriceListDiscountRule.price_list_id == list_id,
         PriceListDiscountRule.active.is_(True),
     ).with_entities(PriceListDiscountRule.min_quantity).all()
-    quantities.extend(row[0] for row in general_tiers if row[0] is not None)
+    general_quantities = [row[0] for row in general_tiers if row[0] is not None]
 
-    valid = []
-    for raw in quantities:
-        try:
-            value = Decimal(str(raw))
-            if value.is_finite() and value > 0:
-                valid.append(value)
-        except (InvalidOperation, TypeError, ValueError):
-            continue
-    return min(valid) if valid else Decimal("1")
+    def valid_quantities(values):
+        parsed = []
+        for raw in values:
+            try:
+                value = Decimal(str(raw))
+                if value.is_finite() and value > 0:
+                    parsed.append(value)
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+        return parsed
+
+    product_values = valid_quantities(product_quantities)
+    general_values = valid_quantities(general_quantities)
+    product_start = min(product_values) if product_values else None
+    general_start = min(general_values) if general_values else None
+    # Pick the earliest quantity at which the list's first applicable product
+    # tier and/or general discount can both be resolved. A global rule starting
+    # at 3 must not be missed merely because a product also has a base row at 1.
+    if product_start is not None and general_start is not None:
+        return max(product_start, general_start)
+    if product_start is not None:
+        return product_start
+    if general_start is not None:
+        return general_start
+    return Decimal("1")
 
 
 def _format_campaign_price(value) -> str:
@@ -603,6 +619,7 @@ def _format_campaign_price(value) -> str:
 def _render_content(campaign, client, *, include_opt_out=True):
     content = str(campaign.content or "")
     has_price_placeholder = "{{precio}}" in content
+    has_min_quantity_placeholder = "{{cantidad_minima}}" in content
     product = campaign.product
     replacements = {
         "{{cliente}}": str(client.name or ""),
@@ -677,14 +694,25 @@ def _render_content(campaign, client, *, include_opt_out=True):
                     "El mensaje tiene varios importes fijos y no se puede identificar cuál es el precio del producto. "
                     "Editalo para usar {{precio}} y conservar otros cargos, como el envío."
                 )
+        resolved_min_quantity = Decimal(str(resolution.get("min_quantity") or quantity))
+        if not resolved_min_quantity.is_finite() or resolved_min_quantity <= 0:
+            resolved_min_quantity = quantity
+        rendered_min_quantity = str(resolved_min_quantity.normalize())
         content = content.replace("{{precio}}", rendered_price)
-        content = content.replace("{{cantidad_minima}}", str(quantity.normalize()))
+        content = content.replace("{{cantidad_minima}}", rendered_min_quantity)
         content = content.replace(
             "{{lista_mayorista}}",
             str(resolution.get("price_list_name") or "precio minorista"),
         )
         if not re.search(r"\$\s*\d[\d.,]*", content) and "precio" in content.lower():
             content = f"{content.rstrip()}\nPrecio por unidad: {rendered_price}."
+        if (
+            is_wholesale
+            and resolved_min_quantity > 1
+            and not has_min_quantity_placeholder
+            and not re.search(r"\b(?:desde|a partir de|mínimo|compra mínima)\s+\d", content, re.IGNORECASE)
+        ):
+            content = f"{content.rstrip()}\nPrecio válido a partir de {rendered_min_quantity} unidades."
     else:
         content = content.replace("{{precio}}", "")
         content = content.replace("{{cantidad_minima}}", "")
