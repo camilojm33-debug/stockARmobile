@@ -40,7 +40,7 @@ def test_campaign_creation_is_started_and_written_by_marketing_agent():
 def test_merchant_campaign_review_uses_plain_language():
     detail = _read("templates/ai_agents/campaign_detail.html")
 
-    assert "WhatsApp está listo para esta campaña." in detail
+    assert "WhatsApp del comercio listo para revisar esta campaña." in detail
     assert "Revisión y aprobación" in detail
     assert "Continuar a revisión" in detail
     assert "Aprobar y encolar envío" in detail
