@@ -1107,9 +1107,8 @@ def _handle_pending_whatsapp_marketing_opt_in(
 
     current_status = str(client.whatsapp_marketing_consent or "unknown").strip().lower()
     if current_status == "opted_out":
+        # A previous recorded opt-out is never reversed by this workflow.
         answer = "opted_out"
-    elif current_status == "opted_in":
-        answer = "opted_in"
 
     if answer == "opted_in":
         client.whatsapp = normalized_sender
