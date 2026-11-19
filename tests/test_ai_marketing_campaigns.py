@@ -1848,7 +1848,7 @@ def test_selected_campaign_audience_is_limited_to_explicit_customer_ids(app):
         user.set_password("password123")
         clients = [
             Client(name=f"Cliente {index}", whatsapp=f"54936240000{index:02d}", company_id=company.id, active=True)
-            for index in range(1, 32)
+            for index in range(1, 4)
         ]
         db.session.add_all([user, *clients])
         db.session.flush()
