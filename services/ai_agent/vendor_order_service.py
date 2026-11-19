@@ -1811,8 +1811,14 @@ class VendorOrderService:
                 if not str(getattr(client, "phone", None) or "").strip():
                     client.phone = normalized_whatsapp[:20]
                 consent_status = str(getattr(client, "whatsapp_marketing_consent", "unknown") or "unknown").strip().lower()
+                consent_is_documented = bool(
+                    consent_status == "opted_in"
+                    and getattr(client, "whatsapp_marketing_consent_recorded_at", None)
+                    and str(getattr(client, "whatsapp_marketing_consent_source", "") or "").strip()
+                    and str(getattr(client, "whatsapp_marketing_consent_evidence", "") or "").strip()
+                )
                 existing_pending = state.get("whatsapp_marketing_opt_in_pending")
-                if consent_status == "unknown" and not isinstance(existing_pending, dict):
+                if consent_status != "opted_out" and not consent_is_documented and not isinstance(existing_pending, dict):
                     state["whatsapp_marketing_opt_in_pending"] = {
                         "client_id": int(client.id),
                         "requested_at": __import__("datetime").datetime.utcnow().isoformat(),
