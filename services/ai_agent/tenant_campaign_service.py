@@ -650,7 +650,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             re.IGNORECASE,
         )
         content, replaced_price = price_phrase.subn(
-            lambda match: f"{match.group(1)}{preview_price}",
+            lambda _match: preview_price,
             content,
             count=1,
         )
