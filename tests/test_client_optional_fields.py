@@ -57,7 +57,8 @@ def test_edit_client_with_missing_email_renders_empty_and_saves_other_fields(app
     html = page.get_data(as_text=True)
     assert 'name="email" type="email" value=""' in html
     assert 'name="phone" value=""' in html
-    assert 'name="whatsapp" value=""' in html
+    whatsapp_input = html.split('name="whatsapp"', 1)[1].split(">", 1)[0]
+    assert 'value=""' in whatsapp_input
     assert 'name="city" value=""' in html
     assert 'name="address" value=""' in html
     assert 'name="notes" rows="3"></textarea>' in html
