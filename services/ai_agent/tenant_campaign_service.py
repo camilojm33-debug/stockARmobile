@@ -362,6 +362,26 @@ def _audience_query(campaign):
     from app import Client, Sale, SaleItem
     data = _json(campaign)
     query = Client.query.filter(Client.company_id == campaign.company_id, Client.active.is_(True))
+
+    # An explicit manual selection is authoritative and replaces the
+    # campaign's original segment (for example, "inactive customers").
+    # Otherwise selected contacts outside that segment would silently vanish.
+    if data.get("audience_selection_mode") == "selected":
+        selected_ids = []
+        for raw_id in data.get("selected_client_ids") or []:
+            try:
+                selected_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if selected_id > 0:
+                selected_ids.append(selected_id)
+        query = (
+            query.filter(Client.id.in_(sorted(set(selected_ids))))
+            if selected_ids
+            else query.filter(Client.id == -1)
+        )
+        return query.order_by(Client.id.asc())
+
     audience = str(campaign.audience_segment or "").lower()
     days = max(1, min(int(data.get("days") or 90), 365))
     if audience == "clientes inactivos" or campaign.campaign_type == "recuperacion_clientes_inactivos":
@@ -381,20 +401,7 @@ def _audience_query(campaign):
     segment = str(data.get("client_segment") or "").strip()
     if segment:
         query = query.filter(Client.notes.ilike(f"%{segment}%"))
-    if data.get("audience_selection_mode") == "selected":
-        selected_ids = []
-        for raw_id in data.get("selected_client_ids") or []:
-            try:
-                selected_id = int(raw_id)
-            except (TypeError, ValueError):
-                continue
-            if selected_id > 0:
-                selected_ids.append(selected_id)
-        # Explicit empty selection means no recipients; it must not fall back
-        # to the default "all active clients" audience.
-        query = query.filter(Client.id.in_(sorted(set(selected_ids)))) if selected_ids else query.filter(Client.id == -1)
     return query.order_by(Client.id.asc())
-
 
 def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     from app import Campaign, Client, Company
