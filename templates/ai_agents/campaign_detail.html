@@ -44,10 +44,76 @@
           <label class="form-label fw-semibold">Programación local opcional</label><input class="form-control mb-1" type="datetime-local" name="scheduled_at" id="campaignScheduledLocal" value="{{ campaign_schedule_local }}">
           <input type="hidden" name="scheduled_at_utc" id="campaignScheduledUtc">          <div class="form-text mb-3">Zona horaria: {{ company.timezone if company and company.timezone else 'America/Argentina/Buenos_Aires' }}.</div>
           <label class="form-label fw-semibold">Mensaje editable</label><textarea class="form-control" name="content" rows="8" maxlength="900" required>{{ campaign.content }}</textarea>
+          {% if campaign.product %}
+          <label class="form-label fw-semibold mt-3">Cantidad de referencia para el precio</label>
+          <input class="form-control" type="number" name="pricing_quantity" min="0.001" step="0.001" value="{{ campaign_pricing_quantity }}" placeholder="Automático según el primer tramo de cada lista">
+          <div class="form-text">Dejalo vacío para que cada cliente mayorista use el primer tramo vigente de su propia lista. Ingresá una cantidad para calcular todos los precios sobre esa cantidad (por ejemplo, 3 unidades).</div>
+          {% endif %}
+          <div class="form-text mt-2">Para mostrar un precio, la variable {{ '{{precio}}' }} se personaliza por destinatario. No escribas un precio mayorista fijo en el mensaje.</div>
           <button class="btn btn-outline-primary mt-3" type="submit"><i class="bi bi-pencil me-1"></i>Guardar cambios</button>
         </form>
         {% endif %}
       </div></div>
+      {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] %}
+      <div class="card app-card mb-4"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+          <div><h2 class="h5 fw-bold mb-1">Agregar destinatarios</h2><p class="small text-muted mb-0">Buscá clientes del comercio y agregalos a esta campaña. Al guardar una selección, la campaña se limitará a esos contactos.</p></div>
+          {% if campaign_selection_mode %}<span class="badge text-bg-primary">{{ campaign_selected_contacts|length }} seleccionados</span>{% else %}<span class="badge text-bg-secondary">Público por segmento</span>{% endif %}
+        </div>
+        {% if campaign_selection_mode %}
+          {% if campaign_selected_contacts %}
+          <div class="border rounded-3 p-3 mb-3">
+            <h3 class="h6 fw-bold mb-2">Clientes seleccionados</h3>
+            {% for item in campaign_selected_contacts %}
+            <div class="d-flex justify-content-between align-items-start gap-2 py-2 border-top">
+              <div class="min-w-0">
+                <strong>{{ item.client.name }}</strong>
+                <div class="small text-muted">{{ item.client.whatsapp or item.client.phone or 'Sin número' }} · {{ item.status }}</div>
+                {% if not item.eligible %}<div class="small text-warning">{{ item.reason }}</div><a class="small" href="{{ url_for('clients.edit', id=item.client.id) }}">Editar ficha</a>{% endif %}
+              </div>
+              <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="remove"><input type="hidden" name="client_id" value="{{ item.client.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Quitar</button>
+              </form>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="alert alert-warning small">La selección está vacía: al aprobar esta campaña no se enviará a nadie hasta que agregues destinatarios.</div>
+          {% endif %}
+          <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}" class="mb-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="clear">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Volver al público general del segmento</button>
+          </form>
+        {% else %}
+          <div class="alert alert-info small">Todavía se usa el público del segmento “{{ campaign.audience_segment }}”. Al agregar el primer contacto, pasará a una selección manual y se enviará solamente a los seleccionados que tengan WhatsApp válido y consentimiento documentado.</div>
+        {% endif %}
+        <form method="get" action="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id) }}" class="row g-2 mb-3">
+          <div class="col"><input class="form-control" type="search" name="contact_search" value="{{ campaign_contact_search }}" placeholder="Buscar por nombre o teléfono"></div>
+          <div class="col-auto"><button class="btn btn-outline-primary" type="submit">Buscar</button></div>
+        </form>
+        <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add">
+          {% if campaign_available_contacts %}
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="small text-muted">Clientes disponibles (hasta 100 por búsqueda)</span><button class="btn btn-sm btn-outline-secondary" type="button" id="campaignSelectVisible">Marcar todos los habilitables</button></div>
+          <div class="table-responsive"><table class="table table-sm align-middle mb-2"><thead><tr><th></th><th>Cliente</th><th>WhatsApp</th><th>Estado para campañas</th></tr></thead><tbody>
+            {% for item in campaign_available_contacts %}
+            <tr>
+              <td><input class="form-check-input campaign-contact-select" type="checkbox" name="client_ids" value="{{ item.client.id }}" {% if item.opted_out %}disabled{% endif %}></td>
+              <td><strong>{{ item.client.name }}</strong><div class="small text-muted">{{ 'Mayorista' if item.client.customer_type == 'mayorista' else 'Minorista' }}</div></td>
+              <td class="small">{{ item.client.whatsapp or item.client.phone or '—' }}</td>
+              <td><span class="badge {% if item.eligible %}text-bg-success{% elif item.opted_out %}text-bg-danger{% else %}text-bg-warning{% endif %}">{{ item.status }}</span><div class="small text-muted">{{ item.reason }}</div></td>
+            </tr>
+            {% endfor %}
+          </tbody></table></div>
+          <button class="btn btn-success" type="submit"><i class="bi bi-person-plus me-1"></i>Agregar seleccionados</button>
+          <div class="form-text mt-2">Los contactos sin autorización pueden agregarse para revisar su ficha, pero no se encolarán ni recibirán mensajes hasta que exista consentimiento expreso. Los que solicitaron la baja no se pueden agregar.</div>
+          {% else %}
+          <div class="text-muted small">No se encontraron clientes con ese criterio.</div>
+          {% endif %}
+        </form>
+      </div></div>
+      {% endif %}
       <div class="card app-card"><div class="card-body">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><h2 class="h5 fw-bold mb-0">Destinatarios y estado individual</h2><span class="small text-muted">Mostrando hasta 100</span></div>
         {% if campaign_recipients %}
@@ -146,6 +212,16 @@
 </div>
 {% if campaign.status == 'EN_PREPARACION' %}<script>window.setTimeout(function(){window.location.reload();},12000);</script>{% endif %}
 <script>
+(function () {
+  const selectAll = document.getElementById("campaignSelectVisible");
+  if (selectAll) {
+    selectAll.addEventListener("click", function () {
+      document.querySelectorAll(".campaign-contact-select:not(:disabled)").forEach(function (field) {
+        field.checked = true;
+      });
+    });
+  }
+})();
 (function () {
   const form = document.getElementById("campaignEditForm");
   if (!form) return;
