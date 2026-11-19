@@ -190,7 +190,7 @@
           <span class="page-kicker"><i class="bi bi-stars me-1"></i> Marketing IA</span>
           <h1 class="display-6 fw-bold crm-hero-title mb-2">Marketing IA</h1>
           <p class="lead text-muted crm-hero-subtitle mb-0">
-            Inteligencia comercial aplicada al marketing: propuestas basadas en datos reales. Al aprobarla, la campaña se envía automáticamente desde el WhatsApp propio que tu comercio conectó en Vendedor IA 24/7.
+            Pedile a Marketing IA que analice tu comercio, elija una oportunidad, defina el público y redacte el mensaje. Vos revisás el borrador y aprobás antes del envío.
           </p>
           <div class="crm-trust-row">
             <span class="crm-trust-pill"><i class="bi bi-database-check"></i>Datos reales del comercio</span>
@@ -199,8 +199,8 @@
           </div>
         </div>
         <div class="crm-hero-actions">
-          <a class="btn btn-success px-3 me-1 mb-2" href="{{ url_for('ai_agents.campaign_wizard') }}">
-            <i class="bi bi-plus-lg me-1"></i>Crear campaña guiada
+          <a class="btn btn-success px-3 me-1 mb-2" href="{{ url_for('ai_agents.agent', agent='marketing', crear_campana='1') }}">
+            <i class="bi bi-stars me-1"></i>Crear campaña con Marketing IA
           </a>
           <a class="btn btn-primary px-3" href="{{ url_for('crm.index') }}">
             <i class="bi bi-megaphone me-1"></i>Volver al CRM
