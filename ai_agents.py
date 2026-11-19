@@ -1498,7 +1498,7 @@ def campaign_detail(campaign_id):
     if selected_mode and selected_ids:
         selected_query = selected_query.filter(Client.id.in_(selected_ids))
     else:
-        selected_query = selected_query.filter(db.false())
+        selected_query = selected_query.filter(Client.id < 0)
     campaign_selected_contacts_total = selected_query.count()
     campaign_selected_page_count = max(
         1,
