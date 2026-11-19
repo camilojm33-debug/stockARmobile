@@ -1804,7 +1804,13 @@ class VendorOrderService:
         if str(getattr(conversation, "channel", "") or "").strip().lower() in {"whatsapp", "whatsapp_business"}:
             from services.whatsapp_share_service import normalize_whatsapp_number
 
-            candidate_whatsapp = str(getattr(client, "whatsapp", None) or phone or customer_phone or "").strip()
+            candidate_whatsapp = str(
+                getattr(client, "whatsapp", None)
+                or phone
+                or customer_phone
+                or getattr(conversation, "external_conversation_id", None)
+                or ""
+            ).strip()
             normalized_whatsapp = normalize_whatsapp_number(candidate_whatsapp)
             if normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15:
                 client.whatsapp = normalized_whatsapp
