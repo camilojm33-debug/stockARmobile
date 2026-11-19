@@ -2284,7 +2284,13 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
             lambda *_args, **_kwargs: (SimpleNamespace(id=1, is_default=True), connection),
         )
 
+        price_resolver_calls = []
+
         def fake_resolve_price(*, company_id, product, quantity, client):
+            price_resolver_calls.append({
+                "client_name": client.name,
+                "customer_type": client.customer_type,
+            })
             if client.customer_type == "mayorista":
                 return {
                     "price": Decimal("10000.00"),
@@ -2315,6 +2321,7 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
         assert result["target_count"] == 1, {
             "result": result,
             "pricing_exclusions": data.get("pricing_exclusions"),
+            "price_resolver_calls": price_resolver_calls,
         }
         assert result["pricing_excluded"] == 1
         assert [row.client_id for row in queued] == [retail.id]
