@@ -451,7 +451,13 @@ def test_marketing_proposal_chat_uses_prompt_and_persists_draft(qa_ai_database):
                     "tool_call": {
                         "id": "proposal-1",
                         "name": "preparar_campana",
-                        "arguments": {"campaign_type": "general", "channel": "whatsapp"},
+                        "arguments": {
+                            "campaign_type": "general",
+                            "channel": "whatsapp",
+                            "title": "Novedades para clientes",
+                            "objective": "Presentar novedades del comercio",
+                            "message": "Hola {{cliente}}, tenemos novedades para vos. Escribinos y te contamos más.",
+                        },
                     },
                 }
             return {"content": "Te preparé una propuesta para tu negocio.", "tool_call": None}
@@ -473,7 +479,11 @@ def test_marketing_proposal_chat_uses_prompt_and_persists_draft(qa_ai_database):
     campaign = Campaign.query.filter_by(company_id=company.id).one()
     assert campaign.status == "BORRADOR"
     assert campaign.created_by_user_id == user.id
-    assert "Campaña #" in result["content"]
+    assert campaign.title == "Novedades para clientes"
+    assert campaign.objective == "Presentar novedades del comercio"
+    assert campaign.content == "Hola {{cliente}}, tenemos novedades para vos. Escribinos y te contamos más."
+    assert result["campaign_id"] == campaign.id
+    assert "borrador #" in result["content"].lower()
 
 
 
@@ -508,7 +518,7 @@ def test_marketing_prompt_uses_tenant_business_name(qa_ai_database):
     )
 
     assert result["content"].startswith("Propuesta preparada.")
-    assert "Campaña #" in result["content"]
+    assert "borrador #" in result["content"].lower()
     system = calls[0][0]["content"]
     assert company.name in system
     assert f"El equipo de {company.name}" in system

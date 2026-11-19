@@ -701,7 +701,7 @@ def activity_complete(activity_id):
     activity.completed_at = now
     activity.updated_at = now
     db.session.commit()
-    flash("Actividad completada.", "success")
+    flash("Seguimiento marcado como realizado. Esta acción no envía ningún mensaje.", "success")
     return redirect(request.referrer or url_for("crm.activities"))
 
 

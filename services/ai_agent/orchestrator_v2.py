@@ -81,7 +81,24 @@ VENDOR_SYSTEM_PROMPT = (
 )
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = ("Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia. " "PRECIOS: si el responsable pide ajustar precios, consultá datos reales y usá el Controlador Global de Precios; generá primero una vista previa y mostrá el ID del lote, cantidad afectada, bloqueados, precios antes/después y guardrails. No afirmes que un precio cambió hasta que la herramienta confirme el resultado aplicado. La aplicación requiere una confirmación explícita en un mensaje posterior a la vista previa, emitida por un administrador autenticado del mismo comercio. Nunca confirmes en el mismo turno en que creaste la vista previa. La reversión también necesita solicitud explícita y un lote aplicado. Nunca escribas Product.price directamente.")
-MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Detectá oportunidades con herramientas reales, separá DATO, EVIDENCIA y PROPUESTA, y generá campañas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada; el envío ocurre únicamente después de aprobación humana y por el motor backend."
+MARKETING_SYSTEM_PROMPT = (
+    "Sos el Marketing IA de StockARmobile y trabajás para el comercio que inició esta conversación. "
+    "Usá productos, ventas, stock y clientes reales de ese comercio. Separá DATO, EVIDENCIA y PROPUESTA; "
+    "nunca inventes precios, descuentos, disponibilidad, resultados ni condiciones. "
+    "CREACIÓN DE CAMPAÑAS: cuando el usuario pida crear, preparar, armar o lanzar una campaña, "
+    "no lo mandes a completar un formulario ni le pidas que redacte el mensaje. Elegí la oportunidad y el público "
+    "más adecuados con las herramientas disponibles y SIEMPRE llamá a preparar_campana. En esa llamada completá "
+    "title, objective y message. El campo message debe ser el texto exacto que recibirá el cliente por WhatsApp, "
+    "en español argentino, comercial, breve (máximo 820 caracteres), con una llamada a la acción y sin análisis, "
+    "notas internas ni explicación técnica. Usá solo hechos que hayas comprobado. "
+    "La herramienta cuenta como elegibles únicamente los contactos con WhatsApp y consentimiento promocional "
+    "documentado. No afirmes que todos los clientes recibirán el mensaje. Si hay cero elegibles, igual podés guardar "
+    "el borrador para revisión, pero explicá claramente que no podrá enviarse hasta registrar consentimientos válidos. "
+    "Después de guardar, informá el título y que quedó como BORRADOR, e indicá que el usuario puede abrirlo, "
+    "editarlo y revisar audiencia y mensaje. "
+    "SEGURIDAD: nunca envíes mensajes, apruebes campañas ni prometas que fueron ejecutadas. Todo envío requiere "
+    "aprobación humana explícita y controles backend de consentimiento; el motor backend es el único que envía."
+)
 COMMERCIAL_SYSTEM_PROMPT = (
     "Sos el Comercial IA de StockArMobile. Atendés únicamente consultas de prospectos que llegan por el WhatsApp comercial "
     "del propio StockArMobile. Tu objetivo es explicar el producto, funcionalidades, planes y próximos pasos de contratación "
@@ -1887,7 +1904,7 @@ class AgentRuntime:
         # si el modelo omitió la herramienta, el backend intenta preparar igualmente
         # un borrador usando el tipo permitido por la configuración del comercio.
         proposal_request = False
-        if agent_key == "marketing" and campaign_context is None:
+        if agent_key == "marketing" and campaign_context is None and int(tool_rounds or 0) == 0:
             normalized_request = " ".join(str(message or "").strip().lower().split())
             proposal_request = any(
                 phrase in normalized_request
@@ -1919,7 +1936,13 @@ class AgentRuntime:
                     fallback_result = cls._execute_tool(
                         "preparar_campana",
                         company_id=company_id,
-                        arguments={"campaign_type": fallback_tool_type, "channel": "whatsapp"},
+                        arguments={
+                            "campaign_type": fallback_tool_type,
+                            "channel": "whatsapp",
+                            "title": "Campaña propuesta por Marketing IA",
+                            "objective": "Comunicar una propuesta comercial relevante a los clientes elegibles",
+                            "message": str(final_content or "").strip()[:820],
+                        },
                         context=context,
                         allowed_tool_names=allowed_tool_names,
                     )
@@ -1965,22 +1988,38 @@ class AgentRuntime:
             from services.ai_agent.campaign_service import CampaignService
 
             product = campaign_context.get("product") or {}
+            campaign_title = str(
+                campaign_context.get("title")
+                or (f"Promoción: {product.get('name')}" if product.get("name") else "Campaña de Marketing IA")
+            ).strip()[:180]
+            campaign_objective = str(
+                campaign_context.get("objective")
+                or campaign_context.get("opportunity")
+                or "Promoción comercial"
+            ).strip()[:120]
+            campaign_message = str(campaign_context.get("message") or final_content or "").strip()[:820]
             campaign = CampaignService.create_draft(
                 company_id=company_id,
                 user_id=sender_id or 0,
-                title=(product.get("name") or "Campaña propuesta")[:180],
-                objective=campaign_context.get("campaign_type") or "Promoción",
+                title=campaign_title,
+                objective=campaign_objective,
                 campaign_type=campaign_context.get("campaign_type") or "general",
-                content=final_content,
+                content=campaign_message,
                 system_data=campaign_context,
                 audience_segment=campaign_context.get("audience_segment") or "No definido",
                 audience_count=campaign_context.get("audience_count") or 0,
                 product_id=product.get("id"),
             )
-            final_content = (
-                f"{final_content}\n\nCampaña #{campaign.id} guardada como "
-                "BORRADOR / PENDIENTE DE APROBACIÓN. No se realizó ningún envío externo."
+            eligible_count = int(campaign_context.get("audience_count") or 0)
+            excluded_count = int(campaign_context.get("audience_excluded_count") or 0)
+            campaign_summary = (
+                f"Preparé **{campaign.title}** y guardé el borrador #{campaign.id}.\n\n"
+                f"**Objetivo:** {campaign.objective}.\n"
+                f"**Público con permiso documentado:** {eligible_count} contacto(s). "
+                f"{f'{excluded_count} contacto(s) quedaron excluidos por falta de WhatsApp válido o consentimiento documentado. ' if excluded_count else ''}\n\n"
+                "Abrí el borrador para revisar el texto y los destinatarios. Nada se envió; el envío solo empieza después de tu aprobación."
             )
+            final_content = f"{str(final_content or '').strip()}\n\n{campaign_summary}".strip()
             assistant.content = final_content
         elif agent_key == "marketing" and proposal_request:
             final_content = (
@@ -2008,5 +2047,6 @@ class AgentRuntime:
             "message_id": incoming.id,
             "assistant_message_id": assistant.id,
             "content": str(final_content),
+            "campaign_id": campaign.id if campaign is not None else None,
             "trace_id": trace_id,
         }

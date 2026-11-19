@@ -22,26 +22,25 @@ def test_campaign_templates_have_valid_jinja_syntax():
         env.parse(_read(path))
 
 
-def test_merchant_campaign_wizard_uses_four_simple_steps():
-    wizard = _read("templates/ai_agents/campaign_wizard.html")
+def test_campaign_creation_is_started_and_written_by_marketing_agent():
+    route_source = _read("ai_agents.py")
+    campaigns = _read("templates/ai_agents/campaigns.html")
+    marketing_home = _read("templates/ai_agents/index.html")
+    route_start = route_source.index("def campaign_wizard():")
+    route_end = route_source.index('@bp.post("/campanas/audiencia-preview")', route_start)
+    route = route_source[route_start:route_end]
 
-    assert "grid-template-columns:repeat(4,minmax(0,1fr))" in wizard
-    assert "['Objetivo','Público','Mensaje','Revisión']" in wizard
-    assert len(re.findall(r'data-step="[1-4]"', wizard)) == 4
-    assert "Hacer seguimiento comercial" in wizard
-    assert "data-step=\"4\"" in wizard and "name=\"scheduled_at\"" in wizard
-    assert "WhatsApp de tu comercio listo para campañas" in wizard
-    assert "template.name" not in wizard
-    assert "template.category" not in wizard
-    assert "Embedded Signup" not in wizard
-    assert "Plantilla aprobada:" not in wizard
-    assert "Guardar borrador" in wizard
-
+    assert 'url_for("ai_agents.agent", agent="marketing", crear_campana="1")' in route
+    assert "Crear campaña con Marketing IA" in campaigns
+    assert "Prepará una campaña comercial para mi negocio" in marketing_home
+    assert "Revisar borrador de campaña" in marketing_home
+    assert "data-marketing-prompt" in marketing_home
+    assert "message" in _read("services/ai_agent/tools/analyst_marketing.py")
 
 def test_merchant_campaign_review_uses_plain_language():
     detail = _read("templates/ai_agents/campaign_detail.html")
 
-    assert "WhatsApp está listo para esta campaña." in detail
+    assert "WhatsApp del comercio listo para revisar esta campaña." in detail
     assert "Revisión y aprobación" in detail
     assert "Continuar a revisión" in detail
     assert "Aprobar y encolar envío" in detail
