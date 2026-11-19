@@ -734,9 +734,35 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
         # The descriptor must match the recipient too. A mixed audience must
         # never see a retail amount labeled "precio mayorista" or vice versa.
         if is_wholesale:
-            content = re.sub(r"\bprecio\s+minorista\b", "precio mayorista", content, flags=re.IGNORECASE)
+            content = re.sub(
+                r"\bprecio\s+(?:minorista|por\s+mayor)\b",
+                "precio mayorista",
+                content,
+                flags=re.IGNORECASE,
+            )
+            if not re.search(r"\bprecio\s+mayorista\b", content, re.IGNORECASE):
+                content = re.sub(
+                    r"\bprecio\b",
+                    "precio mayorista",
+                    content,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
         else:
-            content = re.sub(r"\bprecio\s+(?:mayorista|por\s+mayor)\b", "precio minorista", content, flags=re.IGNORECASE)
+            content = re.sub(
+                r"\bprecio\s+(?:mayorista|por\s+mayor)\b",
+                "precio minorista",
+                content,
+                flags=re.IGNORECASE,
+            )
+            if not re.search(r"\bprecio\s+minorista\b", content, re.IGNORECASE):
+                content = re.sub(
+                    r"\bprecio\b",
+                    "precio minorista",
+                    content,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
         if is_wholesale and resolution.get("source") != "mayorista":
             reasons = {
                 "plan_sin_mayoristas": "el plan del comercio no habilita precios mayoristas",
