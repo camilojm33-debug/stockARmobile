@@ -481,6 +481,7 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         campaign,
         type("PreviewClient", (), {"name": "Cliente"})(),
         include_opt_out=not template_has_opt_out,
+        preview=True,
     ).strip():
         raise ValueError("El mensaje de campaña no puede quedar vacío.")
     campaign_data["whatsapp_template"] = template
@@ -671,7 +672,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             content[max(0, match.start() - 45):match.start()],
             re.IGNORECASE,
         )
-        for match in re.finditer(r"\$\s*\d[\d.,]*", content)
+        for match in re.finditer(r"\$\s*\d(?:[\d.,]*\d)?", content)
     )
     price_requested = bool(
         has_price_placeholder
@@ -690,7 +691,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
         price_phrase = re.compile(
             r"(\bprecio(?:\s+(?:mayorista|minorista|por\s+mayor))?"
             r"(?:\s+(?:de|es|a|por\s+unidad))?\s*[:=]?\s*)"
-            r"(?:\$\s*)?\d[\d.,]*",
+            r"(?:\$\s*)?\d(?:[\d.,]*\d)?",
             re.IGNORECASE,
         )
         content, replaced_price = price_phrase.subn(
@@ -699,7 +700,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             count=1,
         )
         if not replaced_price:
-            currency_amounts = list(re.finditer(r"\$\s*\d[\d.,]*", content))
+            currency_amounts = list(re.finditer(r"\$\s*\d(?:[\d.,]*\d)?", content))
             product_amounts = []
             for amount_match in currency_amounts:
                 nearby_prefix = content[max(0, amount_match.start() - 45):amount_match.start()].lower()
@@ -760,7 +761,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
         price_phrase = re.compile(
             r"(\bprecio(?:\s+(?:mayorista|minorista|por\s+mayor))?"
             r"(?:\s+(?:de|es|a|por\s+unidad))?\s*[:=]?\s*)"
-            r"(?:\$\s*)?\d[\d.,]*",
+            r"(?:\$\s*)?\d(?:[\d.,]*\d)?",
             re.IGNORECASE,
         )
         content, replaced_price = price_phrase.subn(
@@ -769,7 +770,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             count=1,
         )
         if not replaced_price:
-            currency_amounts = list(re.finditer(r"\$\s*\d[\d.,]*", content))
+            currency_amounts = list(re.finditer(r"\$\s*\d(?:[\d.,]*\d)?", content))
             product_amounts = []
             for amount_match in currency_amounts:
                 current_amount = amount_match.group(0).replace(" ", "")
@@ -798,13 +799,13 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             "{{lista_mayorista}}",
             str(resolution.get("price_list_name") or "precio minorista"),
         )
-        if not re.search(r"\$\s*\d[\d.,]*", content) and "precio" in content.lower():
+        if not re.search(r"\$\s*\d(?:[\d.,]*\d)?", content) and "precio" in content.lower():
             content = f"{content.rstrip()}\nPrecio por unidad: {rendered_price}."
 
         # The personalized product price is the only fixed amount that may be
         # rewritten. Keep explicitly labeled freight charges, but refuse to
         # send any other ambiguous hard-coded amount.
-        for amount_match in re.finditer(r"\$\s*\d[\d.,]*", content):
+        for amount_match in re.finditer(r"\$\s*\d(?:[\d.,]*\d)?", content):
             if amount_match.group(0).replace(" ", "") == rendered_price.replace(" ", ""):
                 continue
             nearby_prefix = content[max(0, amount_match.start() - 45):amount_match.start()].lower()
