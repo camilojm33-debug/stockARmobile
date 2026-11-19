@@ -654,11 +654,22 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             content,
             count=1,
         )
-        if not replaced_price and not has_price_placeholder:
+        if not replaced_price:
             currency_amounts = list(re.finditer(r"\$\s*\d[\d.,]*", content))
-            if len(currency_amounts) == 1:
-                match = currency_amounts[0]
+            product_amounts = []
+            for amount_match in currency_amounts:
+                nearby_prefix = content[max(0, amount_match.start() - 45):amount_match.start()].lower()
+                if re.search(r"\b(?:env[ií]o|flete|cargo de env[ií]o|costo de env[ií]o)\b", nearby_prefix):
+                    continue
+                product_amounts.append(amount_match)
+            if len(product_amounts) == 1:
+                match = product_amounts[0]
                 content = content[:match.start()] + preview_price + content[match.end():]
+            elif len(product_amounts) > 1:
+                raise ValueError(
+                    "El mensaje tiene varios importes fijos y no se puede identificar cuál es el precio del producto. "
+                    "Editalo para usar {{precio}} y conservar otros cargos, como el envío."
+                )
         content = content.replace("{{precio}}", preview_price)
         content = content.replace("{{cantidad_minima}}", "según el tramo aplicable")
         content = content.replace("{{lista_mayorista}}", "tu lista vigente")
