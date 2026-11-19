@@ -1836,22 +1836,27 @@ def campaign_update_recipients(campaign_id):
                 continue
             if value > 0:
                 requested.add(value)
+        if not requested:
+            flash("Seleccioná al menos un cliente para agregar a la campaña.", "warning")
+            return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
         rows = Client.query.filter(
             Client.company_id == current_user.company_id,
             Client.active.is_(True),
             Client.id.in_(requested),
-        ).all() if requested else []
+        ).all()
         skipped_opt_out = 0
+        previous_count = len(current_ids)
         for row in rows:
             if str(row.whatsapp_marketing_consent or "unknown").strip().lower() == "opted_out":
                 skipped_opt_out += 1
                 continue
             current_ids.add(int(row.id))
+        added_count = len(current_ids) - previous_count
         campaign_data["audience_selection_mode"] = "selected"
         campaign_data["selected_client_ids"] = sorted(current_ids)
         db.session.commit()
         flash(
-            f"Se agregaron {len(current_ids)} destinatario(s) a la selección. "
+            f"Se agregaron {added_count} destinatario(s) a la selección. "
             f"{skipped_opt_out} contacto(s) con baja solicitada no se agregaron. "
             "Los que todavía no tengan WhatsApp válido y consentimiento documentado aparecerán para corregir, pero no se enviarán.",
             "success",
