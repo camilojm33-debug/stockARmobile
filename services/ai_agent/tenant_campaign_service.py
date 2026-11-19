@@ -602,6 +602,7 @@ def _format_campaign_price(value) -> str:
 
 def _render_content(campaign, client, *, include_opt_out=True):
     content = str(campaign.content or "")
+    has_price_placeholder = "{{precio}}" in content
     product = campaign.product
     replacements = {
         "{{cliente}}": str(client.name or ""),
@@ -613,9 +614,8 @@ def _render_content(campaign, client, *, include_opt_out=True):
         content = content.replace(key, value)
 
     price_requested = bool(
-        "{{precio}}" in content
+        has_price_placeholder
         or re.search(r"\bprecio\b", content + " " + str(campaign.objective or ""), re.IGNORECASE)
-        or re.search(r"\$\s*\d", content)
     )
     if price_requested and product is None:
         raise ValueError(
@@ -654,10 +654,29 @@ def _render_content(campaign, client, *, include_opt_out=True):
             )
 
         rendered_price = _format_campaign_price(resolution["price"])
-        # Legacy AI drafts sometimes wrote the current retail amount directly
-        # into the text. Replace currency amounts with this recipient's resolved
-        # price so a wholesale buyer never sees another customer's tariff.
-        content = re.sub(r"\$\s*\d[\d.,]*", rendered_price, content)
+        # Replace the amount explicitly attached to the word "precio" first.
+        # Do not rewrite unrelated currency amounts such as shipping charges.
+        price_phrase = re.compile(
+            r"(\bprecio(?:\s+(?:mayorista|minorista|por\s+mayor))?"
+            r"(?:\s+(?:de|es|a|por\s+unidad))?\s*[:=]?\s*)"
+            r"(?:\$\s*)?\d[\d.,]*",
+            re.IGNORECASE,
+        )
+        content, replaced_price = price_phrase.subn(
+            lambda match: f"{match.group(1)}{rendered_price}",
+            content,
+            count=1,
+        )
+        if not replaced_price and not has_price_placeholder:
+            currency_amounts = list(re.finditer(r"\$\s*\d[\d.,]*", content))
+            if len(currency_amounts) == 1:
+                match = currency_amounts[0]
+                content = content[:match.start()] + rendered_price + content[match.end():]
+            elif len(currency_amounts) > 1:
+                raise ValueError(
+                    "El mensaje tiene varios importes fijos y no se puede identificar cuál es el precio del producto. "
+                    "Editalo para usar {{precio}} y conservar otros cargos, como el envío."
+                )
         content = content.replace("{{precio}}", rendered_price)
         content = content.replace("{{cantidad_minima}}", str(quantity.normalize()))
         content = content.replace(
