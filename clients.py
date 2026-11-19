@@ -34,20 +34,30 @@ def _marketing_consent_form_value(name, current="unknown"):
     return value
 
 
-def _record_client_whatsapp_consent(client, status, *, source):
-    evidence = str(request.form.get("whatsapp_marketing_consent_evidence") or "").strip()
-    if status == "opted_in" and not evidence:
-        raise ValueError("Para habilitar campañas, registrá cómo y cuándo el cliente autorizó los mensajes de WhatsApp.")
+def _record_client_whatsapp_consent(client, status, *, source, evidence=None):
+    evidence_text = str(
+        evidence if evidence is not None
+        else request.form.get("whatsapp_marketing_consent_evidence") or ""
+    ).strip()
+    if status == "opted_in":
+        raw_whatsapp = str(getattr(client, "whatsapp", None) or "").strip()
+        from services.whatsapp_share_service import normalize_whatsapp_number
+        normalized = normalize_whatsapp_number(raw_whatsapp)
+        if not normalized or not 11 <= len(normalized) <= 15:
+            raise ValueError("Para habilitar campañas, cargá un WhatsApp válido del cliente.")
+        if not evidence_text:
+            raise ValueError("Para habilitar campañas, registrá cómo y cuándo el cliente autorizó los mensajes de WhatsApp.")
+        client.whatsapp = normalized
     from services.whatsapp_consent_service import record_whatsapp_consent
     if status == "opted_out":
-        evidence = "Permiso de WhatsApp retirado desde el formulario de clientes."
+        evidence_text = "Permiso de WhatsApp retirado desde el formulario de clientes."
     elif status == "unknown":
-        evidence = "Estado de permiso de WhatsApp marcado como desconocido desde el formulario de clientes."
+        evidence_text = "Estado de permiso de WhatsApp marcado como desconocido desde el formulario de clientes."
     record_whatsapp_consent(
         client,
         status,
         source=source,
-        evidence=evidence,
+        evidence=evidence_text,
         actor_user_id=getattr(current_user, "id", None),
     )
 
@@ -520,6 +530,18 @@ def api_quick_create():
     name = (payload.get("name") or "").strip()
     email = (payload.get("email") or "").strip() or None
     whatsapp = (payload.get("whatsapp") or "").strip() or None
+    whatsapp_consent = str(payload.get("whatsapp_marketing_consent") or "unknown").strip().lower()
+    whatsapp_consent_evidence = str(payload.get("whatsapp_marketing_consent_evidence") or "").strip()
+    if whatsapp_consent not in {"unknown", "opted_in", "opted_out"}:
+        return jsonify({"error": "El estado de consentimiento de WhatsApp no es válido."}), 400
+    if whatsapp_consent == "opted_in":
+        from services.whatsapp_share_service import normalize_whatsapp_number
+        normalized_whatsapp = normalize_whatsapp_number(whatsapp or "")
+        if not normalized_whatsapp or not 11 <= len(normalized_whatsapp) <= 15:
+            return jsonify({"error": "Para habilitar campañas, ingresá un WhatsApp válido."}), 400
+        if not whatsapp_consent_evidence:
+            return jsonify({"error": "Registrá cómo y cuándo el cliente autorizó recibir promociones."}), 400
+        whatsapp = normalized_whatsapp
     customer_type = str(payload.get("customer_type") or "minorista").strip().lower()
     raw_price_list_id = payload.get("price_list_id")
 
@@ -568,7 +590,18 @@ def api_quick_create():
     )
     db.session.add(client)
     try:
+        db.session.flush()
+        if whatsapp_consent != "unknown":
+            _record_client_whatsapp_consent(
+                client,
+                whatsapp_consent,
+                source="pos_quick_create",
+                evidence=whatsapp_consent_evidence,
+            )
         db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"error": str(exc)}), 400
     except Exception:
         db.session.rollback()
         current_app.logger.exception("POS quick client creation failed for company_id=%s", getattr(current_user, "company_id", None))
