@@ -2037,3 +2037,71 @@ def test_vendedor_ia_consent_parser_requires_an_explicit_yes_or_no():
     assert _marketing_consent_answer("NO, gracias") == "opted_out"
     assert _marketing_consent_answer("Quiero consultar el precio") is None
     assert _marketing_consent_answer("Me interesa el producto") is None
+
+
+
+def test_campaign_recipient_picker_persists_selected_customers(app, monkeypatch):
+    from types import SimpleNamespace
+    from app import Client, Company, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Recipient Picker Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="recipient-picker-admin",
+            email="recipient-picker@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente elegido",
+            whatsapp="5493625551000",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="unknown",
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Selector de destinatarios",
+            objective="Prueba de selección",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.flush()
+
+        monkeypatch.setattr(ai_agents, "current_user", SimpleNamespace(company_id=company.id, id=user.id))
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+        monkeypatch.setattr(
+            ai_agents.CampaignService,
+            "_campaign",
+            lambda _company_id, _campaign_id: campaign,
+        )
+
+        route = ai_agents.campaign_update_recipients.__wrapped__
+        with app.test_request_context(
+            f"/campanas/{campaign.id}/destinatarios",
+            method="POST",
+            data={"action": "add", "client_ids": [str(client.id)]},
+        ):
+            route(campaign.id)
+
+        db.session.refresh(campaign)
+        stored = __import__("json").loads(campaign.system_data_json or "{}")
+        assert stored["audience_selection_mode"] == "selected"
+        assert stored["selected_client_ids"] == [client.id]
+
