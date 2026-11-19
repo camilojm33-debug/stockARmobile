@@ -1489,17 +1489,32 @@ def campaign_detail(campaign_id):
         if selected_id > 0:
             selected_ids.append(selected_id)
     selected_ids = sorted(set(selected_ids))
-    selected_contacts = []
+    selected_page = max(1, request.args.get("selected_page", 1, type=int) or 1)
+    selected_page_size = 25
+    selected_query = Client.query.filter(
+        Client.company_id == current_user.company_id,
+        Client.active.is_(True),
+    )
     if selected_mode and selected_ids:
-        selected_rows = Client.query.filter(
-            Client.company_id == current_user.company_id,
-            Client.active.is_(True),
-            Client.id.in_(selected_ids),
-        ).order_by(Client.name.asc()).limit(30).all()
-        selected_contacts = [
-            {"client": row, **_campaign_contact_eligibility(row)}
-            for row in selected_rows
-        ]
+        selected_query = selected_query.filter(Client.id.in_(selected_ids))
+    else:
+        selected_query = selected_query.filter(db.false())
+    campaign_selected_contacts_total = selected_query.count()
+    campaign_selected_page_count = max(
+        1,
+        (campaign_selected_contacts_total + selected_page_size - 1) // selected_page_size,
+    )
+    selected_page = min(selected_page, campaign_selected_page_count)
+    selected_rows = (
+        selected_query.order_by(Client.name.asc(), Client.id.asc())
+        .offset((selected_page - 1) * selected_page_size)
+        .limit(selected_page_size)
+        .all()
+    )
+    selected_contacts = [
+        {"client": row, **_campaign_contact_eligibility(row)}
+        for row in selected_rows
+    ]
 
     contact_search = str(request.args.get("contact_search") or "").strip()[:100]
     contact_type = str(request.args.get("contact_type") or "all").strip().lower()
@@ -1554,14 +1569,14 @@ def campaign_detail(campaign_id):
         campaign_selection_mode=selected_mode,
         campaign_can_reopen_for_recipients=campaign_can_reopen_for_recipients,
         campaign_selected_ids=selected_ids,
-        campaign_selected_count=len(selected_ids),
+        campaign_selected_count=campaign_selected_contacts_total,\n        campaign_selected_contacts_total=campaign_selected_contacts_total,\n        campaign_selected_page=selected_page,\n        campaign_selected_page_count=campaign_selected_page_count,
         campaign_contact_search=contact_search,
         campaign_contact_type=contact_type,
         campaign_contact_state=contact_state,
         campaign_contact_page=contact_page,
         campaign_contact_page_count=campaign_contact_page_count,
         campaign_available_total=campaign_available_total,
-        campaign_selected_contacts_truncated=len(selected_ids) > len(selected_contacts),
+        campaign_selected_contacts_truncated=campaign_selected_contacts_total > len(selected_contacts),
         campaign_pricing_quantity=campaign_system_data.get("pricing_quantity") or "",
         campaign_price_exclusions=campaign_system_data.get("pricing_exclusions") or [],
         campaign_price_excluded_count=int(campaign_system_data.get("pricing_excluded_count") or 0),
@@ -1947,6 +1962,11 @@ def campaign_update_recipients(campaign_id):
         selected_return_page = max(1, int(request.form.get("contact_page") or 1))
     except (TypeError, ValueError):
         selected_return_page = 1
+
+    try:
+        selected_audience_page = max(1, int(request.form.get("selected_audience_page") or 1))
+    except (TypeError, ValueError):
+        selected_audience_page = 1
 
     if action in {"add", "add_all_eligible"}:
         if action == "add":
