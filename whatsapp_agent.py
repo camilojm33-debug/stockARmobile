@@ -993,6 +993,161 @@ def _persist_deterministic_turn(conversation, *, external_id: str, text: str, re
     return assistant
 
 
+WHATSAPP_MARKETING_OPT_IN_PROMPT = (
+    "¿Autorizás a este comercio a enviarte promociones y novedades por WhatsApp? "
+    "Es opcional. Respondé SÍ para aceptar o NO para rechazar."
+)
+
+
+def _marketing_consent_answer(text: str) -> str | None:
+    normalized = unicodedata.normalize("NFKD", str(text or "").strip().lower())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized)
+    normalized = " ".join(normalized.split())
+    yes = {
+        "si", "si acepto", "acepto", "si autorizo", "autorizo",
+        "acepto recibir promociones", "autorizo recibir promociones",
+        "quiero recibir promociones", "claro que si", "si por favor",
+    }
+    no = {
+        "no", "no gracias", "no acepto", "no autorizo",
+        "no quiero", "no quiero recibir promociones", "prefiero que no",
+    }
+    if normalized in yes or normalized.startswith(("si acepto ", "si autorizo ", "claro que si ")):
+        return "opted_in"
+    if normalized in no or normalized.startswith(("no gracias", "no acepto", "no autorizo", "no quiero")):
+        return "opted_out"
+    return None
+
+
+def _append_pending_whatsapp_marketing_consent_prompt(conversation, assistant) -> bool:
+    """Append one explicit opt-in question after a successful Vendedor IA order."""
+    from app import Client
+
+    state = _metadata(conversation)
+    pending = state.get("whatsapp_marketing_opt_in_pending")
+    if not isinstance(pending, dict) or pending.get("prompt_message_id"):
+        return False
+    try:
+        client_id = int(pending.get("client_id") or 0)
+    except (TypeError, ValueError):
+        client_id = 0
+    client = Client.query.filter_by(
+        id=client_id,
+        company_id=int(conversation.company_id),
+        active=True,
+    ).first() if client_id else None
+    if client is None or str(client.whatsapp_marketing_consent or "unknown").strip().lower() != "unknown":
+        state.pop("whatsapp_marketing_opt_in_pending", None)
+        _set_metadata(conversation, state)
+        db.session.commit()
+        return False
+
+    existing_copy = str(assistant.content or "").strip()
+    if WHATSAPP_MARKETING_OPT_IN_PROMPT not in existing_copy:
+        assistant.content = f"{existing_copy}\n\n{WHATSAPP_MARKETING_OPT_IN_PROMPT}".strip()
+    assistant_metadata = dict(assistant.metadata_json or {}) if isinstance(assistant.metadata_json, dict) else {}
+    assistant_metadata["whatsapp_marketing_opt_in_prompt"] = True
+    assistant.metadata_json = assistant_metadata
+    pending["prompt_message_id"] = int(assistant.id)
+    pending["prompted_at"] = utcnow_naive().isoformat()
+    state["whatsapp_marketing_opt_in_pending"] = pending
+    _set_metadata(conversation, state)
+    db.session.commit()
+    return True
+
+
+def _handle_pending_whatsapp_marketing_opt_in(
+    company,
+    conversation,
+    *,
+    sender: str,
+    external_id: str,
+    text: str,
+) -> bool:
+    """Capture only an explicit yes/no answer to a previously sent WhatsApp opt-in prompt."""
+    state = _metadata(conversation)
+    pending = state.get("whatsapp_marketing_opt_in_pending")
+    if not isinstance(pending, dict) or not pending.get("prompt_message_id"):
+        return False
+    answer = _marketing_consent_answer(text)
+    if answer is None:
+        return False
+
+    from app import Client
+    from services.whatsapp_consent_service import record_whatsapp_consent
+    from services.whatsapp_share_service import normalize_whatsapp_number
+
+    try:
+        client_id = int(pending.get("client_id") or 0)
+    except (TypeError, ValueError):
+        client_id = 0
+    client = Client.query.filter_by(
+        id=client_id,
+        company_id=int(company.id),
+        active=True,
+    ).first() if client_id else None
+    normalized_sender = normalize_whatsapp_number(sender)
+    if client is None or not normalized_sender or not 11 <= len(normalized_sender) <= 15:
+        return False
+
+    stored_whatsapp = normalize_whatsapp_number(client.whatsapp or client.phone or "")
+    if stored_whatsapp != normalized_sender:
+        # Never apply a conversation's answer to a different customer record.
+        return False
+
+    current_status = str(client.whatsapp_marketing_consent or "unknown").strip().lower()
+    if current_status == "opted_out":
+        answer = "opted_out"
+    elif current_status == "opted_in":
+        answer = "opted_in"
+
+    if answer == "opted_in":
+        client.whatsapp = normalized_sender
+        evidence = (
+            "El cliente respondió SÍ de forma expresa a la pregunta de autorización de promociones "
+            f"por WhatsApp. Mensaje entrante: {str(external_id or '')[:255]}; "
+            f"pregunta enviada: {pending.get('prompt_message_id')}; respuesta: {str(text or '')[:500]}."
+        )
+        record_whatsapp_consent(
+            client,
+            "opted_in",
+            source="vendedor_ia_whatsapp",
+            evidence=evidence,
+        )
+        response = "¡Gracias! Registramos tu autorización para recibir promociones y novedades de este comercio por WhatsApp. Podés responder BAJA cuando quieras para dejar de recibirlas."
+    else:
+        evidence = (
+            "El cliente respondió NO a la solicitud de autorización para recibir promociones "
+            f"por WhatsApp. Mensaje entrante: {str(external_id or '')[:255]}; "
+            f"pregunta enviada: {pending.get('prompt_message_id')}; respuesta: {str(text or '')[:500]}."
+        )
+        record_whatsapp_consent(
+            client,
+            "opted_out",
+            source="vendedor_ia_whatsapp",
+            evidence=evidence,
+        )
+        response = "Entendido. No te enviaremos promociones ni novedades por WhatsApp. Tu consulta y tus pedidos pueden continuar normalmente."
+
+    state.pop("whatsapp_marketing_opt_in_pending", None)
+    state["whatsapp_marketing_opt_in_last_result"] = {
+        "client_id": int(client.id),
+        "status": answer,
+        "recorded_at": utcnow_naive().isoformat(),
+    }
+    _set_metadata(conversation, state)
+    db.session.commit()
+    assistant = _persist_deterministic_turn(
+        conversation,
+        external_id=external_id,
+        text=text,
+        response=response,
+    )
+    _send_persisted_reply(company, sender=sender, assistant=assistant)
+    return True
+
+
 AI_ORDER_MARKER = "Pedido generado por el Vendedor 24 hs de StockARmobile."
 
 
