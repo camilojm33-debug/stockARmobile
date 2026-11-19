@@ -114,8 +114,7 @@
               <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="remove"><input type="hidden" name="client_id" value="{{ item.client.id }}">
                 <input type="hidden" name="contact_search" value="{{ campaign_contact_search }}"><input type="hidden" name="contact_type" value="{{ campaign_contact_type }}"><input type="hidden" name="contact_state" value="{{ campaign_contact_state }}"><input type="hidden" name="contact_page" value="{{ campaign_contact_page }}">
-        <input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
-        <input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
+                <input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
                 <button class="btn btn-sm btn-outline-danger" type="submit" aria-label="Quitar {{ item.client.name }}">Quitar</button>
               </form>
               {% endif %}
@@ -184,6 +183,7 @@
       <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}" id="campaignRecipientPicker">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add">
         <input type="hidden" name="contact_search" value="{{ campaign_contact_search }}"><input type="hidden" name="contact_type" value="{{ campaign_contact_type }}"><input type="hidden" name="contact_state" value="{{ campaign_contact_state }}"><input type="hidden" name="contact_page" value="{{ campaign_contact_page }}">
+        <input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
         {% if campaign_available_contacts %}
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-2">
