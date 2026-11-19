@@ -1491,30 +1491,49 @@ def campaign_detail(campaign_id):
     selected_ids = sorted(set(selected_ids))
     selected_contacts = []
     if selected_mode and selected_ids:
-        rows = Client.query.filter(
+        selected_rows = Client.query.filter(
             Client.company_id == current_user.company_id,
             Client.active.is_(True),
             Client.id.in_(selected_ids),
-        ).order_by(Client.name.asc()).all()
-        selected_contacts = [{"client": row, **_campaign_contact_eligibility(row)} for row in rows]
+        ).order_by(Client.name.asc()).limit(30).all()
+        selected_contacts = [
+            {"client": row, **_campaign_contact_eligibility(row)}
+            for row in selected_rows
+        ]
 
     contact_search = str(request.args.get("contact_search") or "").strip()[:100]
-    available_query = Client.query.filter(
-        Client.company_id == current_user.company_id,
-        Client.active.is_(True),
+    contact_type = str(request.args.get("contact_type") or "all").strip().lower()
+    if contact_type not in {"all", "minorista", "mayorista"}:
+        contact_type = "all"
+    contact_state = str(request.args.get("contact_state") or "all").strip().lower()
+    if contact_state not in {"all", "ready", "pending", "opted_out"}:
+        contact_state = "all"
+    contact_page = max(1, request.args.get("contact_page", 1, type=int) or 1)
+    contact_page_size = 25
+
+    available_query = _campaign_contact_selection_query(
+        current_user.company_id,
+        search=contact_search,
+        customer_type=contact_type,
+        contact_state=contact_state,
     )
-    if contact_search:
-        like = f"%{contact_search}%"
-        available_query = available_query.filter(or_(
-            Client.name.ilike(like),
-            Client.phone.ilike(like),
-            Client.whatsapp.ilike(like),
-        ))
-    available_rows = available_query.order_by(Client.name.asc()).limit(100).all()
+    if selected_mode and selected_ids:
+        available_query = available_query.filter(~Client.id.in_(selected_ids))
+    campaign_available_total = available_query.count()
+    campaign_contact_page_count = max(
+        1,
+        (campaign_available_total + contact_page_size - 1) // contact_page_size,
+    )
+    contact_page = min(contact_page, campaign_contact_page_count)
+    available_rows = (
+        available_query.order_by(Client.name.asc(), Client.id.asc())
+        .offset((contact_page - 1) * contact_page_size)
+        .limit(contact_page_size)
+        .all()
+    )
     available_contacts = [
         {"client": row, **_campaign_contact_eligibility(row)}
         for row in available_rows
-        if not selected_mode or row.id not in set(selected_ids)
     ]
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
@@ -1536,6 +1555,14 @@ def campaign_detail(campaign_id):
         campaign_can_reopen_for_recipients=campaign_can_reopen_for_recipients,
         campaign_contact_search=contact_search,
         campaign_selected_ids=selected_ids,
+        campaign_selected_count=len(selected_ids),
+        campaign_contact_search=contact_search,
+        campaign_contact_type=contact_type,
+        campaign_contact_state=contact_state,
+        campaign_contact_page=contact_page,
+        campaign_contact_page_count=campaign_contact_page_count,
+        campaign_available_total=campaign_available_total,
+        campaign_selected_contacts_truncated=len(selected_ids) > len(selected_contacts),
         campaign_pricing_quantity=campaign_system_data.get("pricing_quantity") or "",
         campaign_schedule_local=_campaign_schedule_local(campaign),
         campaign_sender_phone=campaign_sender_phone,
@@ -1722,6 +1749,55 @@ def _campaign_contact_eligibility(client):
     return {"eligible": True, "status": "Listo para enviar", "reason": "WhatsApp válido y consentimiento documentado.", "opted_out": False}
 
 
+def _campaign_contact_selection_query(company_id, *, search="", customer_type="all", contact_state="all"):
+    """Build a tenant-scoped CRM query for the campaign recipient picker."""
+    from app import Client
+    from sqlalchemy import func, or_
+
+    query = Client.query.filter(
+        Client.company_id == int(company_id),
+        Client.active.is_(True),
+    )
+    search = str(search or "").strip()[:100]
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(or_(
+            Client.name.ilike(pattern),
+            Client.phone.ilike(pattern),
+            Client.whatsapp.ilike(pattern),
+        ))
+
+    customer_type = str(customer_type or "all").strip().lower()
+    if customer_type in {"minorista", "mayorista"}:
+        query = query.filter(Client.customer_type == customer_type)
+
+    contact_state = str(contact_state or "all").strip().lower()
+    if contact_state == "opted_out":
+        query = query.filter(Client.whatsapp_marketing_consent == "opted_out")
+    elif contact_state == "ready":
+        query = query.filter(
+            Client.whatsapp.isnot(None),
+            func.length(func.trim(func.coalesce(Client.whatsapp, ""))) > 0,
+            Client.whatsapp_marketing_consent == "opted_in",
+            Client.whatsapp_marketing_consent_recorded_at.isnot(None),
+            func.length(func.trim(func.coalesce(Client.whatsapp_marketing_consent_source, ""))) > 0,
+            func.length(func.trim(func.coalesce(Client.whatsapp_marketing_consent_evidence, ""))) > 0,
+        )
+    elif contact_state == "pending":
+        query = query.filter(
+            Client.whatsapp_marketing_consent != "opted_out",
+            or_(
+                Client.whatsapp.is_(None),
+                func.length(func.trim(func.coalesce(Client.whatsapp, ""))) == 0,
+                Client.whatsapp_marketing_consent != "opted_in",
+                Client.whatsapp_marketing_consent_recorded_at.is_(None),
+                func.length(func.trim(func.coalesce(Client.whatsapp_marketing_consent_source, ""))) == 0,
+                func.length(func.trim(func.coalesce(Client.whatsapp_marketing_consent_evidence, ""))) == 0,
+            ),
+        )
+    return query
+
+
 @bp.route("/campanas/nueva", methods=["GET", "POST"])
 @company_admin_required
 def campaign_wizard():
@@ -1856,18 +1932,108 @@ def campaign_update_recipients(campaign_id):
             current_ids.add(value)
 
     from app import Client
-    if action == "add":
-        requested = set()
-        for raw_id in request.form.getlist("client_ids"):
-            try:
-                value = int(raw_id)
-            except (TypeError, ValueError):
+    selected_filter_search = str(request.form.get("contact_search") or "").strip()[:100]
+    selected_filter_type = str(request.form.get("contact_type") or "all").strip().lower()
+    if selected_filter_type not in {"all", "minorista", "mayorista"}:
+        selected_filter_type = "all"
+    selected_filter_state = str(request.form.get("contact_state") or "all").strip().lower()
+    if selected_filter_state not in {"all", "ready", "pending", "opted_out"}:
+        selected_filter_state = "all"
+    try:
+        selected_return_page = max(1, int(request.form.get("contact_page") or 1))
+    except (TypeError, ValueError):
+        selected_return_page = 1
+
+    if action in {"add", "add_all_eligible"}:
+        if action == "add":
+            requested = set()
+            for raw_id in request.form.getlist("client_ids"):
+                try:
+                    value = int(raw_id)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    requested.add(value)
+            if not requested:
+                flash("Marcá al menos un contacto para agregar.", "warning")
+                return redirect(url_for(
+                    "ai_agents.campaign_detail",
+                    campaign_id=campaign_id,
+                    contact_search=selected_filter_search,
+                    contact_type=selected_filter_type,
+                    contact_state=selected_filter_state,
+                    contact_page=selected_return_page,
+                ))
+            rows = Client.query.filter(
+                Client.company_id == current_user.company_id,
+                Client.active.is_(True),
+                Client.id.in_(requested),
+            ).all()
+        else:
+            # Bulk selection applies to every eligible match, not merely the
+            # 25 contacts currently visible on screen.
+            rows = _campaign_contact_selection_query(
+                current_user.company_id,
+                search=selected_filter_search,
+                customer_type=selected_filter_type,
+                contact_state="ready",
+            ).order_by(Client.id.asc()).yield_per(500)
+
+        skipped_opt_out = 0
+        previous_count = len(current_ids)
+        for row in rows:
+            eligibility = _campaign_contact_eligibility(row)
+            if eligibility.get("opted_out"):
+                skipped_opt_out += 1
                 continue
-            if value > 0:
-                requested.add(value)
-        if not requested:
-            flash("Seleccioná al menos un cliente para agregar a la campaña.", "warning")
-            return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
+            if action == "add_all_eligible" and not eligibility.get("eligible"):
+                continue
+            current_ids.add(int(row.id))
+
+        added_count = len(current_ids) - previous_count
+        campaign_data["audience_selection_mode"] = "selected"
+        campaign_data["selected_client_ids"] = sorted(current_ids)
+        campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
+        db.session.commit()
+        if action == "add_all_eligible":
+            flash(
+                f"Se agregaron {added_count} contacto(s) habilitado(s) que coinciden con los filtros. "
+                "La selección queda guardada aunque cambies de página o búsqueda.",
+                "success" if added_count else "warning",
+            )
+        else:
+            flash(
+                f"Se agregaron {added_count} contacto(s). {skipped_opt_out} baja(s) respetada(s). "
+                "Los contactos pendientes se pueden corregir, pero no se enviarán sin WhatsApp válido y autorización documentada.",
+                "success",
+            )
+    elif action == "remove":
+        try:
+            remove_id = int(request.form.get("client_id") or 0)
+        except (TypeError, ValueError):
+            remove_id = 0
+        current_ids.discard(remove_id)
+        campaign_data["audience_selection_mode"] = "selected"
+        campaign_data["selected_client_ids"] = sorted(current_ids)
+        campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
+        db.session.commit()
+        flash("Destinatario quitado de la campaña.", "success")
+    elif action == "clear":
+        campaign_data["audience_selection_mode"] = "segment"
+        campaign_data["selected_client_ids"] = []
+        campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
+        db.session.commit()
+        flash("La campaña volvió a usar el público general del segmento.", "success")
+    else:
+        flash("Acción de destinatarios no válida.", "warning")
+    return redirect(url_for(
+        "ai_agents.campaign_detail",
+        campaign_id=campaign_id,
+        contact_search=selected_filter_search,
+        contact_type=selected_filter_type,
+        contact_state=selected_filter_state,
+        contact_page=selected_return_page,
+    ))
         rows = Client.query.filter(
             Client.company_id == current_user.company_id,
             Client.active.is_(True),
@@ -1983,7 +2149,13 @@ def campaign_transition(campaign_id):
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
         if target_status.upper() == "APROBADA":
-            prepare_recipients(campaign.id, company_id=current_user.company_id)
+            preparation = prepare_recipients(campaign.id, company_id=current_user.company_id)
+            if int(preparation.get("target_count") or 0) < 1:
+                raise ValueError(
+                    "No se puede aprobar esta campaña porque no hay destinatarios habilitados. "
+                    "Completá la audiencia y verificá WhatsApp y el consentimiento. "
+                    "No se enviará nada con el público en cero."
+                )
             CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
             db.session.commit()
             flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano desde el número de WhatsApp que este comercio conectó mediante Meta, respetando el consentimiento.", "success")
