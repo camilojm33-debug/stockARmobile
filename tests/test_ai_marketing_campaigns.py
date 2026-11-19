@@ -245,6 +245,97 @@ def test_campaign_detail_has_cancel_button_for_queued_state():
     assert "Cancelar campaña" in template
 
 
+def test_campaign_audience_diagnostics_explain_missing_whatsapp_and_consent(app):
+    from app import Client, Company, User, db
+    from ai_agents import _campaign_audience_diagnostics
+
+    with app.app_context():
+        company = Company(name="Diagnostics Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="diagnostics-admin",
+            email="diagnostics@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+
+        clients = [
+            Client(
+                name="Contacto elegible",
+                whatsapp="5491122334455",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="opted_in",
+                **_consent_evidence(),
+            ),
+            Client(
+                name="Solo teléfono",
+                phone="5491122334456",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="unknown",
+            ),
+            Client(
+                name="Sin autorización",
+                whatsapp="5491122334457",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="unknown",
+            ),
+            Client(
+                name="WhatsApp inválido",
+                whatsapp="abc",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="opted_in",
+                **_consent_evidence(),
+            ),
+            Client(
+                name="Pidió la baja",
+                whatsapp="5491122334458",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="opted_out",
+            ),
+        ]
+        db.session.add_all(clients)
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Diagnóstico de audiencia",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        db.session.flush()
+
+        result = _campaign_audience_diagnostics(campaign)
+
+        assert result["total"] == 5
+        assert result["eligible"] == 1
+        assert result["excluded"] == 4
+        assert result["reasons"]["phone_only"] == 1
+        assert result["reasons"]["missing_consent"] == 2
+        assert result["reasons"]["invalid_whatsapp"] == 1
+        assert result["reasons"]["opted_out"] == 1
+        assert {item["client"].name for item in result["excluded_contacts"]} == {
+            "Solo teléfono",
+            "Sin autorización",
+            "WhatsApp inválido",
+            "Pidió la baja",
+        }
+
+
 def test_inactive_audience_is_distinct_from_whatsapp_eligible_targets(app, monkeypatch):
     from datetime import datetime, timedelta
     from app import Client, Company, Sale, User, db
