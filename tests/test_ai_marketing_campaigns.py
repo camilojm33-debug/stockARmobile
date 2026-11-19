@@ -2089,7 +2089,7 @@ def test_campaign_recipient_picker_persists_selected_customers(app, monkeypatch)
         monkeypatch.setattr(
             ai_agents.CampaignService,
             "_campaign",
-            lambda _company_id, _campaign_id: campaign,
+            staticmethod(lambda _company_id, _campaign_id: campaign),
         )
 
         route = ai_agents.campaign_update_recipients.__wrapped__
