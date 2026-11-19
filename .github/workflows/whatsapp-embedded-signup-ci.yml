@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - feature/whatsapp-embedded-signup-completion
-      - fix/marketing-wholesale-targeting-consent
   pull_request:
     branches:
       - main
