@@ -57,8 +57,13 @@
         </form>
         {% endif %}
       </div></div>
-      {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] %}
+      {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] or campaign_can_reopen_for_recipients %}
       <div class="card app-card mb-4"><div class="card-body">
+        {% if campaign_can_reopen_for_recipients %}
+        <div class="alert alert-warning small">
+          Esta campaña terminó sin enviar mensajes y no llegó a preparar destinatarios. Al agregar el primer contacto se reabrirá como borrador para que puedas revisar y aprobar el envío.
+        </div>
+        {% endif %}
         <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
           <div><h2 class="h5 fw-bold mb-1">Agregar destinatarios</h2><p class="small text-muted mb-0">Buscá clientes del comercio y agregalos a esta campaña. Al guardar una selección, la campaña se limitará a esos contactos.</p></div>
           {% if campaign_selection_mode %}<span class="badge text-bg-primary">{{ campaign_selected_contacts|length }} seleccionados</span>{% else %}<span class="badge text-bg-secondary">Público por segmento</span>{% endif %}
