@@ -1569,7 +1569,10 @@ def campaign_detail(campaign_id):
         campaign_selection_mode=selected_mode,
         campaign_can_reopen_for_recipients=campaign_can_reopen_for_recipients,
         campaign_selected_ids=selected_ids,
-        campaign_selected_count=campaign_selected_contacts_total,\n        campaign_selected_contacts_total=campaign_selected_contacts_total,\n        campaign_selected_page=selected_page,\n        campaign_selected_page_count=campaign_selected_page_count,
+        campaign_selected_count=campaign_selected_contacts_total,
+        campaign_selected_contacts_total=campaign_selected_contacts_total,
+        campaign_selected_page=selected_page,
+        campaign_selected_page_count=campaign_selected_page_count,
         campaign_contact_search=contact_search,
         campaign_contact_type=contact_type,
         campaign_contact_state=contact_state,
@@ -1987,7 +1990,7 @@ def campaign_update_recipients(campaign_id):
                     contact_type=selected_filter_type,
                     contact_state=selected_filter_state,
                     contact_page=selected_return_page,
-                    selected_page=selected_audience_page,
+        selected_page=selected_audience_page,
                 ))
             rows = Client.query.filter(
                 Client.company_id == current_user.company_id,
