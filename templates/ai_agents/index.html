@@ -365,8 +365,8 @@
         </button>
         <button type="button" class="marketing-ai-feature text-start" data-marketing-prompt="Prepará una propuesta comercial para mi negocio">
           <div class="marketing-ai-feature-icon"><i class="bi bi-megaphone"></i></div>
-          <div class="fw-bold mb-1">Preparar una propuesta</div>
-          <div class="small text-muted">Armá una idea de campaña y un mensaje para revisar antes de usarlo.</div>
+          <div class="fw-bold mb-1">Crear una campaña con IA</div>
+          <div class="small text-muted">Marketing IA analiza tus datos, elige el público y redacta el mensaje. Vos revisás el borrador antes de aprobar.</div>
         </button>
       </div>
     </section>
@@ -404,12 +404,13 @@
       </div>
       <div class="col-lg-4">
         <aside class="marketing-ai-side-card">
-          <div class="fw-bold mb-1">Cómo trabajar con Marketing IA</div>
-          <div class="small text-muted mb-2">Una forma simple de pasar del dato a la acción.</div>
-          <div class="marketing-ai-step"><span class="marketing-ai-step-num">1</span><div><div class="fw-semibold small">Consultá</div><div class="small text-muted">Pedile que encuentre una oportunidad concreta.</div></div></div>
-          <div class="marketing-ai-step"><span class="marketing-ai-step-num">2</span><div><div class="fw-semibold small">Analizá</div><div class="small text-muted">Revisá los productos, clientes o segmentos detectados.</div></div></div>
-          <div class="marketing-ai-step"><span class="marketing-ai-step-num">3</span><div><div class="fw-semibold small">Prepará</div><div class="small text-muted">Convertí el análisis en una propuesta comercial.</div></div></div>
-          <div class="marketing-ai-step"><span class="marketing-ai-step-num">4</span><div><div class="fw-semibold small">Revisá</div><div class="small text-muted">Tomá vos la decisión antes de cualquier acción externa.</div></div></div>
+          <div class="fw-bold mb-1">Así funciona una campaña</div>
+          <div class="small text-muted mb-2">No tenés que completar un formulario ni redactar el mensaje.</div>
+          <div class="marketing-ai-step"><span class="marketing-ai-step-num">1</span><div><div class="fw-semibold small">Le pedís la campaña</div><div class="small text-muted">Contale qué querés lograr o tocá “Crear una campaña con IA”.</div></div></div>
+          <div class="marketing-ai-step"><span class="marketing-ai-step-num">2</span><div><div class="fw-semibold small">La IA la prepara</div><div class="small text-muted">Analiza productos y clientes, propone el público y redacta el WhatsApp.</div></div></div>
+          <div class="marketing-ai-step"><span class="marketing-ai-step-num">3</span><div><div class="fw-semibold small">Revisás el borrador</div><div class="small text-muted">Abrís la campaña para corregir el texto y ver quiénes tienen permiso.</div></div></div>
+          <div class="marketing-ai-step"><span class="marketing-ai-step-num">4</span><div><div class="fw-semibold small">Vos aprobás</div><div class="small text-muted">Solo después de tu aprobación se intenta enviar a los contactos elegibles.</div></div></div>
+          <div class="alert alert-info small mt-3 mb-0">Los contactos sin permiso promocional documentado quedan excluidos. La IA nunca los habilita por su cuenta.</div>
         </aside>
       </div>
     </div>
@@ -757,7 +758,81 @@
 </script>
 {% endif %}
 {% if view in ['analista', 'marketing'] %}<script>
-(function () { const box = document.getElementById('special-ai-chat'); const input = document.getElementById('special-ai-input'); const send = document.getElementById('special-ai-send'); const error = document.getElementById('special-ai-error'); let conversationId = null; const agent = '{{ view }}'; function add(role, text) { const row = document.createElement('div'); row.className = 'mb-2'; const label = role === 'user' ? 'Vos' : 'Agente'; row.innerHTML = '<div class="small fw-semibold text-muted">' + label + '</div><div class="border rounded-2 px-3 py-2" style="white-space: pre-wrap"></div>'; row.lastChild.textContent = text; box.appendChild(row); box.scrollTop = box.scrollHeight; } async function ask() { const message = input.value.trim(); if (!message) return; error.textContent = ''; add('user', message); input.value = ''; send.disabled = true; try { const response = await fetch('{{ chat_url }}', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}'}, body: JSON.stringify({message: message, agent: agent, ...(conversationId ? {conversation_id: conversationId} : {})}) }); const contentType = response.headers.get('content-type') || ''; if (!contentType.includes('application/json')) throw new Error('El servidor no devolvió una respuesta JSON válida.'); const data = await response.json(); if (!response.ok || !data.success) throw new Error(window.publicAiError(data.error || 'No se pudo procesar la consulta.')); conversationId = data.conversation_id; add('assistant', data.content || ''); } catch (err) { error.textContent = err.message; } finally { send.disabled = false; } } send.addEventListener('click', ask); input.addEventListener('keydown', function (event) { if (event.key === 'Enter') { event.preventDefault(); ask(); } }); })();
+(function () {
+  const box = document.getElementById('special-ai-chat');
+  const input = document.getElementById('special-ai-input');
+  const send = document.getElementById('special-ai-send');
+  const error = document.getElementById('special-ai-error');
+  let conversationId = null;
+  const agent = '{{ view }}';
+
+  function add(role, message, campaignUrl) {
+    const row = document.createElement('div');
+    row.className = 'mb-2';
+    const label = role === 'user' ? 'Vos' : 'Marketing IA';
+    row.innerHTML = '<div class="small fw-semibold text-muted">' + label + '</div><div class="border rounded-2 px-3 py-2" style="white-space: pre-wrap"></div>';
+    row.lastChild.textContent = message;
+    if (role === 'assistant' && campaignUrl) {
+      const action = document.createElement('a');
+      action.className = 'btn btn-success btn-sm mt-2';
+      action.href = campaignUrl;
+      action.innerHTML = '<i class="bi bi-file-earmark-check me-1"></i>Revisar borrador de campaña';
+      row.appendChild(action);
+    }
+    box.appendChild(row);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function ask() {
+    const message = input.value.trim();
+    if (!message || send.disabled) return;
+    error.textContent = '';
+    add('user', message);
+    input.value = '';
+    send.disabled = true;
+    try {
+      const response = await fetch('{{ chat_url }}', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}'},
+        body: JSON.stringify({message: message, agent: agent, ...(conversationId ? {conversation_id: conversationId} : {})})
+      });
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) throw new Error('El servidor no devolvió una respuesta JSON válida.');
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(window.publicAiError(data.error || 'No se pudo procesar la consulta.'));
+      conversationId = data.conversation_id;
+      add('assistant', data.content || '', data.campaign_url || '');
+    } catch (err) {
+      error.textContent = err.message || 'No se pudo procesar la consulta.';
+    } finally {
+      send.disabled = false;
+      input.focus();
+    }
+  }
+
+  send.addEventListener('click', ask);
+  input.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') { event.preventDefault(); ask(); }
+  });
+
+  document.querySelectorAll('[data-marketing-prompt]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      input.value = button.dataset.marketingPrompt || '';
+      ask();
+    });
+  });
+
+  // The "Create campaign" entry point starts the agent workflow directly.
+  const params = new URLSearchParams(window.location.search);
+  if (agent === 'marketing' && params.get('crear_campana') === '1') {
+    input.value = 'Prepará una campaña comercial para mi negocio. Analizá los productos y clientes reales, elegí una oportunidad adecuada, definí el público, redactá el mensaje de WhatsApp y guardá un borrador para que yo lo revise. No envíes nada.';
+    params.delete('crear_campana');
+    const nextUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+    window.history.replaceState({}, '', nextUrl);
+    window.setTimeout(ask, 150);
+  }
+})();
 </script>{% endif %}
 {% if view == 'asistente' %}<script>
 (function () { const box = document.getElementById('ai-hub-chat'); const input = document.getElementById('ai-hub-input'); const invoiceInput = document.getElementById('ai-hub-invoice'); const invoiceCamera = document.getElementById('ai-hub-invoice-camera'); const invoiceLabel = document.getElementById('ai-hub-invoice-label'); const invoiceName = document.getElementById('ai-hub-invoice-name'); const send = document.getElementById('ai-hub-send'); const error = document.getElementById('ai-hub-error'); const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.pdf']; const maxInvoiceSize = 10 * 1024 * 1024; let conversationId = null; const invoiceFeatureAllowed = {{ 'true' if invoice_access.allowed else 'false' }}; if (!invoiceFeatureAllowed && invoiceInput) { invoiceInput.disabled = true; if (invoiceCamera) invoiceCamera.disabled = true; invoiceLabel.textContent = 'Disponible desde IA PRO'; invoiceName.textContent = 'Mejorá tu plan para procesar facturas'; } function add(role, text) { const row = document.createElement('div'); row.className = 'mb-2'; const label = role === 'user' ? 'Vos' : 'Asistente'; row.innerHTML = '<div class="small fw-semibold text-muted">' + label + '</div><div class="border rounded-2 px-3 py-2" style="white-space: pre-wrap"></div>'; row.lastChild.textContent = text; box.appendChild(row); box.scrollTop = box.scrollHeight; } invoiceInput.addEventListener('change', function () { const file = invoiceInput.files[0]; if (!file) { invoiceName.textContent = 'Ningún archivo seleccionado'; invoiceLabel.textContent = '📁 Elegir factura'; return; } const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase(); if (!allowedExtensions.includes(extension)) { invoiceInput.value = ''; invoiceName.textContent = 'Ningún archivo seleccionado'; invoiceLabel.textContent = '📁 Elegir factura'; error.textContent = 'Formato de archivo no compatible. Formatos permitidos: JPG, JPEG, PNG, WEBP o PDF.'; return; } if (file.size > maxInvoiceSize) { invoiceInput.value = ''; invoiceName.textContent = 'Ningún archivo seleccionado'; invoiceLabel.textContent = '📁 Elegir factura'; error.textContent = 'El archivo supera el tamaño máximo permitido.'; return; } error.textContent = ''; invoiceLabel.textContent = '📁 Cambiar factura'; invoiceName.textContent = file.name; }); if (invoiceCamera) { invoiceCamera.addEventListener('change', function () { const file = invoiceCamera.files[0]; if (!file) return; const transfer = new DataTransfer(); transfer.items.add(file); invoiceInput.files = transfer.files; invoiceInput.dispatchEvent(new Event('change')); invoiceCamera.value = ''; }); } async function ask() { const message = input.value.trim(); const invoice = invoiceInput.files[0]; if (!message) return; error.textContent = ''; add('user', message); input.value = ''; send.disabled = true; try { const requestOptions = {method: 'POST', headers: {'X-CSRFToken': '{{ csrf_token() }}'}}; if (invoice) { const form = new FormData(); form.append('message', message); if (conversationId) form.append('conversation_id', conversationId); form.append('invoice_file', invoice); requestOptions.body = form; } else { requestOptions.headers['Content-Type'] = 'application/json'; requestOptions.body = JSON.stringify({message: message, ...(conversationId ? {conversation_id: conversationId} : {})}); } const response = await fetch('{{ chat_url }}', requestOptions); const contentType = response.headers.get('content-type') || ''; if (!contentType.includes('application/json')) throw new Error('El servidor no devolvió una respuesta JSON válida.'); const data = await response.json(); if (!response.ok || !data.success) throw new Error(window.publicAiError(data.error || 'No se pudo procesar la consulta.')); conversationId = data.conversation_id; add('assistant', data.content || ''); if (invoice) { invoiceInput.value = ''; invoiceName.textContent = 'Ningún archivo seleccionado'; invoiceLabel.textContent = '📁 Elegir factura'; } } catch (err) { error.textContent = err.message; } finally { send.disabled = false; } } send.addEventListener('click', ask); input.addEventListener('keydown', function (event) { if (event.key === 'Enter') { event.preventDefault(); ask(); } }); document.querySelectorAll('.ai-suggestion').forEach(function (button) { button.addEventListener('click', function () { input.value = button.textContent.trim(); ask(); }); }); })();
