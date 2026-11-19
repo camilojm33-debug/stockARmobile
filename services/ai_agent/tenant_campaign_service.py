@@ -262,7 +262,85 @@ def _client_phone(client):
     raw_phone = str(getattr(client, "whatsapp", None) or "").strip()
     from services.whatsapp_share_service import normalize_whatsapp_number
     normalized = normalize_whatsapp_number(raw_phone)
-    return normalized if 8 <= len(normalized) <= 15 else ""
+    # A campaign destination must be an international number after normalization.
+    return normalized if 11 <= len(normalized) <= 15 else ""
+
+
+def correct_campaign_whatsapp_numbers(
+    campaign_id: int,
+    *,
+    company_id: int,
+    use_phone_fallback: bool = False,
+) -> dict:
+    """Normalize numbers in one tenant campaign audience without changing consent.
+
+    The Teléfono field is only copied into WhatsApp when the operator explicitly
+    requests it, and only when WhatsApp is empty. Opted-out contacts are untouched.
+    This is available only before the campaign is approved/queued.
+    """
+    from app import Campaign
+    from services.whatsapp_share_service import normalize_whatsapp_number
+
+    campaign = Campaign.query.filter_by(
+        id=int(campaign_id),
+        company_id=int(company_id),
+    ).with_for_update().first()
+    if campaign is None:
+        raise ValueError("Campaña no encontrada para esta empresa.")
+    if campaign.status not in {"BORRADOR", "PENDIENTE_APROBACION"}:
+        raise ValueError(
+            "El corrector solo se puede usar antes de aprobar y poner en cola la campaña."
+        )
+
+    result = {
+        "audience": 0,
+        "normalized": 0,
+        "copied_from_phone": 0,
+        "unchanged": 0,
+        "invalid": 0,
+        "no_number": 0,
+        "skipped_opted_out": 0,
+    }
+    for client in _audience_query(campaign).yield_per(500):
+        result["audience"] += 1
+        consent_status = str(
+            getattr(client, "whatsapp_marketing_consent", "") or ""
+        ).strip().lower()
+        if consent_status == "opted_out":
+            result["skipped_opted_out"] += 1
+            continue
+
+        raw_whatsapp = str(getattr(client, "whatsapp", None) or "").strip()
+        copied_from_phone = False
+        candidate = raw_whatsapp
+        if not candidate and use_phone_fallback:
+            candidate = str(getattr(client, "phone", None) or "").strip()
+            copied_from_phone = bool(candidate)
+
+        if not candidate:
+            result["no_number"] += 1
+            continue
+
+        normalized = normalize_whatsapp_number(candidate)
+        if not normalized or not 11 <= len(normalized) <= 15:
+            result["invalid"] += 1
+            continue
+
+        if copied_from_phone:
+            # Deliberate operator choice; never infer consent from a phone number.
+            client.whatsapp = normalized
+            result["copied_from_phone"] += 1
+            continue
+
+        current_digits = "".join(ch for ch in raw_whatsapp if ch.isdigit())
+        if normalized != current_digits:
+            client.whatsapp = normalized
+            result["normalized"] += 1
+        else:
+            result["unchanged"] += 1
+
+    db.session.flush()
+    return result
 
 
 def _eligible_clients(company_id, channel="whatsapp"):
