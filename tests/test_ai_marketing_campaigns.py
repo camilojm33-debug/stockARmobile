@@ -2114,3 +2114,102 @@ def test_campaign_recipient_picker_persists_selected_customers(app, monkeypatch)
         assert stored["audience_selection_mode"] == "selected"
         assert stored["selected_client_ids"] == [client.id]
 
+def test_campaign_picker_adds_all_eligible_contacts_across_all_pages_and_honors_customer_type(app, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from app import Client, Company, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Bulk Recipient Picker Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="bulk-recipient-picker-admin",
+            email="bulk-recipient-picker@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        eligible_wholesale = [
+            Client(
+                name=f"Mayorista habilitado {index}",
+                whatsapp=f"54936255520{index:02d}",
+                customer_type="mayorista",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="opted_in",
+                **_consent_evidence(),
+            )
+            for index in range(1, 4)
+        ]
+        eligible_retail = Client(
+            name="Minorista habilitado",
+            whatsapp="5493625552099",
+            customer_type="minorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        opted_out_wholesale = Client(
+            name="Mayorista con baja",
+            whatsapp="5493625552098",
+            customer_type="mayorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_out",
+        )
+        db.session.add_all([user, *eligible_wholesale, eligible_retail, opted_out_wholesale])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Selección masiva por tipo",
+            objective="Seleccionar todos los mayoristas elegibles",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=5,
+        )
+        db.session.flush()
+
+        monkeypatch.setattr(ai_agents, "current_user", SimpleNamespace(company_id=company.id, id=user.id))
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+        monkeypatch.setattr(
+            ai_agents.CampaignService,
+            "_campaign",
+            staticmethod(lambda _company_id, _campaign_id: campaign),
+        )
+
+        route = ai_agents.campaign_update_recipients.__wrapped__
+        with app.test_request_context(
+            f"/campanas/{campaign.id}/destinatarios",
+            method="POST",
+            data={
+                "action": "add_all_eligible",
+                "contact_search": "",
+                "contact_type": "mayorista",
+                "contact_state": "ready",
+                "contact_page": "1",
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        stored = json.loads(campaign.system_data_json or "{}")
+        assert stored["audience_selection_mode"] == "selected"
+        assert set(stored["selected_client_ids"]) == {
+            client.id for client in eligible_wholesale
+        }
+        assert eligible_retail.id not in stored["selected_client_ids"]
+        assert opted_out_wholesale.id not in stored["selected_client_ids"]
+
