@@ -395,6 +395,13 @@ class PrepararCampanaTool(AgentTool):
         campaign_title = str(title or "").strip()[:180]
         campaign_objective = str(objective or "").strip()[:120]
         campaign_message = str(message or "").strip()[:820]
+        if not campaign_message:
+            return {"success": False, "error": "La campaña necesita un texto concreto para WhatsApp. Redactá el mensaje dentro de la propuesta."}
+        try:
+            from stockarmobile.branch_context import get_active_branch_id
+            active_branch_id = get_active_branch_id()
+        except Exception:
+            active_branch_id = None
 
         if campaign_type == "recuperacion_clientes_inactivos":
             audience_segment = "clientes inactivos"
@@ -417,6 +424,7 @@ class PrepararCampanaTool(AgentTool):
                 "campaign_context": {
                     "campaign_type": campaign_type,
                     "channel": "whatsapp",
+                    "branch_id": active_branch_id,
                     "title": campaign_title or "Productos sin movimiento",
                     "objective": campaign_objective or opportunity,
                     "message": campaign_message,
@@ -455,6 +463,7 @@ class PrepararCampanaTool(AgentTool):
             "campaign_context": {
                 "campaign_type": campaign_type,
                 "channel": "whatsapp",
+                "branch_id": active_branch_id,
                 "title": campaign_title or (product_payload.get("name") if product_payload else "Campaña para clientes"),
                 "objective": campaign_objective or opportunity,
                 "message": campaign_message,
