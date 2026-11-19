@@ -1038,7 +1038,15 @@ def _append_pending_whatsapp_marketing_consent_prompt(conversation, assistant) -
         company_id=int(conversation.company_id),
         active=True,
     ).first() if client_id else None
-    if client is None or str(client.whatsapp_marketing_consent or "unknown").strip().lower() != "unknown":
+    consent_status = str(client.whatsapp_marketing_consent or "unknown").strip().lower() if client is not None else "unknown"
+    consent_is_documented = bool(
+        client is not None
+        and consent_status == "opted_in"
+        and client.whatsapp_marketing_consent_recorded_at
+        and str(client.whatsapp_marketing_consent_source or "").strip()
+        and str(client.whatsapp_marketing_consent_evidence or "").strip()
+    )
+    if client is None or consent_status == "opted_out" or consent_is_documented:
         state.pop("whatsapp_marketing_opt_in_pending", None)
         _set_metadata(conversation, state)
         db.session.commit()
