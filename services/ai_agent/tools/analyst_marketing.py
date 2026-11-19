@@ -468,7 +468,7 @@ class PrepararCampanaTool(AgentTool):
                 "stock_value_at_cost": _product_stock(product, self.company_id) * float(product.cost_price or 0),
             }
             copy_mentions_price = bool(re.search(
-                r"\\bprecio\\b|\\bmayorista\\b|\\bpor mayor\\b",
+                r"\bprecio\b|\bmayorista\b|\bpor mayor\b",
                 campaign_objective + " " + campaign_message + " " + campaign_title,
                 re.IGNORECASE,
             ))
