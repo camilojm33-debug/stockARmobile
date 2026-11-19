@@ -3,7 +3,8 @@ name: WhatsApp Embedded Signup regression suite
 on:
   push:
     branches:
-      - feature/whatsapp-embedded-signup-completion
+      - feature/**
+      - fix/**
   pull_request:
     branches:
       - main
