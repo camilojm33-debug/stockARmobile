@@ -420,6 +420,19 @@
             <label class="form-label">WhatsApp</label>
             <input id="quick-client-whatsapp" class="form-control" maxlength="30" placeholder="opcional">
           </div>
+          <div class="col-md-6">
+            <label class="form-label" for="quick-client-marketing-consent">¿Autorizó promociones por WhatsApp?</label>
+            <select id="quick-client-marketing-consent" class="form-select">
+              <option value="unknown" selected>Sin confirmar todavía</option>
+              <option value="opted_in">Sí, autorizó expresamente</option>
+              <option value="opted_out">No, no quiere recibir promociones</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="quick-client-marketing-evidence">Evidencia / origen de la autorización</label>
+            <textarea id="quick-client-marketing-evidence" class="form-control" rows="2" maxlength="2000" placeholder="Ej.: el cliente aceptó en el local el 19/11/2026."></textarea>
+            <div class="form-text">Solo seleccioná “Sí” cuando el cliente haya aceptado. Sin aceptación registrada, el cliente queda fuera de campañas hasta confirmar el permiso.</div>
+          </div>
           {% if can_assign_wholesale_client %}
           <div class="col-md-6">
             <label class="form-label" for="quick-client-type">Tipo de cliente</label>
