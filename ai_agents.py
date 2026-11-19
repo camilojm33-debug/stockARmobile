@@ -1447,7 +1447,7 @@ def campaign_detail(campaign_id):
     if template.get("body_text"):
         try:
             template_body = str(template.get("body_text") or "")
-            template_has_opt_out = bool(re.search(r"\\bBAJA\\b|dejar de recibir", template_body, re.IGNORECASE))
+            template_has_opt_out = bool(re.search(r"\bBAJA\b|dejar de recibir", template_body, re.IGNORECASE))
             copy = _render_content(
                 campaign,
                 SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
@@ -1460,7 +1460,7 @@ def campaign_detail(campaign_id):
                 ("3", copy),
             ):
                 template_preview = re.sub(
-                    r"\\{\\{\\s*" + variable + r"\\s*\\}\\}",
+                    r"\{\{\s*" + variable + r"\s*\}\}",
                     lambda _match, replacement=value: replacement,
                     template_preview,
                 )
