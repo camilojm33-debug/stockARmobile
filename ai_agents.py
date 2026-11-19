@@ -1464,6 +1464,46 @@ def campaign_detail(campaign_id):
         except ValueError as exc:
             template_preview = f"No se puede mostrar la vista previa: {exc}"
     campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
+    from app import Client
+    from sqlalchemy import or_
+
+    selected_mode = campaign_system_data.get("audience_selection_mode") == "selected"
+    selected_ids = []
+    for raw_id in campaign_system_data.get("selected_client_ids") or []:
+        try:
+            selected_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if selected_id > 0:
+            selected_ids.append(selected_id)
+    selected_ids = sorted(set(selected_ids))
+    selected_contacts = []
+    if selected_mode and selected_ids:
+        rows = Client.query.filter(
+            Client.company_id == current_user.company_id,
+            Client.active.is_(True),
+            Client.id.in_(selected_ids),
+        ).order_by(Client.name.asc()).all()
+        selected_contacts = [{"client": row, **_campaign_contact_eligibility(row)} for row in rows]
+
+    contact_search = str(request.args.get("contact_search") or "").strip()[:100]
+    available_query = Client.query.filter(
+        Client.company_id == current_user.company_id,
+        Client.active.is_(True),
+    )
+    if contact_search:
+        like = f"%{contact_search}%"
+        available_query = available_query.filter(or_(
+            Client.name.ilike(like),
+            Client.phone.ilike(like),
+            Client.whatsapp.ilike(like),
+        ))
+    available_rows = available_query.order_by(Client.name.asc()).limit(100).all()
+    available_contacts = [
+        {"client": row, **_campaign_contact_eligibility(row)}
+        for row in available_rows
+        if not selected_mode or row.id not in set(selected_ids)
+    ]
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
     ).order_by(TenantCampaignRecipient.id.asc()).limit(100).all()
@@ -1478,6 +1518,12 @@ def campaign_detail(campaign_id):
         campaign_template_error=template_error,
         campaign_template_preview=template_preview,
         campaign_recipients=recipient_rows,
+        campaign_selected_contacts=selected_contacts,
+        campaign_available_contacts=available_contacts,
+        campaign_selection_mode=selected_mode,
+        campaign_contact_search=contact_search,
+        campaign_selected_ids=selected_ids,
+        campaign_pricing_quantity=campaign_system_data.get("pricing_quantity") or "",
         campaign_schedule_local=_campaign_schedule_local(campaign),
         campaign_sender_phone=campaign_sender_phone,
         ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
@@ -1644,6 +1690,25 @@ def _campaign_audience_diagnostics(campaign, *, max_contacts=100):
     }
 
 
+def _campaign_contact_eligibility(client):
+    """Return the current WhatsApp/consent state for a selectable campaign contact."""
+    from services.ai_agent.tenant_campaign_service import _client_phone
+
+    status = str(getattr(client, "whatsapp_marketing_consent", "unknown") or "unknown").strip().lower()
+    if status == "opted_out":
+        return {"eligible": False, "status": "Baja solicitada", "reason": "Este contacto pidió no recibir promociones.", "opted_out": True}
+    if not str(getattr(client, "whatsapp", None) or "").strip():
+        reason = "Falta el número de WhatsApp." if not str(getattr(client, "phone", None) or "").strip() else "Tiene Teléfono, pero falta WhatsApp."
+        return {"eligible": False, "status": "Falta WhatsApp", "reason": reason, "opted_out": False}
+    if not _client_phone(client):
+        return {"eligible": False, "status": "Número inválido", "reason": "El número de WhatsApp no tiene un formato válido.", "opted_out": False}
+    if status != "opted_in" or not getattr(client, "whatsapp_marketing_consent_recorded_at", None):
+        return {"eligible": False, "status": "Sin autorización", "reason": "Falta registrar el consentimiento expreso para promociones.", "opted_out": False}
+    if not str(getattr(client, "whatsapp_marketing_consent_source", "") or "").strip() or not str(getattr(client, "whatsapp_marketing_consent_evidence", "") or "").strip():
+        return {"eligible": False, "status": "Evidencia incompleta", "reason": "Falta el origen o la evidencia del consentimiento.", "opted_out": False}
+    return {"eligible": True, "status": "Listo para enviar", "reason": "WhatsApp válido y consentimiento documentado.", "opted_out": False}
+
+
 @bp.route("/campanas/nueva", methods=["GET", "POST"])
 @company_admin_required
 def campaign_wizard():
@@ -1728,6 +1793,88 @@ def campaign_correct_whatsapp_numbers(campaign_id):
     return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/campanas/<int:campaign_id>/destinatarios")
+@company_admin_required
+def campaign_update_recipients(campaign_id):
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    campaign = CampaignService._campaign(current_user.company_id, campaign_id)
+    if campaign is None:
+        abort(404)
+    if campaign.status not in {"BORRADOR", "PENDIENTE_APROBACION"}:
+        flash("Los destinatarios solo se pueden modificar antes de aprobar la campaña.", "warning")
+        return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
+
+    try:
+        campaign_data = json.loads(campaign.system_data_json or "{}")
+    except (TypeError, ValueError):
+        campaign_data = {}
+    if not isinstance(campaign_data, dict):
+        campaign_data = {}
+
+    action = str(request.form.get("action") or "add").strip().lower()
+    current_ids = set()
+    for raw_id in campaign_data.get("selected_client_ids") or []:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            current_ids.add(value)
+
+    from app import Client
+    if action == "add":
+        requested = set()
+        for raw_id in request.form.getlist("client_ids"):
+            try:
+                value = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                requested.add(value)
+        rows = Client.query.filter(
+            Client.company_id == current_user.company_id,
+            Client.active.is_(True),
+            Client.id.in_(requested),
+        ).all() if requested else []
+        skipped_opt_out = 0
+        for row in rows:
+            if str(row.whatsapp_marketing_consent or "unknown").strip().lower() == "opted_out":
+                skipped_opt_out += 1
+                continue
+            current_ids.add(int(row.id))
+        campaign_data["audience_selection_mode"] = "selected"
+        campaign_data["selected_client_ids"] = sorted(current_ids)
+        db.session.commit()
+        flash(
+            f"Se agregaron {len(current_ids)} destinatario(s) a la selección. "
+            f"{skipped_opt_out} contacto(s) con baja solicitada no se agregaron. "
+            "Los que todavía no tengan WhatsApp válido y consentimiento documentado aparecerán para corregir, pero no se enviarán.",
+            "success",
+        )
+    elif action == "remove":
+        try:
+            remove_id = int(request.form.get("client_id") or 0)
+        except (TypeError, ValueError):
+            remove_id = 0
+        current_ids.discard(remove_id)
+        campaign_data["audience_selection_mode"] = "selected"
+        campaign_data["selected_client_ids"] = sorted(current_ids)
+        db.session.commit()
+        flash("Destinatario quitado de la campaña.", "success")
+    elif action == "clear":
+        campaign_data["audience_selection_mode"] = "segment"
+        campaign_data["selected_client_ids"] = []
+        db.session.commit()
+        flash("La campaña volvió a usar el público general del segmento.", "success")
+    else:
+        flash("Acción de destinatarios no válida.", "warning")
+    return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
+
+
 @bp.post("/campanas/<int:campaign_id>/edit")
 @company_admin_required
 def campaign_edit(campaign_id):
@@ -1746,6 +1893,17 @@ def campaign_edit(campaign_id):
             if not isinstance(campaign_data, dict):
                 campaign_data = {}
             campaign_data["channel"] = "whatsapp"
+            raw_pricing_quantity = str(request.form.get("pricing_quantity") or "").strip()
+            if raw_pricing_quantity:
+                try:
+                    pricing_quantity = float(raw_pricing_quantity)
+                except (TypeError, ValueError):
+                    raise ValueError("La cantidad para resolver el precio debe ser un número mayor a cero.")
+                if not math.isfinite(pricing_quantity) or pricing_quantity <= 0:
+                    raise ValueError("La cantidad para resolver el precio debe ser un número mayor a cero.")
+                campaign_data["pricing_quantity"] = pricing_quantity
+            else:
+                campaign_data.pop("pricing_quantity", None)
             campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
             raw_schedule = str(
                 request.form.get("scheduled_at_utc") or request.form.get("scheduled_at") or ""
