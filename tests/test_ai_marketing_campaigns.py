@@ -1958,7 +1958,10 @@ def test_campaign_price_is_resolved_for_each_customer_instead_of_using_retail_pr
 
         retail_copy = _render_content(campaign, retail)
         wholesale_copy = _render_content(campaign, wholesale)
+        preview_copy = _render_content(campaign, retail, preview=True)
 
+        assert "precio personalizado según tu lista" in preview_copy
+        assert "$ 10.000" not in preview_copy
         assert "$ 10.000" in retail_copy
         assert "$ 6.000" in wholesale_copy
         assert "$ 10.000" not in wholesale_copy
