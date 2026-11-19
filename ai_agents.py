@@ -1407,43 +1407,24 @@ def campaign_detail(campaign_id):
         abort(403)
     campaign = CampaignService._campaign(current_user.company_id, campaign_id)
     if campaign is None:
-        from flask import abort
         abort(404)
-    import json
     try:
         campaign_system_data = json.loads(campaign.system_data_json or "{}")
     except (TypeError, ValueError):
         campaign_system_data = {}
     template = campaign_system_data.get("whatsapp_template") or {}
-    template_preview = ""
-    if template.get("body_text"):
-        from services.ai_agent.tenant_campaign_service import _render_content
-        try:
-            copy = _render_content(
-                campaign,
-                SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
-            )
-            template_preview = template["body_text"]
-            for variable, value in (
-                ("1", "Cliente de ejemplo"),
-                ("2", campaign.product.name if campaign.product else "Varios"),
-                ("3", copy),
-            ):
-                template_preview = re.sub(
-                    r"\{\{\s*" + variable + r"\s*\}\}",
-                    lambda _match, replacement=value: replacement,
-                    template_preview,
-                )
-        except ValueError as exc:
-            template_preview = f"No se puede mostrar la vista previa: {exc}"
+    template_error = ""
     detected_audience_count = int(
         campaign_system_data.get("audience_count")
-        or campaign.audience_count
-        or 0
+        if campaign_system_data.get("audience_count") is not None
+        else campaign.audience_count or 0
     )
+    excluded_audience_count = int(campaign_system_data.get("audience_excluded_count") or 0)
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignRecipient,
         _campaign_branch_id,
+        _fetch_campaign_template,
+        _render_content,
         resolve_tenant_campaign_sender,
     )
     try:
@@ -1452,8 +1433,39 @@ def campaign_detail(campaign_id):
             _campaign_branch_id(campaign),
             require_ready=True,
         )
-    except ValueError:
+    except ValueError as exc:
         sender_connection = {}
+        template_error = str(exc)
+    # Agent-created drafts do not carry a per-campaign template choice. Resolve
+    # the merchant's approved template here so review shows a real preview before approval.
+    if not template and sender_connection:
+        try:
+            template = _fetch_campaign_template(sender_connection)
+        except ValueError as exc:
+            template_error = str(exc)
+    template_preview = ""
+    if template.get("body_text"):
+        try:
+            template_body = str(template.get("body_text") or "")
+            template_has_opt_out = bool(re.search(r"\\bBAJA\\b|dejar de recibir", template_body, re.IGNORECASE))
+            copy = _render_content(
+                campaign,
+                SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
+                include_opt_out=not template_has_opt_out,
+            )
+            template_preview = template_body
+            for variable, value in (
+                ("1", "Cliente de ejemplo"),
+                ("2", campaign.product.name if campaign.product else "Varios"),
+                ("3", copy),
+            ):
+                template_preview = re.sub(
+                    r"\\{\\{\\s*" + variable + r"\\s*\\}\\}",
+                    lambda _match, replacement=value: replacement,
+                    template_preview,
+                )
+        except ValueError as exc:
+            template_preview = f"No se puede mostrar la vista previa: {exc}"
     campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
@@ -1463,7 +1475,9 @@ def campaign_detail(campaign_id):
         campaign=campaign,
         campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
         detected_audience_count=detected_audience_count,
+        excluded_audience_count=excluded_audience_count,
         campaign_template=template,
+        campaign_template_error=template_error,
         campaign_template_preview=template_preview,
         campaign_recipients=recipient_rows,
         campaign_schedule_local=_campaign_schedule_local(campaign),
@@ -1559,179 +1573,12 @@ def _campaign_audience_preview(company_id, audience, *, client_segment="", days=
 @bp.route("/campanas/nueva", methods=["GET", "POST"])
 @company_admin_required
 def campaign_wizard():
-    from app import Branch, Product, db
-    from stockarmobile.branch_context import get_active_branch_id
-    from services.ai_agent.campaign_service import CampaignService
-    from services.ai_agent.tenant_campaign_service import (
-        CAMPAIGN_OPT_OUT_TEXT,
-        _fetch_campaign_template,
-        _render_content,
-        resolve_tenant_campaign_sender,
-    )
-
+    """Send merchants to Marketing IA; the agent drafts campaign copy and targeting."""
     entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
-
-    company = _current_active_company()
-    template = None
-    template_error = None
-    campaign_branch_id = get_active_branch_id()
-    if campaign_branch_id is None:
-        from stockarmobile.branch_context import get_default_branch_id
-        campaign_branch_id = get_default_branch_id(company.id)
-
-    branch = (
-        Branch.query.filter_by(
-            id=int(campaign_branch_id),
-            company_id=int(company.id),
-            active=True,
-        ).first()
-        if campaign_branch_id else None
-    )
-    connection = {}
-    try:
-        if branch is None:
-            raise ValueError("La sucursal seleccionada no está disponible.")
-        branch, connection = resolve_tenant_campaign_sender(
-            company,
-            campaign_branch_id,
-            require_ready=True,
-        )
-        if (
-            not connection.get("enabled")
-            or not connection.get("phone_number_id")
-            or not connection.get("business_account_id")
-            or not connection.get("access_token")
-        ):
-            raise ValueError(
-                "Conectá y habilitá el WhatsApp propio de esta sucursal desde Vendedor IA mediante Meta Embedded Signup."
-            )
-        template = _fetch_campaign_template(connection)
-    except ValueError as exc:
-        template_error = str(exc)
-
-    campaign_sender_phone = str(connection.get("display_phone_number") or "").strip()
-    template_admin_url = (
-        url_for("ai_agents.vendor_whatsapp_connect", branch_id=branch.id)
-        if branch is not None else url_for("ai_agents.vendor_whatsapp_connect")
-    )
-
-    products = Product.query.filter_by(company_id=current_user.company_id, active=True).order_by(Product.name.asc()).limit(500).all()
-    if request.method == "POST":
-        if template is None:
-            flash(template_error or "No se puede validar la plantilla aprobada.", "danger")
-            return render_template(
-                "ai_agents/campaign_wizard.html",
-                template=None,
-                template_error=template_error,
-                products=products,
-                opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
-                audience_count=0,
-                schedule_local="",
-                campaign_sender_phone=campaign_sender_phone,
-                template_admin_url=template_admin_url,
-                template_auto_selected=False,
-                **_context(),
-            ), 409
-        title = str(request.form.get("title") or "").strip()
-        objective = str(request.form.get("objective") or "").strip()
-        content = str(request.form.get("content") or "").strip()
-        audience_choice = str(request.form.get("audience") or "all").strip()
-        client_segment = str(request.form.get("client_segment") or "").strip()[:80]
-        try:
-            days = max(1, min(int(request.form.get("days") or 90), 365))
-            product_id = int(request.form.get("product_id")) if request.form.get("product_id") else None
-            scheduled_at = _parse_campaign_schedule(
-                request.form.get("scheduled_at_utc") or request.form.get("scheduled_at")
-            )
-        except (TypeError, ValueError) as exc:
-            flash(str(exc) or "Revisá los valores de la campaña.", "danger")
-            return redirect(url_for("ai_agents.campaign_wizard"))
-        if not title or len(title) > 180 or not objective or len(objective) > 120 or not content:
-            flash("Completá el nombre, el objetivo y el mensaje de la campaña.", "danger")
-            return redirect(url_for("ai_agents.campaign_wizard"))
-        if audience_choice not in {"all", "inactive", "notes"}:
-            flash("Seleccioná una audiencia válida.", "danger")
-            return redirect(url_for("ai_agents.campaign_wizard"))
-        if audience_choice == "notes" and not client_segment:
-            flash("Indicá la etiqueta que debe buscarse en las notas de cliente.", "danger")
-            return redirect(url_for("ai_agents.campaign_wizard"))
-        audience_segment = {
-            "all": "clientes activos",
-            "inactive": "clientes inactivos",
-            "notes": "clientes activos · filtro de notas",
-        }[audience_choice]
-        campaign_type = "recuperacion_clientes_inactivos" if audience_choice == "inactive" else "general"
-        audience_count = _campaign_audience_count(
-            current_user.company_id,
-            audience_segment=audience_segment,
-            campaign_type=campaign_type,
-            client_segment=client_segment if audience_choice == "notes" else "",
-            days=days,
-        )
-        if audience_count < 1:
-            flash("No hay destinatarios con WhatsApp y consentimiento documentado en esta audiencia.", "warning")
-            return redirect(url_for("ai_agents.campaign_wizard"))
-        try:
-            draft = CampaignService.create_draft(
-                company_id=current_user.company_id,
-                user_id=current_user.id,
-                title=title,
-                objective=objective,
-                campaign_type=campaign_type,
-                content=content,
-                system_data={
-                    "channel": "whatsapp",
-                    "client_segment": client_segment if audience_choice == "notes" else "",
-                    "days": days,
-                    "branch_id": campaign_branch_id,
-                    "scheduled_at": scheduled_at.isoformat() + "Z" if scheduled_at else "",
-                    "whatsapp_template": template,
-                },
-                audience_segment=audience_segment,
-                audience_count=audience_count,
-                product_id=product_id,
-            )
-            preview = _render_content(
-                draft,
-                SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
-            )
-            if len(preview) > 900:
-                raise ValueError("El mensaje, incluida la instrucción de baja, supera los 900 caracteres.")
-            draft.scheduled_at = scheduled_at
-            db.session.commit()
-        except ValueError as exc:
-            db.session.rollback()
-            flash(str(exc), "danger")
-            return redirect(url_for("ai_agents.campaign_wizard"))
-        flash("Borrador creado. Revisá la audiencia y la vista previa antes de solicitar aprobación.", "success")
-        return redirect(url_for("ai_agents.campaign_detail", campaign_id=draft.id))
-
-    audience_count = (
-        _campaign_audience_preview(current_user.company_id, "all")["eligible"]
-        if template else 0
-    )
-    inactive_audience_count = (
-        _campaign_audience_preview(current_user.company_id, "inactive")["eligible"]
-        if template else 0
-    )
-    return render_template(
-        "ai_agents/campaign_wizard.html",
-        template=template,
-        template_error=template_error,
-        campaign_sender_phone=campaign_sender_phone,
-        template_admin_url=template_admin_url,
-        template_auto_selected=bool(template and template.get("auto_selected")),
-        products=products,
-        opt_out_text=CAMPAIGN_OPT_OUT_TEXT,
-        audience_count=audience_count,
-        inactive_audience_count=inactive_audience_count,
-        schedule_local="",
-        **_context(),
-    )
-
+    return redirect(url_for("ai_agents.agent", agent="marketing", crear_campana="1"))
 
 @bp.post("/campanas/audiencia-preview")
 @company_admin_required
