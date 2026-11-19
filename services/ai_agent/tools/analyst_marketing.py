@@ -397,15 +397,6 @@ class PrepararCampanaTool(AgentTool):
         campaign_message = str(message or "").strip()[:820]
 
         if campaign_type == "recuperacion_clientes_inactivos":
-            historical = _scope_sale_query(Sale.query.filter(
-                Sale.company_id == self.company_id,
-                Sale.client_id.isnot(None),
-            ), self.company_id).with_entities(Sale.client_id).distinct().subquery()
-            recent = _scope_sale_query(Sale.query.filter(
-                Sale.company_id == self.company_id,
-                Sale.client_id.isnot(None),
-                Sale.date >= cutoff,
-            ), self.company_id).with_entities(Sale.client_id).distinct().subquery()
             audience_segment = "clientes inactivos"
             opportunity = "recuperación de clientes"
         elif campaign_type == "productos_sin_ventas":
