@@ -2077,6 +2077,13 @@ def test_campaign_recipient_picker_persists_selected_customers(app, monkeypatch)
             audience_segment="clientes activos",
             audience_count=1,
         )
+        # Reproduce the original screen: campaign ended SIN_ENVIO without
+        # preparing any recipients, and must be safely reopenable.
+        campaign.status = "SIN_ENVIO"
+        campaign.target_count = 0
+        campaign.sent_count = 0
+        campaign.failed_count = 0
+        campaign.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.session.flush()
 
         monkeypatch.setattr(ai_agents, "current_user", SimpleNamespace(company_id=company.id, id=user.id))
@@ -2102,6 +2109,8 @@ def test_campaign_recipient_picker_persists_selected_customers(app, monkeypatch)
 
         db.session.refresh(campaign)
         stored = __import__("json").loads(campaign.system_data_json or "{}")
+        assert campaign.status == "BORRADOR"
+        assert campaign.finished_at is None
         assert stored["audience_selection_mode"] == "selected"
         assert stored["selected_client_ids"] == [client.id]
 
