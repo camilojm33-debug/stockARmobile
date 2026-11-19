@@ -335,6 +335,7 @@
           <div class="border rounded-3 p-3 h-100">
             <div class="small text-muted">WhatsApp del comercio</div>
             <strong class="fs-6">{% if campaign_template.name %}Plantilla lista{% else %}Revisar conexión / plantilla{% endif %}</strong>
+            <div class="small text-muted">{% if campaign_template.name %}WhatsApp del comercio listo para revisar esta campaña.{% else %}Conectá el WhatsApp del comercio para revisar esta campaña.{% endif %}</div>
             <div class="small text-muted">{% if campaign_sender_phone %}{{ campaign_sender_phone }}{% else %}Número propio del comercio{% endif %}</div>
           </div>
         </div>
