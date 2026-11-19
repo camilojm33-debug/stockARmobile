@@ -1012,6 +1012,7 @@ def _marketing_consent_answer(text: str) -> str | None:
     no = {
         "no", "no gracias", "no acepto", "no autorizo",
         "no quiero", "no quiero recibir promociones", "prefiero que no",
+        "baja", "stop", "cancelar", "no me envies promociones", "no enviar promociones",
     }
     if normalized in yes or normalized.startswith(("si acepto ", "si autorizo ", "claro que si ")):
         return "opted_in"
