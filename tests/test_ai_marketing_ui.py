@@ -29,7 +29,7 @@ def test_campaign_creation_is_owned_by_marketing_agent_and_explains_the_flow():
     assert "Crear campaña con Marketing IA" in campaigns
     assert "Crear una campaña con IA" in marketing
     assert "redacta el mensaje" in marketing.lower()
-    assert "El texto lo redactó Marketing IA" in detail
+    assert "Este texto lo redactó Marketing IA" in detail
     assert "Con WhatsApp y permiso registrado" in detail
     assert "No se enviará nada con el público en cero" in detail
 
