@@ -332,12 +332,12 @@
         <div class="marketing-ai-hero-copy">
           <span class="marketing-ai-kicker"><i class="bi bi-stars"></i> Marketing IA</span>
           <h1 class="marketing-ai-title">Convertí los datos de tu comercio en <span>más oportunidades.</span></h1>
-          <p class="marketing-ai-subtitle">Tu agente de Marketing IA analiza el contexto real de tu negocio para ayudarte a detectar oportunidades, definir segmentos y preparar propuestas comerciales.</p>
+          <p class="marketing-ai-subtitle">Pedile una campaña y Marketing IA se ocupa de analizar tus productos y clientes, elegir el público y redactar el mensaje. Vos solo revisás y aprobás el borrador.</p>
           <div class="marketing-ai-pills">
             <span class="marketing-ai-pill"><i class="bi bi-bar-chart-line"></i> Datos reales</span>
             <span class="marketing-ai-pill"><i class="bi bi-people"></i> Segmentación</span>
             <span class="marketing-ai-pill"><i class="bi bi-megaphone"></i> Propuestas</span>
-            <span class="marketing-ai-pill"><i class="bi bi-shield-check"></i> Sin envíos automáticos</span>
+            <span class="marketing-ai-pill"><i class="bi bi-shield-check"></i> Envío solo con tu aprobación</span>
           </div>
         </div>
         <div class="marketing-ai-hero-art" aria-hidden="true">
@@ -769,7 +769,7 @@
   function add(role, message, campaignUrl) {
     const row = document.createElement('div');
     row.className = 'mb-2';
-    const label = role === 'user' ? 'Vos' : 'Marketing IA';
+    const label = role === 'user' ? 'Vos' : (agent === 'marketing' ? 'Marketing IA' : 'Analista IA');
     row.innerHTML = '<div class="small fw-semibold text-muted">' + label + '</div><div class="border rounded-2 px-3 py-2" style="white-space: pre-wrap"></div>';
     row.lastChild.textContent = message;
     if (role === 'assistant' && campaignUrl) {
