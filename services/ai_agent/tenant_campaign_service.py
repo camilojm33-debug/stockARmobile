@@ -332,8 +332,7 @@ def correct_campaign_whatsapp_numbers(
             result["copied_from_phone"] += 1
             continue
 
-        current_digits = "".join(ch for ch in raw_whatsapp if ch.isdigit())
-        if normalized != current_digits:
+        if raw_whatsapp != normalized:
             client.whatsapp = normalized
             result["normalized"] += 1
         else:
