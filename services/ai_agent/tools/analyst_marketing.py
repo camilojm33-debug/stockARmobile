@@ -37,6 +37,47 @@ def _product_stock(product, company_id: int) -> float:
     return available_stock(product, branch_id) if branch_id is not None else 0.0
 
 
+def _campaign_audience_counts(company_id: int, campaign_type: str, cutoff: datetime) -> dict:
+    """Count only active WhatsApp contacts with documented marketing opt-in."""
+    from services.ai_agent.tenant_campaign_service import _client_phone
+
+    audience_query = Client.query.filter(
+        Client.company_id == int(company_id),
+        Client.active.is_(True),
+    )
+    if campaign_type == "recuperacion_clientes_inactivos":
+        historical = _scope_sale_query(Sale.query.filter(
+            Sale.company_id == int(company_id),
+            Sale.client_id.isnot(None),
+            Sale.status.notin_(["cancelada", "anulada"]),
+        ), company_id).with_entities(Sale.client_id).distinct().subquery()
+        recent = _scope_sale_query(Sale.query.filter(
+            Sale.company_id == int(company_id),
+            Sale.client_id.isnot(None),
+            Sale.date >= cutoff,
+            Sale.status.notin_(["cancelada", "anulada"]),
+        ), company_id).with_entities(Sale.client_id).distinct().subquery()
+        audience_query = audience_query.filter(
+            Client.id.in_(historical),
+            ~Client.id.in_(recent),
+        )
+
+    audience_total = audience_query.count()
+    eligible_query = audience_query.filter(
+        Client.whatsapp.isnot(None),
+        func.length(func.trim(Client.whatsapp)) > 0,
+        Client.whatsapp_marketing_consent == "opted_in",
+        Client.whatsapp_marketing_consent_recorded_at.isnot(None),
+        func.length(func.trim(Client.whatsapp_marketing_consent_source)) > 0,
+        func.length(func.trim(Client.whatsapp_marketing_consent_evidence)) > 0,
+    )
+    eligible = sum(1 for client in eligible_query.yield_per(500) if _client_phone(client))
+    return {
+        "audience_count": eligible,
+        "audience_total_count": audience_total,
+        "audience_excluded_count": max(0, audience_total - eligible),
+    }
+
 def _branch_stock_products(company_id: int, *, limit: int):
     from services.ai_agent.tools.branch_scope import employee_branch_scope
     restricted, branch_id = employee_branch_scope(company_id)
@@ -313,18 +354,26 @@ class OportunidadesMarketingTool(AgentTool):
 
 class PrepararCampanaTool(AgentTool):
     name = "preparar_campana"
-    description = "Recopila contexto real de productos y clientes y prepara una campaña como BORRADOR, incluyendo señales de oportunidad, sin enviarla."
+    description = (
+        "Analiza productos y clientes reales, cuenta solo contactos con WhatsApp y consentimiento "
+        "promocional documentado, y prepara una campaña como BORRADOR sin enviarla. "
+        "Cuando el usuario solicite una campaña, redactá el texto exacto que recibirán los clientes "
+        "y pasalo en el campo message; no devuelvas una explicación como mensaje."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "campaign_type": {"type": "string", "enum": ["promocion_producto", "recuperacion_clientes_inactivos", "productos_sin_ventas", "general"]},
+            "title": {"type": "string", "description": "Título breve y claro para identificar el borrador de campaña."},
+            "objective": {"type": "string", "description": "Objetivo comercial concreto de la campaña."},
+            "message": {"type": "string", "maxLength": 820, "description": "Texto exacto para WhatsApp, listo para enviar. En español argentino, breve, claro, con llamada a la acción. No inventes precios, descuentos, stock ni condiciones; usá solo los datos comprobados. No incluyas instrucciones técnicas ni expliques el análisis."},
             "product_query": {"type": "string"},
             "days": {"type": "integer", "minimum": 1, "maximum": 365},
         },
-        "required": ["campaign_type"],
+        "required": ["campaign_type", "message"],
     }
 
-    def execute(self, *, campaign_type="general", product_query="", days=90, channel="whatsapp", **kwargs: Any) -> Dict[str, Any]:
+    def execute(self, *, campaign_type="general", title="", objective="", message="", product_query="", days=90, channel="whatsapp", **kwargs: Any) -> Dict[str, Any]:
         days = _days(days, 90)
         cutoff = datetime.utcnow() - timedelta(days=days)
         product = None
@@ -341,8 +390,11 @@ class PrepararCampanaTool(AgentTool):
                 return {"success": False, "error": "No encontré un producto real con ese nombre."}
 
         audience_segment = "clientes activos"
-        audience_count = int(Client.query.filter(Client.company_id == self.company_id, Client.active.is_(True)).count())
+        audience_counts = _campaign_audience_counts(self.company_id, campaign_type, cutoff)
         opportunity = "promoción general"
+        campaign_title = str(title or "").strip()[:180]
+        campaign_objective = str(objective or "").strip()[:120]
+        campaign_message = str(message or "").strip()[:820]
 
         if campaign_type == "recuperacion_clientes_inactivos":
             historical = _scope_sale_query(Sale.query.filter(
@@ -355,12 +407,6 @@ class PrepararCampanaTool(AgentTool):
                 Sale.date >= cutoff,
             ), self.company_id).with_entities(Sale.client_id).distinct().subquery()
             audience_segment = "clientes inactivos"
-            audience_count = int(Client.query.filter(
-                Client.company_id == self.company_id,
-                Client.active.is_(True),
-                Client.id.in_(historical),
-                ~Client.id.in_(recent),
-            ).count())
             opportunity = "recuperación de clientes"
         elif campaign_type == "productos_sin_ventas":
             sold = _scope_sale_query(SaleItem.query.join(Sale).filter(
@@ -380,8 +426,11 @@ class PrepararCampanaTool(AgentTool):
                 "campaign_context": {
                     "campaign_type": campaign_type,
                     "channel": "whatsapp",
+                    "title": campaign_title or "Productos sin movimiento",
+                    "objective": campaign_objective or opportunity,
+                    "message": campaign_message,
                     "audience_segment": audience_segment,
-                    "audience_count": audience_count,
+                    **audience_counts,
                     "products": [
                         {
                             "id": row.id,
@@ -415,8 +464,11 @@ class PrepararCampanaTool(AgentTool):
             "campaign_context": {
                 "campaign_type": campaign_type,
                 "channel": "whatsapp",
+                "title": campaign_title or (product_payload.get("name") if product_payload else "Campaña para clientes"),
+                "objective": campaign_objective or opportunity,
+                "message": campaign_message,
                 "audience_segment": audience_segment,
-                "audience_count": audience_count,
+                **audience_counts,
                 "product": product_payload,
                 "days": days,
                 "opportunity": opportunity,
