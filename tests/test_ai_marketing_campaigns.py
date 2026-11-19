@@ -1926,7 +1926,7 @@ def test_campaign_price_is_resolved_for_each_customer_instead_of_using_retail_pr
             title="Precio Coca",
             objective="Informar precio por cliente",
             campaign_type="promocion_producto",
-            content="Hola {{cliente}}, el precio mayorista es {{precio}} por unidad.",
+            content="Hola {{cliente}}, Coca a $ 10.000 por unidad. Precio final según tu lista: {{precio}}.",
             system_data={"pricing_quantity": 3},
             audience_segment="clientes activos",
             audience_count=2,
