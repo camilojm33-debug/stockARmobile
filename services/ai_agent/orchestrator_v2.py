@@ -2012,14 +2012,14 @@ class AgentRuntime:
             )
             eligible_count = int(campaign_context.get("audience_count") or 0)
             excluded_count = int(campaign_context.get("audience_excluded_count") or 0)
-            final_content = (
+            campaign_summary = (
                 f"Preparé **{campaign.title}** y guardé el borrador #{campaign.id}.\n\n"
                 f"**Objetivo:** {campaign.objective}.\n"
                 f"**Público con permiso documentado:** {eligible_count} contacto(s). "
                 f"{f'{excluded_count} contacto(s) quedaron excluidos por falta de WhatsApp válido o consentimiento documentado. ' if excluded_count else ''}\n\n"
-                "El mensaje quedó redactado por Marketing IA. Abrí el borrador para revisar el texto y los destinatarios; "
-                "nada se envió. El envío solo empieza después de tu aprobación."
+                "Abrí el borrador para revisar el texto y los destinatarios. Nada se envió; el envío solo empieza después de tu aprobación."
             )
+            final_content = f"{str(final_content or '').strip()}\n\n{campaign_summary}".strip()
             assistant.content = final_content
         elif agent_key == "marketing" and proposal_request:
             final_content = (
