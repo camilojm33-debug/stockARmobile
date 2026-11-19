@@ -1688,3 +1688,142 @@ def test_tenant_campaign_send_uses_exact_merchant_waba_and_rejects_changed_sende
         assert not called["send"]
 
 
+
+
+
+def test_tenant_campaign_whatsapp_corrector_normalizes_numbers_without_changing_consent(app):
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import correct_campaign_whatsapp_numbers
+
+    with app.app_context():
+        company = Company(name="WhatsApp Corrector Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="whatsapp-corrector-admin",
+            email="whatsapp-corrector@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+
+        formatted = Client(
+            name="Formato local",
+            whatsapp="0362 15 555-0101",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="unknown",
+        )
+        phone_only = Client(
+            name="Solo teléfono",
+            phone="362 555-0102",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="unknown",
+        )
+        invalid = Client(
+            name="Número incompleto",
+            whatsapp="123",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        opted_out = Client(
+            name="Pidió baja",
+            whatsapp="0362 15 555-0104",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_out",
+        )
+        db.session.add_all([formatted, phone_only, invalid, opted_out])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Corrector",
+            objective="Normalizar WhatsApp",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=4,
+        )
+        db.session.flush()
+
+        result = correct_campaign_whatsapp_numbers(
+            campaign.id,
+            company_id=company.id,
+            use_phone_fallback=True,
+        )
+
+        assert formatted.whatsapp == "5493625550101"
+        assert phone_only.whatsapp == "5493625550102"
+        assert invalid.whatsapp == "123"
+        assert opted_out.whatsapp == "0362 15 555-0104"
+        assert formatted.whatsapp_marketing_consent == "unknown"
+        assert phone_only.whatsapp_marketing_consent == "unknown"
+        assert result == {
+            "audience": 4,
+            "normalized": 1,
+            "copied_from_phone": 1,
+            "unchanged": 0,
+            "invalid": 1,
+            "no_number": 0,
+            "skipped_opted_out": 1,
+        }
+
+
+def test_tenant_campaign_whatsapp_corrector_does_not_copy_phone_without_explicit_choice(app):
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import correct_campaign_whatsapp_numbers
+
+    with app.app_context():
+        company = Company(name="WhatsApp Corrector Opt-in Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="whatsapp-corrector-optin-admin",
+            email="whatsapp-corrector-optin@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+        client = Client(
+            name="Teléfono no confirmado",
+            phone="362 555-0199",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="unknown",
+        )
+        db.session.add(client)
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="No copiar por defecto",
+            objective="Verificar selección explícita",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.flush()
+
+        result = correct_campaign_whatsapp_numbers(
+            campaign.id,
+            company_id=company.id,
+            use_phone_fallback=False,
+        )
+
+        assert client.whatsapp in (None, "")
+        assert result["copied_from_phone"] == 0
+        assert result["no_number"] == 1
