@@ -1450,6 +1450,7 @@ def campaign_detail(campaign_id):
                 campaign,
                 SimpleNamespace(name="Cliente de ejemplo", whatsapp="5491100000000"),
                 include_opt_out=not template_has_opt_out,
+                preview=True,
             )
             template_preview = template_body
             for variable, value in (
