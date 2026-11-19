@@ -1469,6 +1469,16 @@ def campaign_detail(campaign_id):
     from app import Client
     from sqlalchemy import or_
 
+    campaign_can_reopen_for_recipients = bool(
+        campaign.status == "SIN_ENVIO"
+        and int(campaign.target_count or 0) == 0
+        and int(campaign.sent_count or 0) == 0
+        and int(campaign.failed_count or 0) == 0
+        and TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            company_id=current_user.company_id,
+        ).count() == 0
+    )
     selected_mode = campaign_system_data.get("audience_selection_mode") == "selected"
     selected_ids = []
     for raw_id in campaign_system_data.get("selected_client_ids") or []:
@@ -1523,6 +1533,7 @@ def campaign_detail(campaign_id):
         campaign_selected_contacts=selected_contacts,
         campaign_available_contacts=available_contacts,
         campaign_selection_mode=selected_mode,
+        campaign_can_reopen_for_recipients=campaign_can_reopen_for_recipients,
         campaign_contact_search=contact_search,
         campaign_selected_ids=selected_ids,
         campaign_pricing_quantity=campaign_system_data.get("pricing_quantity") or "",
@@ -1806,9 +1817,26 @@ def campaign_update_recipients(campaign_id):
     campaign = CampaignService._campaign(current_user.company_id, campaign_id)
     if campaign is None:
         abort(404)
-    if campaign.status not in {"BORRADOR", "PENDIENTE_APROBACION"}:
-        flash("Los destinatarios solo se pueden modificar antes de aprobar la campaña.", "warning")
+    from services.ai_agent.tenant_campaign_service import TenantCampaignRecipient
+
+    can_reopen_empty_campaign = bool(
+        campaign.status == "SIN_ENVIO"
+        and int(campaign.target_count or 0) == 0
+        and int(campaign.sent_count or 0) == 0
+        and int(campaign.failed_count or 0) == 0
+        and TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            company_id=current_user.company_id,
+        ).count() == 0
+    )
+    if campaign.status not in {"BORRADOR", "PENDIENTE_APROBACION"} and not can_reopen_empty_campaign:
+        flash("Los destinatarios solo se pueden modificar antes de aprobar la campaña. Una campaña sin envíos se puede reabrir si no llegó a preparar destinatarios.", "warning")
         return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
+
+    if can_reopen_empty_campaign:
+        campaign.status = "BORRADOR"
+        campaign.started_at = None
+        campaign.finished_at = None
 
     try:
         campaign_data = json.loads(campaign.system_data_json or "{}")
