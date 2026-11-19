@@ -239,7 +239,9 @@ def ai_agent_chat():
         db.session.rollback()
         current_app.logger.exception("Error procesando chat del agente IA: company_id=%s conversation_id=%s agent=%s", company_id, conversation.id, agent_key)
         return jsonify({"success": False, "error": "No se pudo procesar tu solicitud."}), 500
-    return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
+    campaign_id = result.get("campaign_id")
+    campaign_url = url_for("ai_agents.campaign_detail", campaign_id=int(campaign_id)) if campaign_id else None
+    return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content"), "campaign_id": campaign_id, "campaign_url": campaign_url})
 
 
 
