@@ -1553,7 +1553,6 @@ def campaign_detail(campaign_id):
         campaign_available_contacts=available_contacts,
         campaign_selection_mode=selected_mode,
         campaign_can_reopen_for_recipients=campaign_can_reopen_for_recipients,
-        campaign_contact_search=contact_search,
         campaign_selected_ids=selected_ids,
         campaign_selected_count=len(selected_ids),
         campaign_contact_search=contact_search,
