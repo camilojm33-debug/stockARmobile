@@ -2112,6 +2112,10 @@ def campaign_edit(campaign_id):
                 campaign_data["pricing_quantity"] = pricing_quantity
             else:
                 campaign_data.pop("pricing_quantity", None)
+            # Any previous exclusion report belongs to the old copy/quantity.
+            # Clear it so the review page never shows stale pricing diagnostics.
+            campaign_data.pop("pricing_exclusions", None)
+            campaign_data.pop("pricing_excluded_count", None)
             campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
             raw_schedule = str(
                 request.form.get("scheduled_at_utc") or request.form.get("scheduled_at") or ""
@@ -2154,15 +2158,30 @@ def campaign_transition(campaign_id):
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
         if target_status.upper() == "APROBADA":
             preparation = prepare_recipients(campaign.id, company_id=current_user.company_id)
-            if int(preparation.get("target_count") or 0) < 1:
-                raise ValueError(
-                    "No se puede aprobar esta campaña porque no hay destinatarios habilitados. "
-                    "Completá la audiencia y verificá WhatsApp y el consentimiento. "
-                    "No se enviará nada con el público en cero."
+            prepared_count = int(preparation.get("target_count") or 0)
+            if prepared_count < 1:
+                # Keep the per-recipient preflight diagnostics visible in the
+                # draft; do not mark the campaign as approved or enqueue it.
+                campaign.status = "PENDIENTE_APROBACION"
+                campaign.started_at = None
+                campaign.finished_at = None
+                db.session.commit()
+                flash(
+                    "La campaña no se encoló porque no hay destinatarios listos. "
+                    "Revisá los contactos, el consentimiento y las tarifas mayoristas. "
+                    "No se enviará nada con el público en cero.",
+                    "warning",
                 )
+                return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
             CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
             db.session.commit()
-            flash("Campaña aprobada. El envío comenzará automáticamente en segundo plano desde el número de WhatsApp que este comercio conectó mediante Meta, respetando el consentimiento.", "success")
+            excluded_by_price = int(preparation.get("pricing_excluded") or 0)
+            flash(
+                f"Campaña aprobada: se encolaron {prepared_count} destinatario(s). "
+                f"{excluded_by_price} contacto(s) se excluyeron por no superar la validación individual de mensaje/precio. "
+                "El envío comenzará desde el WhatsApp conectado por el comercio y respetará las bajas.",
+                "success",
+            )
         else:
             db.session.commit()
             flash("Estado de campaña actualizado.", "success")
