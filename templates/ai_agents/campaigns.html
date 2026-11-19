@@ -317,9 +317,9 @@
     <div class="crm-empty">
       <div class="crm-empty-icon"><i class="bi bi-megaphone"></i></div>
       <div class="crm-empty-title">Todavía no tenés campañas</div>
-      <p class="crm-empty-copy">Pedile a Marketing IA que prepare una propuesta. Va a quedar guardada como borrador para que la revises antes de aprobar.</p>
-      <a class="btn btn-primary px-3" href="{{ url_for('ai_agents.campaign_wizard') }}">
-        <i class="bi bi-stars me-1"></i>Crear campaña guiada
+      <p class="crm-empty-copy">Marketing IA va a analizar tus datos, redactar el WhatsApp y guardar un borrador. Vos revisás y aprobás antes del envío.</p>
+      <a class="btn btn-primary px-3" href="{{ url_for('ai_agents.agent', agent='marketing', crear_campana='1') }}">
+        <i class="bi bi-stars me-1"></i>Crear campaña con Marketing IA
       </a>
     </div>
     {% endif %}
