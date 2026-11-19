@@ -616,6 +616,11 @@ def _render_content(campaign, client, *, include_opt_out=True):
         "{{precio}}" in content
         or re.search(r"\bprecio\b", content + " " + str(campaign.objective or ""), re.IGNORECASE)
     )
+    if price_requested and product is None:
+        raise ValueError(
+            "La campaña menciona un precio pero no tiene un producto asociado. "
+            "Volvé a prepararla desde Marketing IA indicando product_query para validar el precio real."
+        )
     if product is not None and price_requested:
         from services.wholesale_pricing_service import resolve_product_price
 
