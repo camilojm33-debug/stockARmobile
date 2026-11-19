@@ -616,7 +616,7 @@ def _format_campaign_price(value) -> str:
     return f"$ {rendered}"
 
 
-def _render_content(campaign, client, *, include_opt_out=True):
+def _render_content(campaign, client, *, include_opt_out=True, preview=False):
     content = str(campaign.content or "")
     has_price_placeholder = "{{precio}}" in content
     has_min_quantity_placeholder = "{{cantidad_minima}}" in content
@@ -639,7 +639,30 @@ def _render_content(campaign, client, *, include_opt_out=True):
             "La campaña menciona un precio pero no tiene un producto asociado. "
             "Volvé a prepararla desde Marketing IA indicando product_query para validar el precio real."
         )
-    if product is not None and price_requested:
+    if product is not None and price_requested and preview:
+        # A campaign preview is illustrative, not a universal customer price.
+        # Real dispatch below resolves the customer's own retail/wholesale tariff.
+        preview_price = "precio personalizado según tu lista"
+        price_phrase = re.compile(
+            r"(\bprecio(?:\s+(?:mayorista|minorista|por\s+mayor))?"
+            r"(?:\s+(?:de|es|a|por\s+unidad))?\s*[:=]?\s*)"
+            r"(?:\$\s*)?\d[\d.,]*",
+            re.IGNORECASE,
+        )
+        content, replaced_price = price_phrase.subn(
+            lambda match: f"{match.group(1)}{preview_price}",
+            content,
+            count=1,
+        )
+        if not replaced_price and not has_price_placeholder:
+            currency_amounts = list(re.finditer(r"\$\s*\d[\d.,]*", content))
+            if len(currency_amounts) == 1:
+                match = currency_amounts[0]
+                content = content[:match.start()] + preview_price + content[match.end():]
+        content = content.replace("{{precio}}", preview_price)
+        content = content.replace("{{cantidad_minima}}", "según el tramo aplicable")
+        content = content.replace("{{lista_mayorista}}", "tu lista vigente")
+    elif product is not None and price_requested:
         from services.wholesale_pricing_service import resolve_product_price
 
         quantity = _campaign_wholesale_quantity(campaign, client)
