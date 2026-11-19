@@ -1695,6 +1695,39 @@ def vendor_webchat_toggle():
     return redirect(url_for("ai_agents.agent", agent="vendedor"))
 
 
+@bp.post("/campanas/<int:campaign_id>/corregir-whatsapp")
+@company_admin_required
+def campaign_correct_whatsapp_numbers(campaign_id):
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    from services.ai_agent.tenant_campaign_service import correct_campaign_whatsapp_numbers
+
+    try:
+        result = correct_campaign_whatsapp_numbers(
+            campaign_id,
+            company_id=current_user.company_id,
+            use_phone_fallback=request.form.get("use_phone_fallback") == "1",
+        )
+        db.session.commit()
+        flash(
+            "Corrector finalizado: "
+            f"{result['normalized']} número(s) normalizado(s), "
+            f"{result['copied_from_phone']} copiado(s) desde Teléfono, "
+            f"{result['invalid']} inválido(s), "
+            f"{result['no_number']} sin número y "
+            f"{result['skipped_opted_out']} baja(s) respetada(s). "
+            "No se modificaron permisos promocionales ni se envió ningún mensaje.",
+            "success",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
+
+
 @bp.post("/campanas/<int:campaign_id>/edit")
 @company_admin_required
 def campaign_edit(campaign_id):
