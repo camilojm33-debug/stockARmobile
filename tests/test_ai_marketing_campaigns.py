@@ -2142,7 +2142,7 @@ def test_campaign_picker_adds_all_eligible_contacts_across_all_pages_and_honors_
                 whatsapp_marketing_consent="opted_in",
                 **_consent_evidence(),
             )
-            for index in range(1, 4)
+            for index in range(1, 32)
         ]
         eligible_retail = Client(
             name="Minorista habilitado",
