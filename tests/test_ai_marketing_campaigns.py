@@ -1848,7 +1848,7 @@ def test_selected_campaign_audience_is_limited_to_explicit_customer_ids(app):
         user.set_password("password123")
         clients = [
             Client(name=f"Cliente {index}", whatsapp=f"54936240000{index:02d}", company_id=company.id, active=True)
-            for index in range(1, 4)
+            for index in range(1, 32)
         ]
         db.session.add_all([user, *clients])
         db.session.flush()
@@ -2172,7 +2172,7 @@ def test_campaign_picker_adds_all_eligible_contacts_across_all_pages_and_honors_
             content="Hola {{cliente}}",
             system_data={},
             audience_segment="clientes activos",
-            audience_count=5,
+            audience_count=33,
         )
         db.session.flush()
 
@@ -2212,4 +2212,110 @@ def test_campaign_picker_adds_all_eligible_contacts_across_all_pages_and_honors_
         }
         assert eligible_retail.id not in stored["selected_client_ids"]
         assert opted_out_wholesale.id not in stored["selected_client_ids"]
+
+def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(app, monkeypatch):
+    from decimal import Decimal
+    from app import Client, Company, Product, User, db
+
+    with app.app_context():
+        company = Company(name="Campaign Price Preflight Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="campaign-price-preflight-admin",
+            email="campaign-price-preflight@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        product = Product(
+            barcode="PRICE-PREFLIGHT-COCA",
+            name="Coca",
+            price=Decimal("10000.00"),
+            active=True,
+            company_id=company.id,
+        )
+        retail = Client(
+            name="Minorista habilitado",
+            whatsapp="5493624551001",
+            customer_type="minorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        wholesale = Client(
+            name="Mayorista sin tarifa",
+            whatsapp="5493624551002",
+            customer_type="mayorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        db.session.add_all([user, product, retail, wholesale])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Precio individual Coca",
+            objective="Precio por cliente",
+            campaign_type="promocion_producto",
+            content="{{producto}}: {{precio}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=2,
+            product_id=product.id,
+        )
+        campaign.status = "APROBADA"
+        db.session.flush()
+
+        connection = {
+            "enabled": True,
+            "phone_number_id": "preflight-phone-id",
+            "business_account_id": "preflight-waba-id",
+            "access_token": "merchant-token",
+            "template_name": "approved_campaign",
+            "template_language": "es_AR",
+        }
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
+            lambda *_args, **_kwargs: (SimpleNamespace(id=1, is_default=True), connection),
+        )
+
+        def fake_resolve_price(*, company_id, product, quantity, client):
+            if client.customer_type == "mayorista":
+                return {
+                    "price": Decimal("10000.00"),
+                    "source": "minorista",
+                    "price_list_name": None,
+                    "reason": "mayorista_sin_lista",
+                }
+            return {
+                "price": Decimal("10000.00"),
+                "source": "minorista",
+                "price_list_name": None,
+                "reason": None,
+            }
+
+        monkeypatch.setattr(
+            "services.wholesale_pricing_service.resolve_product_price",
+            fake_resolve_price,
+        )
+
+        result = prepare_recipients(campaign.id, company_id=company.id)
+        db.session.refresh(campaign)
+        data = __import__("json").loads(campaign.system_data_json or "{}")
+        queued = TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            channel="whatsapp",
+        ).all()
+
+        assert result["target_count"] == 1
+        assert result["pricing_excluded"] == 1
+        assert [row.client_id for row in queued] == [retail.id]
+        assert data["pricing_excluded_count"] == 1
+        assert data["pricing_exclusions"][0]["client_id"] == wholesale.id
+        assert "no tiene una lista mayorista asignada" in data["pricing_exclusions"][0]["reason"]
 
