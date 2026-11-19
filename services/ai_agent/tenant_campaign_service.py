@@ -14,6 +14,7 @@ import threading
 import time
 import requests
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import Index, UniqueConstraint, func
 
@@ -380,6 +381,18 @@ def _audience_query(campaign):
     segment = str(data.get("client_segment") or "").strip()
     if segment:
         query = query.filter(Client.notes.ilike(f"%{segment}%"))
+    if data.get("audience_selection_mode") == "selected":
+        selected_ids = []
+        for raw_id in data.get("selected_client_ids") or []:
+            try:
+                selected_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if selected_id > 0:
+                selected_ids.append(selected_id)
+        # Explicit empty selection means no recipients; it must not fall back
+        # to the default "all active clients" audience.
+        query = query.filter(Client.id.in_(sorted(set(selected_ids)))) if selected_ids else query.filter(Client.id == -1)
     return query.order_by(Client.id.asc())
 
 
@@ -517,17 +530,141 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     return {"eligible": eligible, "added": added, "target_count": campaign.target_count}
 
 
+def _campaign_wholesale_quantity(campaign, client) -> Decimal:
+    """Use a campaign override or the first available tier in this buyer's own list."""
+    data = _json(campaign)
+    raw_override = data.get("pricing_quantity")
+    if raw_override not in (None, ""):
+        try:
+            quantity = Decimal(str(raw_override))
+            if quantity.is_finite() and quantity > 0:
+                return quantity
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("La cantidad de referencia para precios mayoristas no es válida.")
+
+    if str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() != "mayorista":
+        return Decimal("1")
+    try:
+        list_id = int(getattr(client, "price_list_id", 0) or 0)
+    except (TypeError, ValueError):
+        list_id = 0
+    if not list_id:
+        return Decimal("1")
+
+    from wholesale_pricing import (
+        PriceList,
+        PriceListDiscountRule,
+        PriceListItem,
+        price_list_is_current,
+    )
+    price_list = PriceList.query.filter_by(
+        id=list_id,
+        company_id=int(campaign.company_id),
+    ).first()
+    if not price_list_is_current(price_list):
+        return Decimal("1")
+
+    quantities = []
+    if campaign.product_id:
+        product_tiers = PriceListItem.query.filter(
+            PriceListItem.company_id == int(campaign.company_id),
+            PriceListItem.price_list_id == list_id,
+            PriceListItem.product_id == int(campaign.product_id),
+            PriceListItem.active.is_(True),
+        ).with_entities(PriceListItem.min_quantity).all()
+        quantities.extend(row[0] for row in product_tiers if row[0] is not None)
+    general_tiers = PriceListDiscountRule.query.filter(
+        PriceListDiscountRule.company_id == int(campaign.company_id),
+        PriceListDiscountRule.price_list_id == list_id,
+        PriceListDiscountRule.active.is_(True),
+    ).with_entities(PriceListDiscountRule.min_quantity).all()
+    quantities.extend(row[0] for row in general_tiers if row[0] is not None)
+
+    valid = []
+    for raw in quantities:
+        try:
+            value = Decimal(str(raw))
+            if value.is_finite() and value > 0:
+                valid.append(value)
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+    return min(valid) if valid else Decimal("1")
+
+
+def _format_campaign_price(value) -> str:
+    amount = Decimal(str(value or 0)).quantize(Decimal("0.01"))
+    if amount == amount.to_integral_value():
+        rendered = f"{int(amount):,}".replace(",", ".")
+    else:
+        rendered = f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"$ {rendered}"
+
+
 def _render_content(campaign, client, *, include_opt_out=True):
+    content = str(campaign.content or "")
+    product = campaign.product
     replacements = {
         "{{cliente}}": str(client.name or ""),
         "{{nombre}}": str(client.name or ""),
         "{{telefono}}": _client_phone(client),
-        "{{producto}}": str(campaign.product.name if campaign.product else ""),
-        "{{precio}}": str(campaign.product.price if campaign.product else ""),
+        "{{producto}}": str(product.name if product else ""),
     }
-    content = str(campaign.content or "")
     for key, value in replacements.items():
         content = content.replace(key, value)
+
+    price_requested = bool(
+        "{{precio}}" in content
+        or re.search(r"\bprecio\b", content + " " + str(campaign.objective or ""), re.IGNORECASE)
+    )
+    if product is not None and price_requested:
+        from services.wholesale_pricing_service import resolve_product_price
+
+        quantity = _campaign_wholesale_quantity(campaign, client)
+        resolution = resolve_product_price(
+            company_id=int(campaign.company_id),
+            product=product,
+            quantity=quantity,
+            client=client,
+        )
+        is_wholesale = (
+            str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() == "mayorista"
+        )
+        if is_wholesale and resolution.get("source") != "mayorista":
+            reasons = {
+                "plan_sin_mayoristas": "el plan del comercio no habilita precios mayoristas",
+                "mayorista_sin_lista": "el cliente no tiene una lista mayorista asignada",
+                "lista_no_vigente": "la lista mayorista no está vigente",
+                "producto_sin_tarifa_mayorista": "el producto no tiene tarifa para la cantidad de referencia",
+                "regla_general_sin_precio_minorista": "no se pudo calcular el descuento mayorista",
+                "cantidad_invalida": "la cantidad de referencia no es válida",
+            }
+            reason = reasons.get(
+                str(resolution.get("reason") or ""),
+                "no se pudo resolver un precio mayorista vigente",
+            )
+            raise ValueError(
+                f"No se puede enviar el precio de {product.name} a {client.name}: {reason}. "
+                "Revisá la lista mayorista o la cantidad de referencia."
+            )
+
+        rendered_price = _format_campaign_price(resolution["price"])
+        # Legacy AI drafts sometimes wrote the current retail amount directly
+        # into the text. Replace currency amounts with this recipient's resolved
+        # price so a wholesale buyer never sees another customer's tariff.
+        content = re.sub(r"\$\s*\d[\d.,]*", rendered_price, content)
+        content = content.replace("{{precio}}", rendered_price)
+        content = content.replace("{{cantidad_minima}}", str(quantity.normalize()))
+        content = content.replace(
+            "{{lista_mayorista}}",
+            str(resolution.get("price_list_name") or "precio minorista"),
+        )
+        if not re.search(r"\$\s*\d[\d.,]*", content) and "precio" in content.lower():
+            content = f"{content.rstrip()}\nPrecio por unidad: {rendered_price}."
+    else:
+        content = content.replace("{{precio}}", "")
+        content = content.replace("{{cantidad_minima}}", "")
+        content = content.replace("{{lista_mayorista}}", "")
+
     content = content.strip()
     if not content:
         raise ValueError("El mensaje de campaña está vacío.")
