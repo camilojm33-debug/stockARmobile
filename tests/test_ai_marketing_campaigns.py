@@ -2322,3 +2322,100 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
         assert data["pricing_exclusions"][0]["client_id"] == wholesale.id
         assert "no tiene una lista mayorista asignada" in data["pricing_exclusions"][0]["reason"]
 
+
+
+def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, monkeypatch):
+    import json
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app import Company, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Campaign Editor Regression Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="campaign-editor-regression-admin",
+            email="campaign-editor-regression@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Título original",
+            objective="Objetivo original",
+            campaign_type="promocion_producto",
+            content="Mensaje original",
+            system_data={
+                "channel": "whatsapp",
+                "audience_selection_mode": "selected",
+                "selected_client_ids": [41, 42],
+            },
+            audience_segment="clientes activos",
+            audience_count=2,
+        )
+        db.session.flush()
+
+        monkeypatch.setattr(
+            ai_agents,
+            "current_user",
+            SimpleNamespace(company_id=company.id, id=user.id),
+        )
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+
+        route = ai_agents.campaign_edit.__wrapped__
+        with app.test_request_context(
+            f"/agentes-ia/campanas/{campaign.id}/edit",
+            method="POST",
+            data={
+                "title": "Promo Coca noviembre",
+                "objective": "Reactivar mayoristas",
+                "content": "Hola {{cliente}}: {{producto}} a {{precio}}.",
+                "pricing_quantity": "3",
+                "scheduled_at_utc": "2026-11-20T18:30:00+00:00",
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        saved = json.loads(campaign.system_data_json or "{}")
+        assert campaign.title == "Promo Coca noviembre"
+        assert campaign.objective == "Reactivar mayoristas"
+        assert campaign.content == "Hola {{cliente}}: {{producto}} a {{precio}}."
+        assert campaign.channel == "whatsapp"
+        assert saved["pricing_quantity"] == "3"
+        assert saved["audience_selection_mode"] == "selected"
+        assert saved["selected_client_ids"] == [41, 42]
+        assert campaign.scheduled_at == datetime(2026, 11, 20, 18, 30)
+
+        with app.test_request_context(
+            f"/agentes-ia/campanas/{campaign.id}/edit",
+            method="POST",
+            data={
+                "title": "No debe guardarse",
+                "objective": "Cantidad incorrecta",
+                "content": "No sobrescribir",
+                "pricing_quantity": "0",
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        saved = json.loads(campaign.system_data_json or "{}")
+        assert campaign.title == "Promo Coca noviembre"
+        assert campaign.content == "Hola {{cliente}}: {{producto}} a {{precio}}."
+        assert saved["pricing_quantity"] == "3"
