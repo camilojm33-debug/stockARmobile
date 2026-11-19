@@ -615,6 +615,7 @@ def _render_content(campaign, client, *, include_opt_out=True):
     price_requested = bool(
         "{{precio}}" in content
         or re.search(r"\bprecio\b", content + " " + str(campaign.objective or ""), re.IGNORECASE)
+        or re.search(r"\$\s*\d", content)
     )
     if price_requested and product is None:
         raise ValueError(
