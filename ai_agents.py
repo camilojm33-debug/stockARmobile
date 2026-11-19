@@ -2039,6 +2039,62 @@ def campaign_update_recipients(campaign_id):
         contact_page=selected_return_page,
     ))
 
+@bp.post("/campanas/<int:campaign_id>/edit")
+@company_admin_required
+def campaign_edit(campaign_id):
+    """Save campaign copy, schedule and per-recipient pricing settings."""
+    from decimal import Decimal, InvalidOperation
+
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    try:
+        campaign = CampaignService.update_draft(
+            company_id=current_user.company_id,
+            campaign_id=campaign_id,
+            title=request.form.get("title", ""),
+            objective=request.form.get("objective", ""),
+            content=request.form.get("content", ""),
+            user_id=current_user.id,
+        )
+        try:
+            campaign_data = json.loads(campaign.system_data_json or "{}")
+        except (TypeError, ValueError):
+            campaign_data = {}
+        if not isinstance(campaign_data, dict):
+            campaign_data = {}
+
+        raw_quantity = str(request.form.get("pricing_quantity") or "").strip()
+        if raw_quantity:
+            try:
+                quantity = Decimal(raw_quantity)
+            except (InvalidOperation, TypeError, ValueError):
+                raise ValueError("La cantidad de referencia debe ser un número mayor que cero.")
+            if not quantity.is_finite() or quantity <= 0:
+                raise ValueError("La cantidad de referencia debe ser un número mayor que cero.")
+            campaign_data["pricing_quantity"] = format(quantity, "f")
+        else:
+            campaign_data.pop("pricing_quantity", None)
+
+        campaign.channel = "whatsapp"
+        campaign_data["channel"] = "whatsapp"
+        campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
+
+        raw_schedule = str(
+            request.form.get("scheduled_at_utc") or request.form.get("scheduled_at") or ""
+        ).strip()
+        campaign.scheduled_at = _parse_campaign_schedule(raw_schedule) if raw_schedule else None
+
+        db.session.commit()
+        flash("Campaña actualizada. No se envió ningún mensaje.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
+
+
 @bp.post("/campanas/<int:campaign_id>/transition")
 @company_admin_required
 def campaign_transition(campaign_id):
