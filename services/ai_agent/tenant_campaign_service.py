@@ -497,6 +497,8 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     }
     added = 0
     eligible = 0
+    pricing_excluded = 0
+    pricing_exclusions = []
     clients = _audience_query(campaign).filter(
         Client.whatsapp_marketing_consent == "opted_in",
         Client.whatsapp_marketing_consent_recorded_at.isnot(None),
@@ -506,6 +508,24 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
     for client in clients:
         destination = _client_phone(client)
         if not destination or (client.id, "whatsapp") in existing:
+            continue
+        # Resolve every variable and the recipient's own tariff before any
+        # recipient is queued. A missing wholesale list/tier must never fall
+        # back to retail or fail later after a campaign has begun sending.
+        try:
+            _render_content(
+                campaign,
+                client,
+                include_opt_out=not template_has_opt_out,
+            )
+        except ValueError as exc:
+            pricing_excluded += 1
+            if len(pricing_exclusions) < 100:
+                pricing_exclusions.append({
+                    "client_id": int(client.id),
+                    "client_name": str(client.name or "Cliente")[:120],
+                    "reason": str(exc)[:400],
+                })
             continue
         eligible += 1
         token = client.marketing_unsubscribe_token or _token()
@@ -526,8 +546,16 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         existing.add((client.id, "whatsapp"))
         added += 1
     campaign.target_count = len(existing)
+    campaign_data["pricing_exclusions"] = pricing_exclusions
+    campaign_data["pricing_excluded_count"] = pricing_excluded
+    campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
     db.session.flush()
-    return {"eligible": eligible, "added": added, "target_count": campaign.target_count}
+    return {
+        "eligible": eligible,
+        "added": added,
+        "target_count": campaign.target_count,
+        "pricing_excluded": pricing_excluded,
+    }
 
 
 def _campaign_wholesale_quantity(campaign, client) -> Decimal:
