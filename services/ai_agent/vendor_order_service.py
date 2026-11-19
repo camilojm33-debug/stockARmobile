@@ -1797,6 +1797,27 @@ class VendorOrderService:
         }
         if customer_name.strip():
             state["customer_name"] = customer_name.strip()[:160]
+
+        # A purchase is not marketing consent. For WhatsApp conversations,
+        # request an explicit yes/no after the order confirmation only when
+        # this contact's promotional preference is still unknown.
+        if str(getattr(conversation, "channel", "") or "").strip().lower() in {"whatsapp", "whatsapp_business"}:
+            from services.whatsapp_share_service import normalize_whatsapp_number
+
+            candidate_whatsapp = str(getattr(client, "whatsapp", None) or phone or customer_phone or "").strip()
+            normalized_whatsapp = normalize_whatsapp_number(candidate_whatsapp)
+            if normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15:
+                client.whatsapp = normalized_whatsapp
+                if not str(getattr(client, "phone", None) or "").strip():
+                    client.phone = normalized_whatsapp[:20]
+                consent_status = str(getattr(client, "whatsapp_marketing_consent", "unknown") or "unknown").strip().lower()
+                existing_pending = state.get("whatsapp_marketing_opt_in_pending")
+                if consent_status == "unknown" and not isinstance(existing_pending, dict):
+                    state["whatsapp_marketing_opt_in_pending"] = {
+                        "client_id": int(client.id),
+                        "requested_at": __import__("datetime").datetime.utcnow().isoformat(),
+                    }
+
         # Consume the marker only after the new quote is fully persisted. If
         # validation fails before this point, a retry must still create a new quote.
         state.pop(NEW_QUOTE_CONTEXT_KEY, None)
