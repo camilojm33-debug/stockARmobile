@@ -719,18 +719,31 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
         content = content.replace("{{cantidad_minima}}", "según el tramo aplicable")
         content = content.replace("{{lista_mayorista}}", "tu lista vigente")
     elif product is not None and price_requested:
-        from services.wholesale_pricing_service import resolve_product_price
-
-        quantity = _campaign_wholesale_quantity(campaign, client)
-        resolution = resolve_product_price(
-            company_id=int(campaign.company_id),
-            product=product,
-            quantity=quantity,
-            client=client,
-        )
         is_wholesale = (
             str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() == "mayorista"
         )
+        if is_wholesale:
+            # Only wholesale recipients need list/tier resolution. Retail buyers
+            # use the product's current retail price directly and must not be
+            # blocked by wholesale-plan or price-list checks.
+            from services.wholesale_pricing_service import resolve_product_price
+
+            quantity = _campaign_wholesale_quantity(campaign, client)
+            resolution = resolve_product_price(
+                company_id=int(campaign.company_id),
+                product=product,
+                quantity=quantity,
+                client=client,
+            )
+        else:
+            quantity = Decimal("1")
+            resolution = {
+                "price": Decimal(str(getattr(product, "price", 0) or 0)),
+                "source": "minorista",
+                "price_list_name": None,
+                "min_quantity": quantity,
+                "reason": None,
+            }
         # The descriptor must match the recipient too. A mixed audience must
         # never see a retail amount labeled "precio mayorista" or vice versa.
         if is_wholesale:
