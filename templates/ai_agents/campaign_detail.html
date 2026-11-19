@@ -14,7 +14,7 @@
   {% if not ai_marketing_send_enabled %}<div class="alert alert-warning">El envío automático de Marketing IA está deshabilitado; la campaña no puede aprobarse.</div>{% endif %}
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     {% set campaign_status_label = {'BORRADOR':'Borrador','PENDIENTE_APROBACION':'Pendiente de revisión','APROBADA':'Aprobada','EN_PREPARACION':'En envío','ENVIADA':'Enviada','ENVIADA_PARCIAL':'Envío parcial','FALLIDA':'Revisar envío','SIN_ENVIO':'Sin destinatarios','CANCELADA':'Cancelada'}.get(campaign.status, campaign.status|replace('_',' ')|title) %}
-    <div><span class="page-kicker"><i class="bi bi-megaphone"></i> Campaña</span><h1 class="h3 fw-bold mb-1">{{ campaign.title }}</h1><p class="text-muted mb-0">{{ campaign_status_label }} · {{ campaign.audience_segment or 'Todos los clientes elegibles' }} · {{ detected_audience_count }} clientes detectados · {{ campaign.target_count }} preparados</p></div>
+    <div><span class="page-kicker"><i class="bi bi-megaphone"></i> Campaña</span><h1 class="h3 fw-bold mb-1">{{ campaign.title }}</h1><p class="text-muted mb-0">{{ campaign_status_label }} · {{ campaign.audience_segment or 'Todos los clientes elegibles' }} · {{ detected_audience_count }} con permiso documentado · {{ campaign.target_count }} preparados</p></div>
     <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Campañas</a>
   </div>
   <div class="campaign-results mb-4">
@@ -26,8 +26,8 @@
     <div class="col-lg-7">
       <div class="card app-card mb-4"><div class="card-body">
         <h2 class="h5 fw-bold">Mensaje y previsualización</h2>
-        <p class="small text-muted">Así verán tus clientes el mensaje. El sistema completa automáticamente los datos y agrega la opción para dejar de recibir promociones.</p>
-        {% if campaign_template.name %}<div class="alert alert-success py-2"><i class="bi bi-check-circle me-1"></i>WhatsApp está listo para esta campaña.</div>{% else %}<div class="alert alert-warning py-2"><i class="bi bi-exclamation-circle me-1"></i>La conexión de WhatsApp debe revisarse antes de aprobar. No se enviará nada hasta que esté lista.</div>{% endif %}
+        <p class="small text-muted">Este texto lo redactó Marketing IA con los datos del comercio. Revisalo y editá lo que necesites; el mensaje no se envía hasta que lo apruebes.</p>
+        {% if campaign_template.name %}<div class="alert alert-success py-2"><i class="bi bi-check-circle me-1"></i>WhatsApp del comercio listo para revisar esta campaña.</div>{% else %}<div class="alert alert-warning py-2"><i class="bi bi-exclamation-circle me-1"></i>{{ campaign_template_error or 'La conexión de WhatsApp debe revisarse antes de aprobar. No se enviará nada hasta que esté lista.' }}</div>{% endif %}
         <div class="campaign-preview mb-3">{{ campaign_template_preview or 'La vista previa estará disponible cuando WhatsApp esté listo.' }}</div>
         {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] %}
         <form method="post" action="{{ url_for('ai_agents.campaign_edit', campaign_id=campaign.id) }}" id="campaignEditForm">
@@ -56,8 +56,12 @@
     <div class="col-lg-5">
       <div class="card app-card mb-3"><div class="card-body">
         <h2 class="h5 fw-bold">Resumen de audiencia</h2>
-        <dl class="mb-0"><dt>Objetivo</dt><dd>{{ campaign.objective or 'Campaña comercial' }}</dd><dt>Público</dt><dd>{{ campaign.audience_segment or 'Todos los clientes elegibles' }} ({{ detected_audience_count }})</dd><dt>Elegibles preparados</dt><dd>{{ campaign.target_count }}</dd><dt>Excluidos / omitidos</dt><dd>{{ campaign_metrics.skipped }}</dd><dt>Producto</dt><dd>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</dd><dt>Horario</dt><dd>{{ campaign_schedule_local or 'Al aprobar' }}{% if campaign.scheduled_at %} (hora local del comercio){% endif %}</dd></dl>
-        <div class="small text-muted">Se excluyen clientes inactivos, números generales sin WhatsApp, números inválidos, bajas y consentimientos sin evidencia registrada.</div>
+        <dl class="mb-0"><dt>Objetivo</dt><dd>{{ campaign.objective or 'Campaña comercial' }}</dd><dt>Público</dt><dd>{{ campaign.audience_segment or 'Todos los clientes elegibles' }}</dd><dt>Con WhatsApp y permiso registrado</dt><dd><strong>{{ detected_audience_count }}</strong></dd><dt>Excluidos por falta de datos o permiso</dt><dd>{{ excluded_audience_count }}</dd><dt>Destinatarios preparados</dt><dd>{{ campaign.target_count }}</dd><dt>Omitidos al validar</dt><dd>{{ campaign_metrics.skipped }}</dd><dt>Producto</dt><dd>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</dd><dt>Horario</dt><dd>{{ campaign_schedule_local or 'Al aprobar' }}{% if campaign.scheduled_at %} (hora local del comercio){% endif %}</dd></dl>
+        {% if detected_audience_count < 1 %}
+        <div class="alert alert-warning small mt-3 mb-0"><strong>Esta campaña todavía no tiene destinatarios habilitados.</strong><br>No se enviará nada con el público en cero. Registrá el consentimiento de WhatsApp en las fichas de los clientes y pedile luego a Marketing IA que vuelva a preparar la campaña. Un teléfono guardado no alcanza como permiso.</div>
+        {% else %}
+        <div class="alert alert-success small mt-3 mb-0">Marketing IA encontró {{ detected_audience_count }} contacto(s) que tienen WhatsApp válido y autorizaron recibir promociones. La revisión final vuelve a comprobar el permiso justo antes de enviar.</div>
+        {% endif %}
       </div></div>
       <div class="card app-card mb-3"><div class="card-body">
         <h2 class="h5 fw-bold">Ventas atribuidas</h2><div class="row g-2"><div class="col-6"><div class="small text-muted">Conversaciones</div><strong>{{ campaign_metrics.attributed_conversations }}</strong></div><div class="col-6"><div class="small text-muted">Ventas</div><strong>{{ campaign_metrics.attributed_sales }}</strong></div><div class="col-12"><div class="small text-muted">Facturación</div><strong>$ {{ '{:,.0f}'.format(campaign_metrics.attributed_revenue).replace(',', '.') }}</strong></div></div>
