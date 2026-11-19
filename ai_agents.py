@@ -1564,6 +1564,8 @@ def campaign_detail(campaign_id):
         campaign_available_total=campaign_available_total,
         campaign_selected_contacts_truncated=len(selected_ids) > len(selected_contacts),
         campaign_pricing_quantity=campaign_system_data.get("pricing_quantity") or "",
+        campaign_price_exclusions=campaign_system_data.get("pricing_exclusions") or [],
+        campaign_price_excluded_count=int(campaign_system_data.get("pricing_excluded_count") or 0),
         campaign_schedule_local=_campaign_schedule_local(campaign),
         campaign_sender_phone=campaign_sender_phone,
         ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
