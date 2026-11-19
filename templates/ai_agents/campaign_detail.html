@@ -7,6 +7,12 @@
 .campaign-result strong{display:block;font-size:1.35rem}
 .campaign-preview{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--app-line);border-radius:12px;padding:1rem;background:var(--app-panel-soft)}
 @media(max-width:700px){.campaign-results{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.campaign-diagnostics-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem}
+.campaign-diagnostic{border:1px solid var(--app-line);border-radius:10px;padding:.7rem;background:var(--app-panel-soft);min-width:0}
+.campaign-diagnostic strong{display:block;font-size:1.15rem}
+.campaign-excluded-contact{display:flex;justify-content:space-between;align-items:flex-start;gap:.8rem;padding:.7rem 0;border-top:1px solid var(--app-line)}
+.campaign-excluded-contact:first-child{border-top:0}
+@media(max-width:520px){.campaign-diagnostics-grid{grid-template-columns:1fr}.campaign-excluded-contact{flex-direction:column}}
 </style>
 {% endblock %}
 {% block content %}
@@ -56,13 +62,49 @@
     <div class="col-lg-5">
       <div class="card app-card mb-3"><div class="card-body">
         <h2 class="h5 fw-bold">Resumen de audiencia</h2>
-        <dl class="mb-0"><dt>Objetivo</dt><dd>{{ campaign.objective or 'Campaña comercial' }}</dd><dt>Público</dt><dd>{{ campaign.audience_segment or 'Todos los clientes elegibles' }}</dd><dt>Con WhatsApp y permiso registrado</dt><dd><strong>{{ detected_audience_count }}</strong></dd><dt>Excluidos por falta de datos o permiso</dt><dd>{{ excluded_audience_count }}</dd><dt>Destinatarios preparados</dt><dd>{{ campaign.target_count }}</dd><dt>Omitidos al validar</dt><dd>{{ campaign_metrics.skipped }}</dd><dt>Producto</dt><dd>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</dd><dt>Horario</dt><dd>{{ campaign_schedule_local or 'Al aprobar' }}{% if campaign.scheduled_at %} (hora local del comercio){% endif %}</dd></dl>
+        <dl class="mb-0"><dt>Objetivo</dt><dd>{{ campaign.objective or 'Campaña comercial' }}</dd><dt>Público</dt><dd>{{ campaign.audience_segment or 'Todos los clientes elegibles' }}</dd><dt>Contactos en el público</dt><dd>{{ audience_diagnostics.total }}</dd><dt>Elegibles ahora</dt><dd><strong>{{ detected_audience_count }}</strong></dd><dt>Excluidos por datos o permiso</dt><dd>{{ excluded_audience_count }}</dd><dt>Destinatarios preparados</dt><dd>{{ campaign.target_count }}</dd><dt>Omitidos al validar</dt><dd>{{ campaign_metrics.skipped }}</dd><dt>Producto</dt><dd>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</dd><dt>Horario</dt><dd>{{ campaign_schedule_local or 'Al aprobar' }}{% if campaign.scheduled_at %} (hora local del comercio){% endif %}</dd></dl>
         {% if detected_audience_count < 1 %}
-        <div class="alert alert-warning small mt-3 mb-0"><strong>Esta campaña todavía no tiene destinatarios habilitados.</strong><br>No se enviará nada con el público en cero. Registrá el consentimiento de WhatsApp en las fichas de los clientes y pedile luego a Marketing IA que vuelva a preparar la campaña. Un teléfono guardado no alcanza como permiso.</div>
+        <div class="alert alert-warning small mt-3 mb-0">
+          <strong>Esta campaña todavía no tiene destinatarios habilitados.</strong><br>
+          No se envió a nadie porque ningún contacto superó las validaciones. En cada ficha completá el campo <strong>WhatsApp</strong> (no alcanza con cargar solo Teléfono) y registrá el permiso promocional con su evidencia.
+          {% if campaign.status in ['SIN_ENVIO', 'FALLIDA'] %}
+          <div class="mt-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='marketing', crear_campana='1') }}"><i class="bi bi-arrow-repeat me-1"></i>Volver a preparar con Marketing IA</a></div>
+          {% endif %}
+        </div>
         {% else %}
         <div class="alert alert-success small mt-3 mb-0">Marketing IA encontró {{ detected_audience_count }} contacto(s) que tienen WhatsApp válido y autorizaron recibir promociones. La revisión final vuelve a comprobar el permiso justo antes de enviar.</div>
         {% endif %}
       </div></div>
+      {% if audience_diagnostics and audience_diagnostics.excluded %}
+      <div class="card app-card mb-3"><div class="card-body">
+        <h2 class="h5 fw-bold mb-1">Por qué quedaron contactos afuera</h2>
+        <p class="small text-muted mb-3">Diagnóstico actualizado con las fichas de clientes actuales. Un mismo cliente puede tener más de un dato pendiente.</p>
+        <div class="campaign-diagnostics-grid mb-3">
+          {% for key,label in [
+            ('phone_only','Tienen Teléfono, pero falta WhatsApp'),
+            ('missing_whatsapp','No tienen WhatsApp cargado'),
+            ('invalid_whatsapp','Número de WhatsApp inválido'),
+            ('missing_consent','Sin autorización promocional registrada'),
+            ('opted_out','Pidieron no recibir promociones'),
+            ('incomplete_consent','Falta evidencia del permiso')
+          ] %}
+            {% if audience_diagnostics.reasons.get(key, 0) > 0 %}
+            <div class="campaign-diagnostic"><span class="small text-muted">{{ label }}</span><strong>{{ audience_diagnostics.reasons[key] }}</strong></div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% if audience_diagnostics.excluded_contacts %}
+        <h3 class="h6 fw-bold mb-2">Fichas para revisar</h3>
+        {% for item in audience_diagnostics.excluded_contacts %}
+        <div class="campaign-excluded-contact">
+          <div class="min-w-0"><strong>{{ item.client.name }}</strong><div class="small text-muted">{{ item.reasons|join(' · ') }}</div></div>
+          <a class="btn btn-sm btn-outline-primary flex-shrink-0" href="{{ url_for('clients.edit', id=item.client.id) }}">Editar ficha</a>
+        </div>
+        {% endfor %}
+        {% if audience_diagnostics.truncated %}<div class="small text-muted mt-2">Se muestran los primeros {{ audience_diagnostics.excluded_contacts|length }} contactos excluidos.</div>{% endif %}
+        {% endif %}
+      </div></div>
+      {% endif %}
       <div class="card app-card mb-3"><div class="card-body">
         <h2 class="h5 fw-bold">Ventas atribuidas</h2><div class="row g-2"><div class="col-6"><div class="small text-muted">Conversaciones</div><strong>{{ campaign_metrics.attributed_conversations }}</strong></div><div class="col-6"><div class="small text-muted">Ventas</div><strong>{{ campaign_metrics.attributed_sales }}</strong></div><div class="col-12"><div class="small text-muted">Facturación</div><strong>$ {{ '{:,.0f}'.format(campaign_metrics.attributed_revenue).replace(',', '.') }}</strong></div></div>
       </div></div>
