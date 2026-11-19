@@ -1414,12 +1414,9 @@ def campaign_detail(campaign_id):
         campaign_system_data = {}
     template = campaign_system_data.get("whatsapp_template") or {}
     template_error = ""
-    detected_audience_count = int(
-        campaign_system_data.get("audience_count")
-        if campaign_system_data.get("audience_count") is not None
-        else campaign.audience_count or 0
-    )
-    excluded_audience_count = int(campaign_system_data.get("audience_excluded_count") or 0)
+    audience_diagnostics = _campaign_audience_diagnostics(campaign)
+    detected_audience_count = audience_diagnostics["eligible"]
+    excluded_audience_count = audience_diagnostics["excluded"]
     from services.ai_agent.tenant_campaign_service import (
         TenantCampaignRecipient,
         _campaign_branch_id,
@@ -1476,6 +1473,7 @@ def campaign_detail(campaign_id):
         campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
         detected_audience_count=detected_audience_count,
         excluded_audience_count=excluded_audience_count,
+        audience_diagnostics=audience_diagnostics,
         campaign_template=template,
         campaign_template_error=template_error,
         campaign_template_preview=template_preview,
@@ -1568,6 +1566,82 @@ def _campaign_audience_preview(company_id, audience, *, client_segment="", days=
         and client.whatsapp_marketing_consent_evidence
     )
     return {"eligible": eligible, "excluded": max(0, base_query.count() - eligible)}
+
+
+def _campaign_audience_diagnostics(campaign, *, max_contacts=100):
+    """Explain why each client in this campaign's audience is or is not sendable."""
+    from app import Client
+    from services.ai_agent.tenant_campaign_service import _audience_query, _client_phone
+
+    query = _audience_query(campaign)
+    reasons = {
+        "phone_only": 0,
+        "missing_whatsapp": 0,
+        "invalid_whatsapp": 0,
+        "missing_consent": 0,
+        "opted_out": 0,
+        "incomplete_consent": 0,
+    }
+    excluded_contacts = []
+    eligible = 0
+    excluded = 0
+    total = query.count()
+
+    reason_labels = {
+        "phone_only": "Tiene teléfono cargado, pero falta completar el campo WhatsApp.",
+        "missing_whatsapp": "No tiene un número cargado en el campo WhatsApp.",
+        "invalid_whatsapp": "El número del campo WhatsApp no tiene un formato válido.",
+        "missing_consent": "Falta registrar la autorización para recibir promociones por WhatsApp.",
+        "opted_out": "El cliente indicó que no quiere recibir promociones por WhatsApp.",
+        "incomplete_consent": "La autorización existe, pero falta registrar su origen o evidencia.",
+    }
+
+    for client in query.yield_per(500):
+        issues = []
+        consent_status = str(getattr(client, "whatsapp_marketing_consent", "") or "").strip().lower()
+
+        # A recorded opt-out is authoritative: never suggest re-enabling that contact.
+        if consent_status == "opted_out":
+            issues.append("opted_out")
+        else:
+            raw_whatsapp = str(getattr(client, "whatsapp", None) or "").strip()
+            if not raw_whatsapp:
+                if str(getattr(client, "phone", None) or "").strip():
+                    issues.append("phone_only")
+                else:
+                    issues.append("missing_whatsapp")
+            elif not _client_phone(client):
+                issues.append("invalid_whatsapp")
+
+            if consent_status != "opted_in" or getattr(client, "whatsapp_marketing_consent_recorded_at", None) is None:
+                issues.append("missing_consent")
+            elif (
+                not str(getattr(client, "whatsapp_marketing_consent_source", "") or "").strip()
+                or not str(getattr(client, "whatsapp_marketing_consent_evidence", "") or "").strip()
+            ):
+                issues.append("incomplete_consent")
+
+        if not issues:
+            eligible += 1
+            continue
+
+        excluded += 1
+        for code in issues:
+            reasons[code] += 1
+        if len(excluded_contacts) < max_contacts:
+            excluded_contacts.append({
+                "client": client,
+                "reasons": [reason_labels[code] for code in issues],
+            })
+
+    return {
+        "total": total,
+        "eligible": eligible,
+        "excluded": excluded,
+        "reasons": reasons,
+        "excluded_contacts": excluded_contacts,
+        "truncated": excluded > len(excluded_contacts),
+    }
 
 
 @bp.route("/campanas/nueva", methods=["GET", "POST"])
