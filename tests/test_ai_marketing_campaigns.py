@@ -1858,13 +1858,13 @@ def test_selected_campaign_audience_is_limited_to_explicit_customer_ids(app):
             user_id=user.id,
             title="Selección manual",
             objective="Enviar a destinatarios elegidos",
-            campaign_type="general",
+            campaign_type="recuperacion_clientes_inactivos",
             content="Hola",
             system_data={
                 "audience_selection_mode": "selected",
                 "selected_client_ids": [clients[0].id, clients[2].id],
             },
-            audience_segment="clientes activos",
+            audience_segment="clientes inactivos",
             audience_count=3,
         )
         db.session.flush()
