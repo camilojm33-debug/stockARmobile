@@ -1904,7 +1904,7 @@ class AgentRuntime:
         # si el modelo omitió la herramienta, el backend intenta preparar igualmente
         # un borrador usando el tipo permitido por la configuración del comercio.
         proposal_request = False
-        if agent_key == "marketing" and campaign_context is None:
+        if agent_key == "marketing" and campaign_context is None and int(tool_rounds or 0) == 0:
             normalized_request = " ".join(str(message or "").strip().lower().split())
             proposal_request = any(
                 phrase in normalized_request
