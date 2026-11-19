@@ -1524,10 +1524,18 @@ class VendorOrderService:
             raise ValueError("No hay un usuario activo para registrar el pedido.")
 
         phone = _normalize_phone(customer_phone)
+        if (
+            not phone
+            and str(getattr(conversation, "channel", "") or "").strip().lower()
+            in {"whatsapp", "whatsapp_business"}
+        ):
+            # The inbound WhatsApp conversation already identifies the sender.
+            # Save that destination in the CRM, but do not infer marketing consent.
+            phone = _normalize_phone(getattr(conversation, "external_conversation_id", None))
         client = _find_registered_client(
             company_id=int(company_id),
             customer_name=customer_name,
-            customer_phone=customer_phone,
+            customer_phone=phone or customer_phone,
         )
 
         if client is None and (customer_name.strip() or phone):
