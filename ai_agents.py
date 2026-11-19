@@ -1785,7 +1785,10 @@ def _campaign_contact_selection_query(company_id, *, search="", customer_type="a
         )
     elif contact_state == "pending":
         query = query.filter(
-            Client.whatsapp_marketing_consent != "opted_out",
+            or_(
+                Client.whatsapp_marketing_consent.is_(None),
+                Client.whatsapp_marketing_consent != "opted_out",
+            ),
             or_(
                 Client.whatsapp.is_(None),
                 func.length(func.trim(func.coalesce(Client.whatsapp, ""))) == 0,
