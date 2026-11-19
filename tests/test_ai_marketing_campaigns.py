@@ -2312,7 +2312,10 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
             channel="whatsapp",
         ).all()
 
-        assert result["target_count"] == 1
+        assert result["target_count"] == 1, {
+            "result": result,
+            "pricing_exclusions": data.get("pricing_exclusions"),
+        }
         assert result["pricing_excluded"] == 1
         assert [row.client_id for row in queued] == [retail.id]
         assert data["pricing_excluded_count"] == 1
