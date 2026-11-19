@@ -454,7 +454,7 @@
       {% for item in audience_diagnostics.excluded_contacts %}
       <div class="campaign-excluded-contact">
         <div class="min-w-0"><strong>{{ item.client.name }}</strong><div class="small text-muted">{{ item.reasons|join(' · ') }}</div></div>
-        {% if not item.reasons|select('search','baja')|list %}<a class="btn btn-sm btn-outline-primary flex-shrink-0" href="{{ url_for('clients.edit', id=item.client.id) }}" target="_blank" rel="noopener">Editar ficha</a>{% endif %}
+        {% if 'El cliente indicó que no quiere recibir promociones por WhatsApp.' not in item.reasons %}<a class="btn btn-sm btn-outline-primary flex-shrink-0" href="{{ url_for('clients.edit', id=item.client.id) }}" target="_blank" rel="noopener">Editar ficha</a>{% endif %}
       </div>
       {% endfor %}
       {% if audience_diagnostics.truncated %}<div class="small text-muted mt-2">Se muestran los primeros {{ audience_diagnostics.excluded_contacts|length }} contactos.</div>{% endif %}
