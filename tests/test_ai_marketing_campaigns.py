@@ -56,6 +56,19 @@ def test_tenant_campaign_requires_whatsapp_consent_and_isolated(app, monkeypatch
         db.session.add_all([opted, blocked, other])
         db.session.flush()
 
+        from services.ai_agent.tools.analyst_marketing import PrepararCampanaTool
+        proposal = PrepararCampanaTool(company_id=company_a.id).execute(
+            campaign_type="general",
+            title="Novedades",
+            objective="Presentar novedades",
+            message="Hola {{cliente}}, tenemos novedades.",
+        )
+        proposal_context = proposal["campaign_context"]
+        assert proposal_context["audience_total_count"] == 2
+        assert proposal_context["audience_count"] == 1
+        assert proposal_context["audience_excluded_count"] == 1
+        assert proposal_context["message"] == "Hola {{cliente}}, tenemos novedades."
+
         monkeypatch.setattr(
             "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
             lambda company, branch_id=None, require_ready=True: (
