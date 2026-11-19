@@ -1987,6 +1987,7 @@ def campaign_update_recipients(campaign_id):
                     contact_type=selected_filter_type,
                     contact_state=selected_filter_state,
                     contact_page=selected_return_page,
+                    selected_page=selected_audience_page,
                 ))
             rows = Client.query.filter(
                 Client.company_id == current_user.company_id,
@@ -2057,6 +2058,7 @@ def campaign_update_recipients(campaign_id):
         contact_type=selected_filter_type,
         contact_state=selected_filter_state,
         contact_page=selected_return_page,
+                    selected_page=selected_audience_page,
     ))
 
 @bp.post("/campanas/<int:campaign_id>/edit")
