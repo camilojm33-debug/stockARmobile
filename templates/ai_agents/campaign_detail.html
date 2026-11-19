@@ -300,7 +300,7 @@
 
         <h3 class="h6 fw-bold">Vista previa de WhatsApp</h3>
         {% if campaign_template.name %}
-        <div class="alert alert-success py-2 small"><i class="bi bi-check-circle me-1"></i>Plantilla aprobada del WhatsApp de este comercio: <strong>{{ campaign_template.name }}</strong>.</div>
+        <div class="alert alert-success py-2 small"><i class="bi bi-check-circle me-1"></i>Plantilla de WhatsApp aprobada y lista para usar.</div>
         {% else %}
         <div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-circle me-1"></i>{{ campaign_template_error or 'Revisá la conexión y la plantilla de WhatsApp antes de aprobar.' }}</div>
         {% endif %}
@@ -320,7 +320,7 @@
   <section id="step-review" class="campaign-step-card card app-card mb-4">
     <div class="card-body">
       <span class="page-kicker">Etapa 4 de 4</span>
-      <h2 class="h4 fw-bold mb-1">Revisar y lanzar</h2>
+      <h2 class="h4 fw-bold mb-1">Revisión y aprobación</h2>
       <p class="small text-muted">La campaña solo se encola cuando la aprobás expresamente. Antes de iniciar, se vuelven a validar WhatsApp, consentimiento, lista de precios y plantilla.</p>
 
       <div class="row g-2 mb-3">
