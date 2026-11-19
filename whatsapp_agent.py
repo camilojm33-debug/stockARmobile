@@ -2184,6 +2184,8 @@ def webhook():
                     role="user",
                 ).first(),
             )
+            if assistant is not None:
+                _append_pending_whatsapp_marketing_consent_prompt(conversation, assistant)
             if _send_persisted_reply(company, sender=sender, assistant=assistant):
                 processed += 1
         except Exception:
