@@ -75,6 +75,23 @@
         <div class="alert alert-success small mt-3 mb-0">Marketing IA encontró {{ detected_audience_count }} contacto(s) que tienen WhatsApp válido y autorizaron recibir promociones. La revisión final vuelve a comprobar el permiso justo antes de enviar.</div>
         {% endif %}
       </div></div>
+      {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION'] %}
+      <div class="card app-card mb-3"><div class="card-body">
+        <h2 class="h5 fw-bold"><i class="bi bi-whatsapp text-success me-1"></i>Corrector de números de WhatsApp</h2>
+        <p class="small text-muted mb-3">Convierte formatos habituales de Argentina al formato internacional que necesita WhatsApp (código 54, móvil 9 y limpieza de prefijos, espacios y guiones). Solo corrige números que se pueden interpretar con seguridad.</p>
+        <form method="post" action="{{ url_for('ai_agents.campaign_correct_whatsapp_numbers', campaign_id=campaign.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if audience_diagnostics.reasons.get('phone_only', 0) > 0 %}
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="use_phone_fallback" value="1" id="campaignUsePhoneFallback">
+            <label class="form-check-label small" for="campaignUsePhoneFallback">Cuando falte WhatsApp, usar el campo Teléfono como origen y copiarlo a WhatsApp. Marcá esta opción solo si esos teléfonos también tienen WhatsApp.</label>
+          </div>
+          {% endif %}
+          <button class="btn btn-outline-success" type="submit"><i class="bi bi-magic me-1"></i>Corregir números de esta campaña</button>
+        </form>
+        <div class="form-text mt-2">La corrección no activa autorizaciones promocionales ni envía mensajes. Los contactos que pidieron la baja no se modifican. Los permisos se siguen validando antes del envío.</div>
+      </div></div>
+      {% endif %}
       {% if audience_diagnostics and audience_diagnostics.excluded %}
       <div class="card app-card mb-3"><div class="card-body">
         <h2 class="h5 fw-bold mb-1">Por qué quedaron contactos afuera</h2>
