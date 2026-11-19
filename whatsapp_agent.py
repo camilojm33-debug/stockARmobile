@@ -2113,6 +2113,16 @@ def webhook():
                     processed += 1
                     continue
 
+            if _handle_pending_whatsapp_marketing_opt_in(
+                company,
+                conversation,
+                sender=sender,
+                external_id=external_id,
+                text=text,
+            ):
+                processed += 1
+                continue
+
             access = can_use_ai(company, "vendedor")
             if not access.allowed:
                 errors.append({"external_message_id": external_id, "error": "ai_plan_blocked", "reason": access.reason})
