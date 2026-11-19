@@ -2086,7 +2086,7 @@ def campaign_transition(campaign_id):
             flash(
                 f"Campaña aprobada: se encolaron {prepared_count} destinatario(s). "
                 f"{excluded_by_price} contacto(s) se excluyeron por no superar la validación individual de mensaje/precio. "
-                "El envío comenzará desde el WhatsApp conectado por el comercio y respetará las bajas.",
+                "El envío comenzará automáticamente desde el número de WhatsApp que este comercio conectó mediante Meta, respetando el consentimiento y las bajas.",
                 "success",
             )
         else:
