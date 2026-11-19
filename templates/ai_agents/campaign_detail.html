@@ -113,7 +113,7 @@
               {% if campaign_can_manage_audience %}
               <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="remove"><input type="hidden" name="client_id" value="{{ item.client.id }}">
-                <input type="hidden" name="contact_search" value="{{ campaign_contact_search }}"><input type="hidden" name="contact_type" value="{{ campaign_contact_type }}"><input type="hidden" name="contact_state" value="{{ campaign_contact_state }}"><input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}"><input type="hidden" name="contact_page" value="{{ campaign_contact_page }}"><input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
+                <input type="hidden" name="contact_search" value="{{ campaign_contact_search }}"><input type="hidden" name="contact_type" value="{{ campaign_contact_type }}"><input type="hidden" name="contact_state" value="{{ campaign_contact_state }}"><input type="hidden" name="contact_page" value="{{ campaign_contact_page }}">\n        <input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}"><input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
                 <button class="btn btn-sm btn-outline-danger" type="submit" aria-label="Quitar {{ item.client.name }}">Quitar</button>
               </form>
               {% endif %}
@@ -146,7 +146,7 @@
       <form method="get" action="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id) }}" class="row g-2 align-items-end mb-3">
         <div class="col-lg-5">
           <label class="form-label small fw-semibold" for="campaignContactSearch">Buscar contacto</label>
-          <input id="campaignContactSearch"<input type="hidden" name="selected_page" value="{{ campaign_selected_page }}"> class="form-control" type="search" name="contact_search" value="{{ campaign_contact_search }}" placeholder="Nombre, teléfono o WhatsApp">
+          <input type="hidden" name="selected_page" value="{{ campaign_selected_page }}">\n          <input id="campaignContactSearch" class="form-control" type="search" name="contact_search" value="{{ campaign_contact_search }}" placeholder="Nombre, teléfono o WhatsApp">
         </div>
         <div class="col-md-4 col-lg-3">
           <label class="form-label small fw-semibold" for="campaignContactType">Tipo de cliente</label>
@@ -172,7 +172,7 @@
         <div class="small text-muted">{{ campaign_available_total }} contacto(s) con estos filtros · página {{ campaign_contact_page }} de {{ campaign_contact_page_count }}</div>
         <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}" onsubmit="return confirm('Se agregarán todos los contactos habilitados que coincidan con la búsqueda y el tipo de cliente. ¿Continuar?');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add_all_eligible">
-          <input type="hidden" name="contact_search" value="{{ campaign_contact_search }}"><input type="hidden" name="contact_type" value="{{ campaign_contact_type }}"><input type="hidden" name="contact_state" value="ready"><input type="hidden" name="contact_page" value="{{ campaign_contact_page }}">
+          <input type="hidden" name="contact_search" value="{{ campaign_contact_search }}"><input type="hidden" name="contact_type" value="{{ campaign_contact_type }}"><input type="hidden" name="contact_state" value="ready"><input type="hidden" name="contact_page" value="{{ campaign_contact_page }}">\n          <input type="hidden" name="selected_audience_page" value="{{ campaign_selected_page }}">
           <button class="btn btn-sm btn-success" type="submit"><i class="bi bi-check2-all me-1"></i>Agregar todos los habilitados del filtro</button>
         </form>
       </div>
@@ -208,11 +208,11 @@
       {% if campaign_contact_page_count > 1 %}
       <nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Páginas de contactos">
         {% if campaign_contact_page > 1 %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id, contact_search=campaign_contact_search, contact_type=campaign_contact_type, contact_state=campaign_contact_state, contact_page=campaign_contact_page-1) }}"><i class="bi bi-chevron-left"></i> Anterior</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id, contact_search=campaign_contact_search, contact_type=campaign_contact_type, contact_state=campaign_contact_state, contact_page=campaign_contact_page-1, selected_page=campaign_selected_page) }}"><i class="bi bi-chevron-left"></i> Anterior</a>
         {% else %}<span></span>{% endif %}
         <span class="small text-muted">Página {{ campaign_contact_page }} / {{ campaign_contact_page_count }}</span>
         {% if campaign_contact_page < campaign_contact_page_count %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id, contact_search=campaign_contact_search, contact_type=campaign_contact_type, contact_state=campaign_contact_state, contact_page=campaign_contact_page+1) }}">Siguiente <i class="bi bi-chevron-right"></i></a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id, contact_search=campaign_contact_search, contact_type=campaign_contact_type, contact_state=campaign_contact_state, contact_page=campaign_contact_page+1, selected_page=campaign_selected_page) }}">Siguiente <i class="bi bi-chevron-right"></i></a>
         {% endif %}
       </nav>
       {% endif %}
