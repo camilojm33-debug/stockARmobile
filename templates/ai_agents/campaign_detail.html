@@ -49,7 +49,7 @@
           <input class="form-control" type="number" name="pricing_quantity" min="0.001" step="0.001" value="{{ campaign_pricing_quantity }}" placeholder="Automático según el primer tramo de cada lista">
           <div class="form-text">Dejalo vacío para que cada cliente mayorista use el primer tramo vigente de su propia lista. Ingresá una cantidad para calcular todos los precios sobre esa cantidad (por ejemplo, 3 unidades).</div>
           {% endif %}
-          <div class="form-text mt-2">Para mostrar un precio, la variable {{ '{{precio}}' }} se personaliza por destinatario. No escribas un precio mayorista fijo en el mensaje.</div>
+          <div class="form-text mt-2">Para mostrar un precio, la variable {% raw %}{{precio}}{% endraw %} se personaliza por destinatario. No escribas un precio mayorista fijo en el mensaje.</div>
           <button class="btn btn-outline-primary mt-3" type="submit"><i class="bi bi-pencil me-1"></i>Guardar cambios</button>
         </form>
         {% endif %}
@@ -95,11 +95,11 @@
         <form method="post" action="{{ url_for('ai_agents.campaign_update_recipients', campaign_id=campaign.id) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add">
           {% if campaign_available_contacts %}
-          <div class="d-flex justify-content-between align-items-center mb-2"><span class="small text-muted">Clientes disponibles (hasta 100 por búsqueda)</span><button class="btn btn-sm btn-outline-secondary" type="button" id="campaignSelectVisible">Marcar todos los habilitables</button></div>
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="small text-muted">Clientes disponibles (hasta 100 por búsqueda)</span><button class="btn btn-sm btn-outline-secondary" type="button" id="campaignSelectVisible">Marcar todos los habilitados</button></div>
           <div class="table-responsive"><table class="table table-sm align-middle mb-2"><thead><tr><th></th><th>Cliente</th><th>WhatsApp</th><th>Estado para campañas</th></tr></thead><tbody>
             {% for item in campaign_available_contacts %}
             <tr>
-              <td><input class="form-check-input campaign-contact-select" type="checkbox" name="client_ids" value="{{ item.client.id }}" {% if item.opted_out %}disabled{% endif %}></td>
+              <td><input class="form-check-input campaign-contact-select{% if item.eligible %} campaign-contact-eligible{% endif %}" type="checkbox" name="client_ids" value="{{ item.client.id }}" {% if item.opted_out %}disabled{% endif %}></td>
               <td><strong>{{ item.client.name }}</strong><div class="small text-muted">{{ 'Mayorista' if item.client.customer_type == 'mayorista' else 'Minorista' }}</div></td>
               <td class="small">{{ item.client.whatsapp or item.client.phone or '—' }}</td>
               <td><span class="badge {% if item.eligible %}text-bg-success{% elif item.opted_out %}text-bg-danger{% else %}text-bg-warning{% endif %}">{{ item.status }}</span><div class="small text-muted">{{ item.reason }}</div></td>
@@ -216,7 +216,7 @@
   const selectAll = document.getElementById("campaignSelectVisible");
   if (selectAll) {
     selectAll.addEventListener("click", function () {
-      document.querySelectorAll(".campaign-contact-select:not(:disabled)").forEach(function (field) {
+      document.querySelectorAll(".campaign-contact-eligible:not(:disabled)").forEach(function (field) {
         field.checked = true;
       });
     });
