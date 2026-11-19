@@ -630,9 +630,18 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
     for key, value in replacements.items():
         content = content.replace(key, value)
 
+    has_unlabeled_currency_amount = any(
+        not re.search(
+            r"\b(?:env[ií]o|flete|cargo de env[ií]o|costo de env[ií]o)\b",
+            content[max(0, match.start() - 45):match.start()],
+            re.IGNORECASE,
+        )
+        for match in re.finditer(r"\$\s*\d[\d.,]*", content)
+    )
     price_requested = bool(
         has_price_placeholder
         or re.search(r"\bprecio\b", content + " " + str(campaign.objective or ""), re.IGNORECASE)
+        or has_unlabeled_currency_amount
     )
     if price_requested and product is None:
         raise ValueError(
