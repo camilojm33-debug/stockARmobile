@@ -783,3 +783,98 @@ def test_tenant_public_consent_accept_all_shortcut_authorizes_only_available_cha
     assert stored.phone_marketing_consent == "opted_in"
     assert stored.email_marketing_consent_recorded_at is not None
     assert stored.phone_marketing_consent_recorded_at is not None
+
+
+def test_tenant_public_reject_all_revokes_channels_even_without_contact_values(app):
+    from app import Client, Company, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Comercio baja completa", active=True)
+    db.session.add(company)
+    db.session.flush()
+    client_record = Client(
+        name="Cliente baja completa",
+        email="baja-total@example.test",
+        company_id=company.id,
+        active=True,
+        email_marketing_consent="opted_in",
+        phone_marketing_consent="opted_in",
+        whatsapp_marketing_consent="opted_in",
+        marketing_consent_token="tenant-consent-reject-missing",
+    )
+    db.session.add(client_record)
+    db.session.commit()
+    client_id = client_record.id
+
+    response = app.test_client().post(
+        "/crm/consent/tenant-consent-reject-missing",
+        data={"action": "reject_all"},
+    )
+    assert response.status_code == 200
+    db.session.expire_all()
+    stored = db.session.get(Client, client_id)
+    assert stored.email_marketing_consent == "opted_out"
+    assert stored.phone_marketing_consent == "opted_out"
+    assert stored.whatsapp_marketing_consent == "opted_out"
+    assert stored.email_marketing_consent_recorded_at is not None
+    assert stored.phone_marketing_consent_recorded_at is not None
+    assert stored.whatsapp_marketing_consent_recorded_at is not None
+
+
+def test_editing_client_details_without_consent_fields_preserves_existing_permissions(app):
+    from app import Client, Company, User, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Comercio conservar permisos", active=True)
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="preserve-consent-admin",
+        email="preserve-consent-admin@example.test",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    user.set_password("test-password")
+    client_record = Client(
+        name="Cliente con permiso vigente",
+        email="vigente@example.test",
+        phone="3625551400",
+        whatsapp="5493625551400",
+        company_id=company.id,
+        active=True,
+        email_marketing_consent="opted_in",
+        email_marketing_consent_source="in_person",
+        email_marketing_consent_evidence="Aceptó en el local.",
+        phone_marketing_consent="opted_in",
+        phone_marketing_consent_source="in_person",
+        phone_marketing_consent_evidence="Aceptó en el local.",
+        whatsapp_marketing_consent="opted_in",
+        whatsapp_marketing_consent_recorded_at=__import__("datetime").datetime.utcnow(),
+        whatsapp_marketing_consent_source="in_person",
+        whatsapp_marketing_consent_evidence="Aceptó en el local.",
+    )
+    db.session.add_all([user, client_record])
+    db.session.commit()
+    client_id = client_record.id
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+    response = http.post(
+        f"/clientes/edit/{client_id}",
+        data={
+            "name": "Cliente editado",
+            "email": "vigente@example.test",
+            "phone": "3625551400",
+            "whatsapp": "5493625551400",
+            "customer_type": "minorista",
+        },
+    )
+    assert response.status_code == 302
+    db.session.expire_all()
+    stored = db.session.get(Client, client_id)
+    assert stored.name == "Cliente editado"
+    assert stored.email_marketing_consent == "opted_in"
+    assert stored.phone_marketing_consent == "opted_in"
+    assert stored.whatsapp_marketing_consent == "opted_in"
+    assert stored.whatsapp_marketing_consent_evidence == "Aceptó en el local."
