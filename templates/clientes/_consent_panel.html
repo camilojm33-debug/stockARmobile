@@ -1,0 +1,120 @@
+{% set consent_readonly = readonly|default(false) %}
+<div class="card app-card mb-4 border-0 shadow-sm">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+      <div>
+        <h2 class="h6 fw-bold mb-1">Permisos comerciales</h2>
+        <p class="small text-muted mb-0">Una sola acción para registrar lo que el cliente decidió. No habilites promociones sin su autorización expresa.</p>
+      </div>
+      <span class="badge text-bg-light border">Por canal</span>
+    </div>
+
+    <div class="row g-2 mb-3">
+      {% for channel, label, status in [
+        ('email', 'Email', client.email_marketing_consent),
+        ('whatsapp', 'WhatsApp', client.whatsapp_marketing_consent),
+        ('phone', 'Llamadas', client.phone_marketing_consent)
+      ] %}
+      <div class="col-12 col-sm-4">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="small text-muted">{{ label }}</div>
+          {% if status == 'opted_in' %}
+            <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>Autorizado</span>
+          {% elif status == 'opted_out' %}
+            <span class="badge text-bg-danger"><i class="bi bi-x-circle me-1"></i>No autorizado</span>
+          {% else %}
+            <span class="badge text-bg-secondary"><i class="bi bi-clock me-1"></i>Pendiente</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if not consent_readonly %}
+    <form method="post" action="{{ url_for('clients.marketing_consent', client_id=client.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-2 mb-3">
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold" for="clientConsentSource">¿Cómo lo expresó?</label>
+          <select class="form-select form-select-sm" id="clientConsentSource" name="source" required>
+            <option value="in_person" selected>En el local / verbal</option>
+            <option value="public_consent_link">Enlace de consentimiento</option>
+            <option value="qr_code">Código QR</option>
+            <option value="written">Formulario o documento</option>
+            <option value="other">Otro medio</option>
+          </select>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label small fw-semibold" for="clientConsentEvidence">Nota breve de cómo y cuándo</label>
+          <input class="form-control form-control-sm" id="clientConsentEvidence" name="evidence" maxlength="2000" required placeholder="Ej.: autorizó en el mostrador el 19/11/2026">
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-success btn-sm" type="submit" name="action" value="accept_all" {% if not (client.email or client.whatsapp or client.phone) %}disabled{% endif %}>
+          <i class="bi bi-check2-all me-1"></i>Autorizar todos los disponibles
+        </button>
+        <button class="btn btn-outline-success btn-sm" type="submit" name="action" value="whatsapp" {% if not client.whatsapp %}disabled{% endif %}>Solo WhatsApp</button>
+        <button class="btn btn-outline-success btn-sm" type="submit" name="action" value="email" {% if not client.email %}disabled{% endif %}>Solo email</button>
+        <button class="btn btn-outline-success btn-sm" type="submit" name="action" value="phone" {% if not client.phone %}disabled{% endif %}>Solo llamadas</button>
+        <button class="btn btn-outline-danger btn-sm" type="submit" name="action" value="reject_all">Registrar baja de todos</button>
+      </div>
+      <div class="form-text mt-2">“Autorizar todos” solo incluye canales con un dato de contacto válido. Cada canal conserva su propio estado, fecha, origen y evidencia.</div>
+    </form>
+    {% endif %}
+
+    <details class="mt-3">
+      <summary class="small fw-semibold">Ver evidencia e historial</summary>
+      <div class="pt-2">
+        {% for channel, label, status, recorded_at, source, evidence in [
+          ('email', 'Email', client.email_marketing_consent, client.email_marketing_consent_recorded_at, client.email_marketing_consent_source, client.email_marketing_consent_evidence),
+          ('whatsapp', 'WhatsApp', client.whatsapp_marketing_consent, client.whatsapp_marketing_consent_recorded_at, client.whatsapp_marketing_consent_source, client.whatsapp_marketing_consent_evidence),
+          ('phone', 'Llamadas', client.phone_marketing_consent, client.phone_marketing_consent_recorded_at, client.phone_marketing_consent_source, client.phone_marketing_consent_evidence)
+        ] %}
+        <div class="border-top py-2 small">
+          <strong>{{ label }}</strong>
+          {% if recorded_at %}
+            · {{ recorded_at.strftime('%d/%m/%Y %H:%M') }}
+            <div class="text-muted">{{ source or 'Origen no informado' }}</div>
+            {% if evidence %}<div class="text-muted text-break">{{ evidence }}</div>{% endif %}
+          {% else %}
+            <span class="text-muted">· Sin registro de consentimiento</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% if whatsapp_consent_events is defined and whatsapp_consent_events %}
+          <div class="mt-2">
+            <strong class="small">Historial de WhatsApp</strong>
+            {% for event in whatsapp_consent_events %}
+            <div class="border-top py-2 small">
+              <strong>{{ event.previous_status }} → {{ event.new_status }}</strong>
+              <div class="text-muted">{{ event.occurred_at.strftime('%d/%m/%Y %H:%M') }} · {{ event.source }}{% if event.actor %} · {{ event.actor.username }}{% endif %}</div>
+              <div class="text-break">{{ event.evidence }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    </details>
+
+    <details class="mt-3">
+      <summary class="small fw-semibold">Compartir enlace con el cliente</summary>
+      <div class="pt-3">
+        <p class="small text-muted">El cliente puede revisar y cambiar sus preferencias sin ingresar a StockArMobile.</p>
+        {% if client.marketing_consent_token %}
+          <label class="form-label small fw-semibold" for="clientConsentUrl">Enlace personal</label>
+          <div class="input-group input-group-sm">
+            <input id="clientConsentUrl" class="form-control" readonly value="{{ url_for('crm.public_consent', token=client.marketing_consent_token, _external=True) }}">
+            <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(this.previousElementSibling.value)">Copiar</button>
+          </div>
+        {% elif not consent_readonly %}
+          <form method="post" action="{{ url_for('clients.consent_link', client_id=client.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-link-45deg me-1"></i>Generar enlace para compartir</button>
+          </form>
+        {% else %}
+          <span class="small text-muted">Todavía no se generó un enlace.</span>
+        {% endif %}
+      </div>
+    </details>
+  </div>
+</div>
