@@ -2339,6 +2339,7 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
 def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, monkeypatch):
     import json
     from datetime import datetime
+    from decimal import Decimal
     from types import SimpleNamespace
 
     from app import Company, Product, User, db
@@ -2630,4 +2631,75 @@ def test_campaign_delete_preserves_any_delivery_history_or_sales_attribution(app
         db.session.expire_all()
         assert Campaign.query.filter_by(id=sent_campaign.id).first() is not None
         assert Campaign.query.filter_by(id=attributed_campaign.id).first() is not None
+
+def test_campaign_editor_rejects_products_owned_by_another_company(app, monkeypatch):
+    from types import SimpleNamespace
+
+    from app import Company, Product, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Campaign Product Owner", active=True)
+        other_company = Company(name="Foreign Product Owner", active=True)
+        db.session.add_all([company, other_company])
+        db.session.flush()
+        user = User(
+            username="campaign-product-owner-admin",
+            email="campaign-product-owner@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        foreign_product = Product(
+            barcode="FOREIGN-COCA-001",
+            name="Coca de otro comercio",
+            company_id=other_company.id,
+            active=True,
+        )
+        db.session.add(foreign_product)
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña sin producto",
+            objective="Promoción",
+            campaign_type="promocion_producto",
+            content="Hola {{producto}} a {{precio}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.commit()
+
+        monkeypatch.setattr(
+            ai_agents,
+            "current_user",
+            SimpleNamespace(company_id=company.id, id=user.id),
+        )
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+
+        route = ai_agents.campaign_edit.__wrapped__
+        with app.test_request_context(
+            f"/agentes-ia/campanas/{campaign.id}/edit",
+            method="POST",
+            data={
+                "title": "No guardar producto ajeno",
+                "objective": "Promoción",
+                "content": "Hola {{producto}} a {{precio}}",
+                "product_id": str(foreign_product.id),
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        assert campaign.product_id is None
+        assert campaign.title == "Campaña sin producto"
 
