@@ -230,12 +230,12 @@ def marketing_consent(client_id):
         return redirect(return_url)
     if source not in source_labels:
         flash("Seleccioná un origen válido para el consentimiento.", "danger")
-        return redirect(url_for("clients.edit", id=client.id))
+        return redirect(return_url)
 
     evidence = str(request.form.get("evidence") or "").strip()[:2000]
     if not evidence:
         flash("Contá brevemente cómo y cuándo el cliente expresó su decisión.", "warning")
-        return redirect(url_for("clients.edit", id=client.id))
+        return redirect(return_url)
 
     normalized_whatsapp = normalize_whatsapp_number(str(client.whatsapp or "").strip())
     email_value = str(client.email or "").strip()
@@ -254,14 +254,14 @@ def marketing_consent(client_id):
         status = "opted_in"
         if not selected_channels:
             flash("Cargá al menos un dato de contacto válido antes de autorizar comunicaciones.", "warning")
-            return redirect(url_for("clients.edit", id=client.id))
+            return redirect(return_url)
     else:
         selected_channels = (action,)
         status = "opted_in"
         if not available[action]:
             labels = {"email": "un email válido", "whatsapp": "un WhatsApp válido", "phone": "un teléfono válido"}
             flash(f"Para autorizar este canal, cargá {labels[action]} en la ficha del cliente.", "warning")
-            return redirect(url_for("clients.edit", id=client.id))
+            return redirect(return_url)
 
     now = utcnow_naive()
     evidence_text = f"Registrado desde la ficha del cliente ({source_labels[source]}): {evidence}"
@@ -307,7 +307,7 @@ def marketing_consent(client_id):
         flash("Se registró la baja de todos los canales comerciales.", "success")
     else:
         flash(f"Autorización registrada para {summary}.", "success")
-    return redirect(url_for("clients.edit", id=client.id))
+    return redirect(return_url)
 
 
 @bp.route("/export.xlsx")
