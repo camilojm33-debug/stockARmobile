@@ -788,13 +788,18 @@ def public_consent(token):
     if request.method == "GET":
         return render_template("crm/public_consent.html", **page_context)
 
-    reject_all = request.form.get("reject_all") == "1"
-    selected = {
-        "email": request.form.get("email_opted_in") == "1",
-        "whatsapp": request.form.get("whatsapp_opted_in") == "1",
-        "phone": request.form.get("phone_opted_in") == "1",
-    }
+    action = str(request.form.get("action") or "").strip().lower()
+    reject_all = action == "reject_all" or request.form.get("reject_all") == "1"
+    accept_all = action == "accept_all"
     available = {"email": can_email, "whatsapp": can_whatsapp, "phone": can_phone}
+    if accept_all:
+        selected = dict(available)
+    else:
+        selected = {
+            "email": request.form.get("email_opted_in") == "1",
+            "whatsapp": request.form.get("whatsapp_opted_in") == "1",
+            "phone": request.form.get("phone_opted_in") == "1",
+        }
     if any(selected[channel] and not available[channel] for channel in selected):
         page_context["error"] = "No se puede autorizar un canal que no tiene un dato de contacto válido."
         return render_template("crm/public_consent.html", **page_context), 400
