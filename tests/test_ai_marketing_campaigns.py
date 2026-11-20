@@ -2506,6 +2506,11 @@ def test_unsent_tenant_campaign_can_be_deleted_with_its_recipients_and_is_compan
 
         own_campaign_id = own_campaign.id
         other_campaign_id = other_campaign.id
+        with pytest.raises(ValueError, match="Campaña no encontrada"):
+            CampaignService.delete_unsent(
+                company_id=company_a.id,
+                campaign_id=other_campaign_id,
+            )
         result = CampaignService.delete_unsent(
             company_id=company_a.id,
             campaign_id=own_campaign_id,
