@@ -1,5 +1,6 @@
 """Blueprint de clientes: CRUD y API."""
 
+import secrets
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
@@ -166,6 +167,32 @@ def _client_stats_for_export(clients, Sale, Quote, db, scope_query_to_company):
             "total_quoted": float(row.total_quoted or 0),
         }
     return stats
+
+
+@bp.post("/<int:client_id>/consent-link")
+@tenant_required
+def consent_link(client_id):
+    """Generate or reuse a tenant-scoped public consent/preferences link."""
+    from app import Client, db, record_audit, scope_query_to_company
+
+    client = scope_query_to_company(Client.query, Client).filter(Client.id == client_id).first_or_404()
+    if not any((client.email, client.whatsapp, client.phone)):
+        flash("Cargá al menos un email, WhatsApp o teléfono antes de generar el enlace.", "warning")
+        return redirect(url_for("clients.edit", id=client.id))
+
+    if not client.marketing_consent_token:
+        client.marketing_consent_token = secrets.token_urlsafe(48)
+    record_audit(
+        action="tenant_client_consent_link_generated",
+        entity="client",
+        entity_id=client.id,
+        detail="Enlace público individual de preferencias comerciales generado o recuperado.",
+        user_id=getattr(current_user, "id", None),
+        company_id=getattr(current_user, "company_id", None),
+    )
+    db.session.commit()
+    flash("Enlace de consentimiento generado. Podés copiarlo y compartirlo con el cliente.", "success")
+    return redirect(url_for("clients.edit", id=client.id))
 
 
 @bp.route("/export.xlsx")

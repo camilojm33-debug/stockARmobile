@@ -677,6 +677,10 @@ def activity_edit(activity_id):
         clients=clients,
         opportunities=opportunities,
         activity_types=ACTIVITY_TYPES,
+        consent_link_url=(
+            url_for("crm.public_consent", token=client.marketing_consent_token, _external=True)
+            if client.marketing_consent_token else None
+        ),
     )
 
 
@@ -745,6 +749,98 @@ def client_contact(client_id, channel):
     db.session.commit()
     flash("Canal abierto y seguimiento registrado. Confirmá el envío y completá la actividad luego.", "info")
     return redirect(destination)
+
+
+
+@bp.route("/consent/<token>", methods=["GET", "POST"])
+def public_consent(token):
+    """Let a customer set their own marketing preferences without a login."""
+    from app import Client, Company, db, record_audit
+    from services.whatsapp_consent_service import record_whatsapp_consent
+    from services.whatsapp_share_service import normalize_whatsapp_number
+
+    client = Client.query.filter_by(marketing_consent_token=str(token or "").strip()).first()
+    company = (
+        Company.query.filter_by(id=client.company_id, active=True).first()
+        if client is not None and client.company_id
+        else None
+    )
+    if client is None or company is None or not client.active:
+        return render_template("crm/public_consent.html", ok=False), 404
+
+    normalized_whatsapp = normalize_whatsapp_number(str(client.whatsapp or "").strip())
+    can_whatsapp = bool(normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15)
+    email_value = str(client.email or "").strip()
+    can_email = bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value))
+    phone_digits = re.sub(r"\D", "", str(client.phone or ""))
+    can_phone = len(phone_digits) >= 7
+
+    page_context = {
+        "ok": True,
+        "client": client,
+        "company": company,
+        "can_email": can_email,
+        "can_whatsapp": can_whatsapp,
+        "can_phone": can_phone,
+        "saved": False,
+        "error": None,
+    }
+    if request.method == "GET":
+        return render_template("crm/public_consent.html", **page_context)
+
+    reject_all = request.form.get("reject_all") == "1"
+    selected = {
+        "email": request.form.get("email_opted_in") == "1",
+        "whatsapp": request.form.get("whatsapp_opted_in") == "1",
+        "phone": request.form.get("phone_opted_in") == "1",
+    }
+    available = {"email": can_email, "whatsapp": can_whatsapp, "phone": can_phone}
+    if any(selected[channel] and not available[channel] for channel in selected):
+        page_context["error"] = "No se puede autorizar un canal que no tiene un dato de contacto válido."
+        return render_template("crm/public_consent.html", **page_context), 400
+
+    now = datetime.utcnow()
+    source = "public_consent_link"
+    evidence_prefix = "Preferencia registrada por el titular mediante el enlace público de consentimiento"
+    changed = {}
+    for channel in ("email", "phone"):
+        if not available[channel]:
+            continue
+        status = "opted_out" if reject_all else ("opted_in" if selected[channel] else "opted_out")
+        evidence = f"{evidence_prefix}: {status} para {channel}."
+        setattr(client, f"{channel}_marketing_consent", status)
+        setattr(client, f"{channel}_marketing_consent_recorded_at", now)
+        setattr(client, f"{channel}_marketing_consent_source", source)
+        setattr(client, f"{channel}_marketing_consent_evidence", evidence)
+        changed[channel] = status
+
+    if can_whatsapp:
+        whatsapp_status = "opted_out" if reject_all else ("opted_in" if selected["whatsapp"] else "opted_out")
+        whatsapp_evidence = f"{evidence_prefix}: {whatsapp_status} para WhatsApp."
+        if normalized_whatsapp:
+            client.whatsapp = normalized_whatsapp
+        record_whatsapp_consent(
+            client,
+            whatsapp_status,
+            source=source,
+            evidence=whatsapp_evidence,
+            actor_user_id=None,
+        )
+        changed["whatsapp"] = whatsapp_status
+
+    summary = "; ".join(f"{channel}={status}" for channel, status in sorted(changed.items()))
+    record_audit(
+        action="tenant_client_public_consent_update",
+        entity="client",
+        entity_id=client.id,
+        detail=f"El titular actualizó sus preferencias de comunicación: {summary or 'sin canales disponibles'}.",
+        company_id=client.company_id,
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    page_context["saved"] = True
+    page_context["statuses"] = changed
+    return render_template("crm/public_consent.html", **page_context)
 
 
 @bp.route("/clients/<int:client_id>")
@@ -823,6 +919,10 @@ def client_360(client_id):
         total_spent=total_spent,
         stages=STAGES,
         activity_types=ACTIVITY_TYPES,
+        consent_link_url=(
+            url_for("crm.public_consent", token=client.marketing_consent_token, _external=True)
+            if client.marketing_consent_token else None
+        ),
     )
 
 

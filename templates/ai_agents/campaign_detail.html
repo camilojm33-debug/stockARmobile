@@ -192,7 +192,15 @@
               {% for item in campaign_available_contacts %}
               <tr>
                 <td><input class="form-check-input campaign-contact-select{% if item.eligible %} campaign-contact-eligible{% endif %}" type="checkbox" name="client_ids" value="{{ item.client.id }}" {% if item.opted_out %}disabled{% endif %}></td>
-                <td><strong>{{ item.client.name }}</strong><div class="small text-muted">{{ 'Mayorista' if item.client.customer_type == 'mayorista' else 'Minorista' }}</div></td>
+                <td>
+                  <strong>{{ item.client.name }}</strong>
+                  <div class="small text-muted">{{ 'Mayorista' if item.client.customer_type == 'mayorista' else 'Minorista' }}</div>
+                  {% if not item.eligible and not item.opted_out %}
+                  <a class="small d-inline-block mt-1" href="{{ url_for('clients.edit', id=item.client.id) }}" target="_blank" rel="noopener">
+                    <i class="bi bi-shield-check me-1"></i>Gestionar consentimiento
+                  </a>
+                  {% endif %}
+                </td>
                 <td class="small">{{ item.client.whatsapp or item.client.phone or '—' }}</td>
                 <td><span class="badge campaign-contact-status {% if item.eligible %}text-bg-success{% elif item.opted_out %}text-bg-danger{% else %}text-bg-warning{% endif %}">{{ item.status }}</span><div class="small text-muted">{{ item.reason }}</div></td>
               </tr>
