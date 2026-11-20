@@ -197,7 +197,7 @@
                   <div class="small text-muted">{{ 'Mayorista' if item.client.customer_type == 'mayorista' else 'Minorista' }}</div>
                   {% if not item.eligible and not item.opted_out %}
                   <a class="small d-inline-block mt-1" href="{{ url_for('clients.edit', id=item.client.id) }}" target="_blank" rel="noopener">
-                    <i class="bi bi-shield-check me-1"></i>Gestionar consentimiento
+                    <i class="bi bi-shield-check me-1"></i>Registrar permiso en la ficha
                   </a>
                   {% endif %}
                 </td>

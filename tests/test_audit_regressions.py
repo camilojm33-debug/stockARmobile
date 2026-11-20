@@ -37,14 +37,13 @@ def test_duplicate_quote_gets_a_fresh_expiration():
     assert "expires_at=(utcnow() + timedelta(days=5)).replace(" in duplicate
 
 
-def test_marketing_consent_form_uses_the_same_channel_field():
-    source = (REPO_ROOT / "templates" / "clientes" / "form.html").read_text(encoding="utf-8")
-    email_block = source.split('name="email_marketing_consent"', 1)[1].split("</select>", 1)[0]
-    whatsapp_block = source.split('name="whatsapp_marketing_consent"', 1)[1].split("</select>", 1)[0]
-    assert "client.email_marketing_consent == 'opted_in'" in email_block
-    assert "client.whatsapp_marketing_consent == 'opted_in'" in whatsapp_block
-    assert "client.whatsapp_marketing_consent == 'opted_in'" not in email_block
-    assert "client.email_marketing_consent == 'opted_in'" not in whatsapp_block
+def test_marketing_consent_panel_uses_the_matching_status_for_each_channel():
+    source = (REPO_ROOT / "templates" / "clientes" / "_consent_panel.html").read_text(encoding="utf-8")
+    assert "('email', 'Email', client.email_marketing_consent)" in source
+    assert "('whatsapp', 'WhatsApp', client.whatsapp_marketing_consent)" in source
+    assert "('phone', 'Llamadas', client.phone_marketing_consent)" in source
+    assert "client.whatsapp_marketing_consent, client.whatsapp_marketing_consent_recorded_at" in source
+    assert "client.email_marketing_consent, client.email_marketing_consent_recorded_at" in source
 
 
 def test_web_ai_chat_enables_system_prompts_for_operational_agents():
