@@ -114,3 +114,71 @@ class CampaignService:
             campaign.approved_at = utcnow_naive()
         db.session.flush()
         return campaign
+
+    @classmethod
+    def delete_unsent(cls, *, company_id: int, campaign_id: int):
+        """Permanently remove a tenant campaign only while it has no send history."""
+        from sqlalchemy import or_
+        from app import Campaign
+        from services.ai_agent.tenant_campaign_service import (
+            TenantCampaignAttribution,
+            TenantCampaignRecipient,
+        )
+
+        # Match the dispatcher lock so a campaign cannot be deleted while a
+        # worker is claiming a recipient for delivery.
+        campaign = Campaign.query.filter_by(
+            id=campaign_id,
+            company_id=company_id,
+        ).with_for_update().first()
+        if campaign is None:
+            raise ValueError("Campaña no encontrada para esta empresa.")
+
+        deletable_statuses = {
+            "BORRADOR",
+            "PENDIENTE_APROBACION",
+            "CANCELADA",
+            "SIN_ENVIO",
+            "FALLIDA",
+        }
+        if campaign.status not in deletable_statuses:
+            raise ValueError(
+                "Solo se pueden eliminar campañas que no estén en proceso ni hayan finalizado un envío."
+            )
+
+        recipients_query = TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            company_id=company_id,
+        )
+        has_delivery_history = recipients_query.filter(
+            or_(
+                TenantCampaignRecipient.status.in_(
+                    ("sending", "sent", "delivered", "read", "uncertain")
+                ),
+                TenantCampaignRecipient.sent_at.isnot(None),
+                TenantCampaignRecipient.delivered_at.isnot(None),
+                TenantCampaignRecipient.read_at.isnot(None),
+                TenantCampaignRecipient.replied_at.isnot(None),
+            )
+        ).first() is not None
+        if int(campaign.sent_count or 0) > 0 or has_delivery_history:
+            raise ValueError(
+                "Esta campaña ya tiene actividad de envío. Se conserva para no perder el historial de entregas."
+            )
+
+        has_attribution = TenantCampaignAttribution.query.filter_by(
+            campaign_id=campaign.id,
+            company_id=company_id,
+        ).first() is not None
+        if has_attribution:
+            raise ValueError(
+                "Esta campaña tiene ventas atribuidas. Se conserva para proteger el historial comercial."
+            )
+
+        recipient_count = recipients_query.count()
+        title = str(campaign.title or "Campaña")
+        recipients_query.delete(synchronize_session=False)
+        db.session.delete(campaign)
+        db.session.flush()
+        return {"title": title, "recipient_count": recipient_count}
+
