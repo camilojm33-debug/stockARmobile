@@ -755,7 +755,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             )
             if not re.search(r"\bprecio\s+mayorista\b", content, re.IGNORECASE):
                 content = re.sub(
-                    r"\bprecio\b",
+                    r"(?<!\{)\bprecio\b(?!\})",
                     "precio mayorista",
                     content,
                     count=1,
@@ -770,7 +770,7 @@ def _render_content(campaign, client, *, include_opt_out=True, preview=False):
             )
             if not re.search(r"\bprecio\s+minorista\b", content, re.IGNORECASE):
                 content = re.sub(
-                    r"\bprecio\b",
+                    r"(?<!\{)\bprecio\b(?!\})",
                     "precio minorista",
                     content,
                     count=1,
