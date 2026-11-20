@@ -34,7 +34,7 @@ def test_tenant_crm_requires_ia_pro_route_guards():
 
     source = __import__("crm", fromlist=["__file__"]).__file__
     source_text = Path(source).read_text(encoding="utf-8")
-    assert source_text.count("@tenant_required\n@ai_pro_crm_required") == 14
+    assert source_text.count("@tenant_required\n@ai_pro_crm_required") == 15
 
 
 def test_tenant_crm_menu_is_plan_gated():
@@ -486,3 +486,120 @@ def test_tenant_crm_is_whatsapp_only_and_superadmin_crm_keeps_email():
     assert 'CHANNELS = {"whatsapp"}' in tenant_delivery
     assert "def _send_email(" not in tenant_delivery
     assert "def _send_email(" in superadmin_delivery
+
+
+def test_tenant_public_consent_link_records_preferences_per_channel(app):
+    from app import Client, Company, WhatsAppConsentEvent, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Consentimiento comercio", active=True)
+    db.session.add(company)
+    db.session.flush()
+    client_record = Client(
+        name="Cliente que decide",
+        email="cliente-consent@example.test",
+        phone="+54 9 362 555-1000",
+        whatsapp="5493625551000",
+        company_id=company.id,
+        active=True,
+        marketing_consent_token="tenant-consent-token-001",
+    )
+    db.session.add(client_record)
+    db.session.commit()
+    client_id = client_record.id
+
+    http = app.test_client()
+    page = http.get("/crm/consent/tenant-consent-token-001")
+    assert page.status_code == 200
+    assert b"Consentimiento comercial" in page.data
+    assert b"email_opted_in" in page.data
+    assert b"whatsapp_opted_in" in page.data
+
+    saved = http.post(
+        "/crm/consent/tenant-consent-token-001",
+        data={"email_opted_in": "1", "whatsapp_opted_in": "1"},
+    )
+    assert saved.status_code == 200
+    assert b"Preferencias guardadas" in saved.data
+
+    db.session.expire_all()
+    stored = db.session.get(Client, client_id)
+    assert stored.email_marketing_consent == "opted_in"
+    assert stored.email_marketing_consent_recorded_at is not None
+    assert stored.email_marketing_consent_source == "public_consent_link"
+    assert stored.email_marketing_consent_evidence
+    assert stored.whatsapp_marketing_consent == "opted_in"
+    assert stored.whatsapp_marketing_consent_recorded_at is not None
+    assert stored.whatsapp_marketing_consent_source == "public_consent_link"
+    assert stored.whatsapp_marketing_consent_evidence
+    assert stored.phone_marketing_consent == "opted_out"
+    assert stored.phone_marketing_consent_recorded_at is not None
+    assert stored.phone_marketing_consent_source == "public_consent_link"
+    event = WhatsAppConsentEvent.query.filter_by(
+        company_id=company.id, client_id=client_id, new_status="opted_in"
+    ).one()
+    assert event.source == "public_consent_link"
+    assert "enlace público" in event.evidence
+
+
+def test_tenant_public_consent_link_get_is_read_only_and_can_revoke_all(app):
+    from app import Client, Company, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Consentimiento revocable", active=True)
+    db.session.add(company)
+    db.session.flush()
+    client_record = Client(
+        name="Cliente revocable",
+        email="revoke@example.test",
+        phone="3625551001",
+        whatsapp="5493625551001",
+        company_id=company.id,
+        active=True,
+        email_marketing_consent="opted_in",
+        whatsapp_marketing_consent="opted_in",
+        marketing_consent_token="tenant-consent-token-002",
+    )
+    db.session.add(client_record)
+    db.session.commit()
+    client_id = client_record.id
+
+    http = app.test_client()
+    response = http.get("/crm/consent/tenant-consent-token-002")
+    assert response.status_code == 200
+    db.session.expire_all()
+    stored = db.session.get(Client, client_id)
+    assert stored.email_marketing_consent == "opted_in"
+    assert stored.whatsapp_marketing_consent == "opted_in"
+
+    response = http.post(
+        "/crm/consent/tenant-consent-token-002",
+        data={"reject_all": "1"},
+    )
+    assert response.status_code == 200
+    db.session.expire_all()
+    stored = db.session.get(Client, client_id)
+    assert stored.email_marketing_consent == "opted_out"
+    assert stored.whatsapp_marketing_consent == "opted_out"
+    assert stored.phone_marketing_consent == "opted_out"
+
+
+def test_tenant_public_consent_link_rejects_invalid_tokens_and_inactive_clients(app):
+    from app import Client, Company, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Consentimiento invalido", active=True)
+    db.session.add(company)
+    db.session.flush()
+    inactive = Client(
+        name="Cliente inactivo",
+        company_id=company.id,
+        active=False,
+        marketing_consent_token="tenant-consent-token-003",
+    )
+    db.session.add(inactive)
+    db.session.commit()
+
+    http = app.test_client()
+    assert http.get("/crm/consent/no-existe").status_code == 404
+    assert http.get("/crm/consent/tenant-consent-token-003").status_code == 404
