@@ -21,6 +21,23 @@
         </div>
         {% endif %}
         {% endif %}
+      {% if client %}
+      <div class="card border-0 bg-light mb-4"><div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+          <div><h2 class="h6 fw-bold mb-1">Consentimiento comercial del cliente</h2><p class="small text-muted mb-2">Compartí un enlace para que el titular autorice o rechace por separado email, WhatsApp y llamadas.</p></div>
+          <span class="badge {% if client.whatsapp_marketing_consent == 'opted_in' %}text-bg-success{% elif client.whatsapp_marketing_consent == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">WhatsApp: {{ client.whatsapp_marketing_consent or 'unknown' }}</span>
+        </div>
+        {% if client.marketing_consent_token %}
+          <label class="form-label small fw-semibold" for="clientConsentUrl">Enlace personal de consentimiento</label>
+          <div class="input-group input-group-sm mb-3"><input id="clientConsentUrl" class="form-control" readonly value="{{ url_for('crm.public_consent', token=client.marketing_consent_token, _external=True) }}"><button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(this.previousElementSibling.value)">Copiar</button></div>
+        {% endif %}
+        <form method="post" action="{{ url_for('clients.consent_link', client_id=client.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-link-45deg me-1"></i>{{ 'Generar enlace de consentimiento' if not client.marketing_consent_token else 'Obtener enlace para compartir' }}</button>
+        </form>
+        <div class="small text-muted mt-2">Comprar o ser cliente no activa automáticamente las promociones. La autorización queda registrada con fecha, canal y evidencia.</div>
+      </div></div>
+      {% endif %}
       <form method="post" action="{{ url_for('clients.edit', id=client.id) if client else url_for('clients.post') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <fieldset {% if readonly %}disabled{% endif %}>
