@@ -4,7 +4,6 @@ IMPORTANTE: no contiene ni reutiliza entidades del CRM de SuperAdmin.
 """
 from datetime import datetime, timedelta
 import re
-import secrets
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -751,35 +750,6 @@ def client_contact(client_id, channel):
     flash("Canal abierto y seguimiento registrado. Confirmá el envío y completá la actividad luego.", "info")
     return redirect(destination)
 
-
-
-@bp.post("/clients/<int:client_id>/consent-link")
-@tenant_required
-@ai_pro_crm_required
-def client_consent_link(client_id):
-    """Generate or reuse a public, tenant-scoped contact-preferences link."""
-    from app import db, record_audit
-
-    client = _client_for_company(client_id)
-    if client is None:
-        abort(404)
-    if not any((client.email, client.whatsapp, client.phone)):
-        flash("Cargá al menos un email, WhatsApp o teléfono antes de generar el enlace.", "warning")
-        return redirect(url_for("crm.client_360", client_id=client.id))
-
-    if not client.marketing_consent_token:
-        client.marketing_consent_token = secrets.token_urlsafe(48)
-    record_audit(
-        action="tenant_client_consent_link_generated",
-        entity="client",
-        entity_id=client.id,
-        detail="Enlace público individual de preferencias comerciales generado o recuperado.",
-        user_id=current_user.id,
-        company_id=_company_id(),
-    )
-    db.session.commit()
-    flash("Enlace de consentimiento generado. Podés copiarlo y compartirlo con el cliente.", "success")
-    return redirect(url_for("crm.client_360", client_id=client.id))
 
 
 @bp.route("/consent/<token>", methods=["GET", "POST"])
