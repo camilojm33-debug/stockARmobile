@@ -1,50 +1,80 @@
 {% extends "base_master.html" %}
-{% block title %}Consentimiento comercial{% endblock %}
+{% block title %}Preferencias de contacto{% endblock %}
 {% block content %}
-<div class="container py-4" style="max-width:760px">
+<div class="container py-4" style="max-width:720px">
   {% if not ok %}
-    <div class="card border-0 shadow-sm"><div class="card-body p-4 p-md-5 text-center"><div class="display-6 mb-3">🔒</div><h1 class="h3">Enlace no válido</h1><p class="text-muted mb-0">El enlace no existe o el comercio ya no tiene disponible este registro.</p></div></div>
+    <div class="card border-0 shadow-sm"><div class="card-body p-4 p-md-5 text-center">
+      <div class="display-6 mb-3">🔒</div>
+      <h1 class="h3">Enlace no válido</h1>
+      <p class="text-muted mb-0">El enlace no existe o el comercio ya no tiene disponible este registro.</p>
+    </div></div>
   {% elif saved %}
-    <div class="card border-0 shadow-sm"><div class="card-body p-4 p-md-5 text-center"><div class="display-6 mb-3">✓</div><h1 class="h3">Preferencias guardadas</h1><p class="text-muted">Tu decisión quedó registrada para {{ company.name }}. Podés volver a este enlace para modificar tus preferencias.</p><div class="small text-muted">Gracias, {{ client.name }}.</div></div></div>
+    <div class="card border-0 shadow-sm"><div class="card-body p-4 p-md-5 text-center">
+      <div class="display-6 mb-3 text-success">✓</div>
+      <h1 class="h3">Preferencias guardadas</h1>
+      <p class="text-muted">Tu decisión quedó registrada para {{ company.name }}. Podés volver a este enlace cuando quieras para modificarla.</p>
+      {% if statuses %}
+      <div class="d-flex flex-wrap justify-content-center gap-2 mb-3">
+        {% for channel, status in statuses.items() %}
+          <span class="badge {% if status == 'opted_in' %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ {'email':'Email','whatsapp':'WhatsApp','phone':'Llamadas'}.get(channel, channel) }}: {{ 'Autorizado' if status == 'opted_in' else 'No autorizado' }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="small text-muted">Gracias, {{ client.name }}.</div>
+    </div></div>
   {% else %}
     <div class="card border-0 shadow-sm"><div class="card-body p-4 p-md-5">
-      <div class="text-center mb-4"><div class="display-6 mb-2">🛡️</div><div class="small text-uppercase fw-bold text-primary">Preferencias de contacto</div><h1 class="h3 fw-bold mt-2">Consentimiento comercial</h1><p class="text-muted mb-0">{{ company.name }} te permite elegir cómo quiere comunicarse con vos.</p></div>
-      <div class="alert alert-light border small"><strong>{{ client.name }}</strong><br>Elegí los canales por los que autorizás recibir promociones y comunicaciones comerciales. Tu decisión es voluntaria y podés cambiarla desde este mismo enlace.</div>
+      <div class="text-center mb-4">
+        <div class="display-6 mb-2">📩</div>
+        <div class="small text-uppercase fw-bold text-primary">Preferencias de contacto</div>
+        <h1 class="h3 fw-bold mt-2">¿Cómo querés recibir novedades?</h1>
+        <p class="text-muted mb-0">{{ company.name }} te permite elegir por qué medios recibir promociones y ofertas.</p>
+      </div>
+
+      <div class="alert alert-light border small">
+        <strong>{{ client.name }}</strong><br>
+        Elegí los medios que autorizás. Es voluntario y podés cambiar tu decisión desde este mismo enlace.
+      </div>
       {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
       <form method="post">
-        {% if can_email %}
-        <label class="d-flex gap-3 align-items-start border rounded-3 p-3 mb-2">
-          <input class="form-check-input mt-1" type="checkbox" name="email_opted_in" value="1" {% if client.email_marketing_consent == 'opted_in' %}checked{% endif %}>
-          <span><strong>Email</strong><span class="d-block small text-muted">{{ client.email }}</span><span class="d-block small">Autorizo recibir promociones y novedades por correo electrónico.</span></span>
-        </label>
-        {% endif %}
         {% if can_whatsapp %}
         <label class="d-flex gap-3 align-items-start border rounded-3 p-3 mb-2">
           <input class="form-check-input mt-1" type="checkbox" name="whatsapp_opted_in" value="1" {% if client.whatsapp_marketing_consent == 'opted_in' %}checked{% endif %}>
-          <span><strong>WhatsApp</strong><span class="d-block small text-muted">{{ client.whatsapp }}</span><span class="d-block small">Autorizo recibir promociones y novedades por WhatsApp.</span></span>
+          <span><strong>WhatsApp</strong><span class="d-block small text-muted">{{ client.whatsapp }}</span></span>
+        </label>
+        {% endif %}
+        {% if can_email %}
+        <label class="d-flex gap-3 align-items-start border rounded-3 p-3 mb-2">
+          <input class="form-check-input mt-1" type="checkbox" name="email_opted_in" value="1" {% if client.email_marketing_consent == 'opted_in' %}checked{% endif %}>
+          <span><strong>Email</strong><span class="d-block small text-muted">{{ client.email }}</span></span>
         </label>
         {% endif %}
         {% if can_phone %}
         <label class="d-flex gap-3 align-items-start border rounded-3 p-3 mb-3">
           <input class="form-check-input mt-1" type="checkbox" name="phone_opted_in" value="1" {% if client.phone_marketing_consent == 'opted_in' %}checked{% endif %}>
-          <span><strong>Llamadas</strong><span class="d-block small text-muted">{{ client.phone }}</span><span class="d-block small">Autorizo recibir comunicaciones comerciales por teléfono.</span></span>
+          <span><strong>Llamadas</strong><span class="d-block small text-muted">{{ client.phone }}</span></span>
         </label>
         {% endif %}
+
         {% if not can_email and not can_whatsapp and not can_phone %}
-          <div class="alert alert-warning small">El comercio todavía no tiene un email, WhatsApp o teléfono válido registrado para este contacto. Comunicate directamente con el comercio para actualizar tus datos.</div>
+          <div class="alert alert-warning small">El comercio todavía no tiene datos de contacto válidos para este registro. Comunicate directamente con el comercio para actualizarlos.</div>
         {% else %}
-          <div class="small text-muted mb-3">Los canales que dejes sin marcar quedarán como no autorizados. El consentimiento para un canal no habilita los demás.</div>
+          <div class="small text-muted mb-3">Podés autorizar todos los medios disponibles o elegirlos uno por uno. Los medios sin marcar quedarán como no autorizados.</div>
+          <button class="btn btn-success btn-lg w-100 mb-2" type="submit" name="action" value="accept_all">
+            <i class="bi bi-check2-all me-1"></i> Aceptar todos
+          </button>
+          <button class="btn btn-primary w-100" type="submit" name="action" value="save_selection">
+            Guardar mi selección
+          </button>
+          <button class="btn btn-link text-danger w-100 mt-2" type="submit" name="action" value="reject_all">
+            No quiero recibir promociones
+          </button>
         {% endif %}
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-primary w-100" type="submit" {% if not can_email and not can_whatsapp and not can_phone %}disabled{% endif %}>Guardar preferencias</button>
       </form>
-      {% if can_email or can_whatsapp or can_phone %}
-      <form method="post" class="mt-2" onsubmit="return confirm('¿Querés rechazar todas las comunicaciones comerciales de este comercio?');">
-        <input type="hidden" name="reject_all" value="1"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-link text-muted w-100" type="submit">No quiero recibir comunicaciones comerciales</button>
-      </form>
-      {% endif %}
-      <p class="small text-muted text-center mt-3 mb-0">Comprar o ser cliente no significa aceptar promociones. Tus preferencias se registran por separado para cada canal.</p>
+
+      <p class="small text-muted text-center mt-3 mb-0">Ser cliente o realizar una compra no significa aceptar promociones. Cada medio se registra por separado.</p>
     </div></div>
   {% endif %}
 </div>
