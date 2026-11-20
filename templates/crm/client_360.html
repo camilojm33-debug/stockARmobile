@@ -43,7 +43,7 @@
         <div class="small text-muted mb-3">El cliente puede autorizar o rechazar por separado email, WhatsApp y llamadas. El enlace queda asociado únicamente a este cliente de tu empresa.</div>
         <form method="post" action="{{ url_for('clients.consent_link', client_id=client.id) }}" class="mb-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-link-45deg me-1"></i>{{ 'Generar enlace de consentimiento' if not consent_link_url else 'Actualizar enlace de consentimiento' }}</button>
+          <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-link-45deg me-1"></i>{{ 'Generar enlace de consentimiento' if not consent_link_url else 'Obtener enlace de consentimiento' }}</button>
         </form>
         {% if consent_link_url %}
           <label class="form-label small fw-semibold" for="clientConsentUrl">Enlace para compartir por WhatsApp, email o imprimir</label>
