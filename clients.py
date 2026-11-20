@@ -1,6 +1,7 @@
 """Blueprint de clientes: CRUD y API."""
 
 import secrets
+import re
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
@@ -230,7 +231,7 @@ def marketing_consent(client_id):
     email_value = str(client.email or "").strip()
     phone_digits = "".join(character for character in str(client.phone or "") if character.isdigit())
     available = {
-        "email": bool("@" in email_value and "." in email_value.rsplit("@", 1)[-1]),
+        "email": bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value)),
         "whatsapp": bool(normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15),
         "phone": len(phone_digits) >= 7,
     }
