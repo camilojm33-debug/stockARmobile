@@ -771,8 +771,8 @@ def public_consent(token):
     normalized_whatsapp = normalize_whatsapp_number(str(client.whatsapp or "").strip())
     can_whatsapp = bool(normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15)
     email_value = str(client.email or "").strip()
-    can_email = bool(re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", email_value))
-    phone_digits = re.sub(r"\\D", "", str(client.phone or ""))
+    can_email = bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_value))
+    phone_digits = re.sub(r"\D", "", str(client.phone or ""))
     can_phone = len(phone_digits) >= 7
 
     page_context = {
@@ -919,6 +919,10 @@ def client_360(client_id):
         total_spent=total_spent,
         stages=STAGES,
         activity_types=ACTIVITY_TYPES,
+        consent_link_url=(
+            url_for("crm.public_consent", token=client.marketing_consent_token, _external=True)
+            if client.marketing_consent_token else None
+        ),
     )
 
 
