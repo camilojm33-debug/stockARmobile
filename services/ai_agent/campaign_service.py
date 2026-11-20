@@ -146,10 +146,18 @@ class CampaignService:
                 "Solo se pueden eliminar campañas que no estén en proceso ni hayan finalizado un envío."
             )
 
-        recipients_query = TenantCampaignRecipient.query.filter_by(
+        all_recipients_query = TenantCampaignRecipient.query.filter_by(
             campaign_id=campaign.id,
-            company_id=company_id,
         )
+        has_foreign_recipient = all_recipients_query.filter(
+            TenantCampaignRecipient.company_id != company_id
+        ).first() is not None
+        if has_foreign_recipient:
+            raise ValueError(
+                "No se puede eliminar la campaña porque hay destinatarios asociados a otro comercio."
+            )
+
+        recipients_query = all_recipients_query.filter_by(company_id=company_id)
         has_delivery_history = recipients_query.filter(
             or_(
                 TenantCampaignRecipient.status.in_(
@@ -168,7 +176,6 @@ class CampaignService:
 
         has_attribution = TenantCampaignAttribution.query.filter_by(
             campaign_id=campaign.id,
-            company_id=company_id,
         ).first() is not None
         if has_attribution:
             raise ValueError(
@@ -178,6 +185,8 @@ class CampaignService:
         recipient_count = recipients_query.count()
         title = str(campaign.title or "Campaña")
         recipients_query.delete(synchronize_session=False)
+        db.session.flush()
+        db.session.expire(campaign, ["recipients"])
         db.session.delete(campaign)
         db.session.flush()
         return {"title": title, "recipient_count": recipient_count}
