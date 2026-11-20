@@ -39,7 +39,31 @@
         <div class="small text-muted mb-1">Canal comercial</div><div>WhatsApp</div>
       </div></div>
       <div class="card app-card mb-4"><div class="card-body">
-        <h2 class="h6 fw-bold">Consentimiento de WhatsApp</h2>
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2"><h2 class="h6 fw-bold mb-0">Consentimiento comercial</h2><span class="badge text-bg-light">Preferencias del titular</span></div>
+        <div class="small text-muted mb-3">El cliente puede autorizar o rechazar por separado email, WhatsApp y llamadas. El enlace queda asociado únicamente a este cliente de tu empresa.</div>
+        <form method="post" action="{{ url_for('crm.client_consent_link', client_id=client.id) }}" class="mb-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-link-45deg me-1"></i>{{ 'Generar enlace de consentimiento' if not consent_link_url else 'Actualizar enlace de consentimiento' }}</button>
+        </form>
+        {% if consent_link_url %}
+          <label class="form-label small fw-semibold" for="clientConsentUrl">Enlace para compartir por WhatsApp, email o imprimir</label>
+          <div class="input-group input-group-sm mb-3"><input id="clientConsentUrl" class="form-control" readonly value="{{ consent_link_url }}"><button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(this.previousElementSibling.value)">Copiar</button></div>
+        {% endif %}
+        <div class="d-flex flex-wrap gap-2 mb-2">
+          <span class="badge {% if client.email_marketing_consent == 'opted_in' %}text-bg-success{% elif client.email_marketing_consent == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">Email: {{ client.email_marketing_consent or 'unknown' }}</span>
+          <span class="badge {% if client.whatsapp_marketing_consent == 'opted_in' %}text-bg-success{% elif client.whatsapp_marketing_consent == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">WhatsApp: {{ client.whatsapp_marketing_consent or 'unknown' }}</span>
+          <span class="badge {% if client.phone_marketing_consent == 'opted_in' %}text-bg-success{% elif client.phone_marketing_consent == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">Llamadas: {{ client.phone_marketing_consent or 'unknown' }}</span>
+        </div>
+        {% for channel, status, recorded_at, source, evidence in [
+          ('Email', client.email_marketing_consent, client.email_marketing_consent_recorded_at, client.email_marketing_consent_source, client.email_marketing_consent_evidence),
+          ('WhatsApp', client.whatsapp_marketing_consent, client.whatsapp_marketing_consent_recorded_at, client.whatsapp_marketing_consent_source, client.whatsapp_marketing_consent_evidence),
+          ('Llamadas', client.phone_marketing_consent, client.phone_marketing_consent_recorded_at, client.phone_marketing_consent_source, client.phone_marketing_consent_evidence)
+        ] %}
+          {% if recorded_at %}<div class="small border-top pt-2 mt-2"><strong>{{ channel }}</strong> · {{ recorded_at.strftime('%d/%m/%Y %H:%M') }} · {{ source or 'origen no informado' }}<div class="text-muted text-break">{{ evidence or '' }}</div></div>{% endif %}
+        {% endfor %}
+        {% if whatsapp_consent_events %}<details class="mt-3"><summary class="small fw-semibold">Historial de WhatsApp ({{ whatsapp_consent_events|length }})</summary><div class="mt-2">{% for event in whatsapp_consent_events %}<div class="border-top py-2 small"><strong>{{ event.previous_status }} → {{ event.new_status }}</strong><div class="text-muted">{{ event.occurred_at.strftime('%d/%m/%Y %H:%M') }} · {{ event.source }}{% if event.actor %} · {{ event.actor.username }}{% endif %}</div><div class="text-break">{{ event.evidence }}</div></div>{% endfor %}</div></details>{% endif %}
+        <div class="small text-muted mt-2">Un cliente solo queda habilitado para campañas del canal que autorizó expresamente. Pedir, comprar o compartir un teléfono no equivale a aceptar promociones.</div>
+      </div></div>
         <div class="mb-2"><span class="badge {% if client.whatsapp_marketing_consent == 'opted_in' %}text-bg-success{% elif client.whatsapp_marketing_consent == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ client.whatsapp_marketing_consent or 'unknown' }}</span></div>
         {% if client.whatsapp_marketing_consent_recorded_at %}<div class="small text-muted">Registrado {{ client.whatsapp_marketing_consent_recorded_at.strftime('%d/%m/%Y %H:%M') }} · {{ client.whatsapp_marketing_consent_source }}</div><div class="small mt-1 text-break">{{ client.whatsapp_marketing_consent_evidence }}</div>{% else %}<div class="small text-muted">No hay evidencia registrada; no es elegible para campañas.</div>{% endif %}
         {% if whatsapp_consent_events %}<details class="mt-3"><summary class="small fw-semibold">Historial de consentimiento ({{ whatsapp_consent_events|length }})</summary><div class="mt-2">{% for event in whatsapp_consent_events %}<div class="border-top py-2 small"><strong>{{ event.previous_status }} → {{ event.new_status }}</strong><div class="text-muted">{{ event.occurred_at.strftime('%d/%m/%Y %H:%M') }} · {{ event.source }}{% if event.actor %} · {{ event.actor.username }}{% endif %}</div><div class="text-break">{{ event.evidence }}</div></div>{% endfor %}</div></details>{% endif %}
