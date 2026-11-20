@@ -2318,11 +2318,14 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
             channel="whatsapp",
         ).all()
 
-        assert result["target_count"] == 1, {
-            "result": result,
-            "pricing_exclusions": data.get("pricing_exclusions"),
-            "price_resolver_calls": price_resolver_calls,
-        }
+        exclusion_detail = "; ".join(
+            f"{row.get('client_name')}: {row.get('reason')}"
+            for row in (data.get("pricing_exclusions") or [])
+        )
+        assert result["target_count"] == 1, (
+            f"result={result!r}; pricing_exclusions={exclusion_detail}; "
+            f"price_resolver_calls={price_resolver_calls!r}"
+        )
         assert result["pricing_excluded"] == 1
         assert [row.client_id for row in queued] == [retail.id]
         # Retail pricing must not depend on wholesale plan/list resolution.
