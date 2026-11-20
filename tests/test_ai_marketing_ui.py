@@ -76,3 +76,21 @@ def test_tenant_campaigns_can_be_deleted_from_list_and_detail_without_erasing_se
     assert "Se conserva para no perder el historial de entregas" in service_source
     assert "Se conserva para proteger el historial comercial" in service_source
 
+def test_existing_campaign_can_be_linked_to_a_catalog_product_before_price_validation():
+    from pathlib import Path
+
+    detail = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
+    routes = Path("ai_agents.py").read_text(encoding="utf-8")
+
+    assert 'id="campaignProduct" name="product_id"' in detail
+    assert "for product in campaign_products" in detail
+    assert "campaign.product_id == product.id" in detail
+    assert "Elegí el producto exacto del catálogo" in detail
+    assert 'Product.query.filter_by(company_id=current_user.company_id, active=True)' in routes
+    edit_route = routes.split("def campaign_edit(campaign_id):", 1)[1].split(
+        '@bp.post("/campanas/<int:campaign_id>/delete")', 1
+    )[0]
+    assert 'if "product_id" in request.form' in edit_route
+    assert "company_id=current_user.company_id" in edit_route
+    assert "active=True" in edit_route
+

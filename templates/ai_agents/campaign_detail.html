@@ -266,6 +266,16 @@
       <div class="card-body">
         <span class="page-kicker">Etapa 2 de 4</span>
         <h2 class="h4 fw-bold mb-1">Configurá el precio por destinatario</h2>
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="campaignProduct">Producto que se promociona</label>
+          <select class="form-select" id="campaignProduct" name="product_id">
+            <option value="">Sin producto asociado</option>
+            {% for product in campaign_products %}
+            <option value="{{ product.id }}" {% if campaign.product_id == product.id %}selected{% endif %}>{{ product.name }}{% if product.category %} · {{ product.category }}{% endif %}{% if product.barcode %} · Código {{ product.barcode }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Elegí el producto exacto del catálogo. StockARmobile usará su precio real y la lista mayorista vigente de cada destinatario; no copiará una tarifa de un cliente a otro.</div>
+        </div>
         {% if campaign.product %}
         <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
           <span class="badge text-bg-light border text-dark"><i class="bi bi-box-seam me-1"></i>{{ campaign.product.name }}</span>
@@ -275,13 +285,13 @@
           <span class="badge text-bg-success">Tramo automático por cliente</span>
           {% endif %}
         </div>
-        <p>El precio se resuelve de manera individual usando el tipo de cliente y su propia lista mayorista vigente. Los minoristas reciben su precio minorista; los mayoristas, el importe de su lista y tramo aplicable. No se comparte un precio mayorista entre clientes.</p>
-        <label class="form-label fw-semibold" for="campaignPricingQuantity">Cantidad para calcular el precio</label>
+        <p>El precio se resuelve de manera individual usando el tipo de cliente y su propia lista mayorista vigente. Los minoristas reciben su precio minorista; los mayoristas, el importe de su lista y tramo aplicable.</p>
+        {% elif 'precio' in campaign.content|lower %}
+        <div class="alert alert-warning small">El mensaje ofrece un precio pero todavía no tiene producto asociado. Seleccioná el producto correcto arriba y guardá los cambios antes de aprobar.</div>
+        {% endif %}
+        <label class="form-label fw-semibold" for="campaignPricingQuantity">Cantidad para calcular el precio (opcional)</label>
         <input class="form-control" id="campaignPricingQuantity" type="number" name="pricing_quantity" min="0.001" step="0.001" value="{{ campaign_pricing_quantity }}" placeholder="Automático según el primer tramo de cada lista">
         <div class="form-text">Dejalo vacío para tomar automáticamente el primer tramo aplicable de cada lista (por ejemplo, 3 unidades). Ingresá una cantidad para calcular a todos sobre esa cantidad.</div>
-        {% else %}
-        <div class="alert alert-light border mb-0">Esta campaña no tiene un producto asociado. Para incluir precios personalizados, volvé a prepararla desde Marketing IA indicando el producto.</div>
-        {% endif %}
         {% if campaign_price_excluded_count > 0 %}
         <div class="alert alert-warning mt-3 mb-0">
           <strong>{{ campaign_price_excluded_count }} contacto(s) no superaron la validación de precio.</strong> No se les enviará una tarifa minorista como reemplazo de una tarifa mayorista faltante.
