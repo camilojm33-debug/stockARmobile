@@ -2120,6 +2120,40 @@ def campaign_edit(campaign_id):
     return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/campanas/<int:campaign_id>/delete")
+@company_admin_required
+def campaign_delete(campaign_id):
+    """Delete an unsent campaign without erasing delivery or attribution history."""
+    try:
+        deleted = CampaignService.delete_unsent(
+            company_id=current_user.company_id,
+            campaign_id=campaign_id,
+        )
+        from app import record_audit
+
+        record_audit(
+            action="tenant_campaign_deleted",
+            entity="Campaign",
+            entity_id=campaign_id,
+            detail=(
+                f"Campaña eliminada: {deleted['title']}. "
+                f"Destinatarios pendientes eliminados: {deleted['recipient_count']}."
+            ),
+            user_id=current_user.id,
+            company_id=current_user.company_id,
+        )
+        db.session.commit()
+        flash(
+            f"Se eliminó la campaña “{deleted['title']}” y "
+            f"{deleted['recipient_count']} destinatario(s) asociado(s).",
+            "success",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    return redirect(url_for("ai_agents.campaigns"))
+
+
 @bp.post("/campanas/<int:campaign_id>/transition")
 @company_admin_required
 def campaign_transition(campaign_id):

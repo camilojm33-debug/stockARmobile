@@ -2431,3 +2431,191 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
         assert campaign.title == "Promo Coca noviembre"
         assert campaign.content == "Hola {{cliente}}: {{producto}} a {{precio}}."
         assert saved["pricing_quantity"] == "3"
+
+def test_unsent_tenant_campaign_can_be_deleted_with_its_recipients_and_is_company_scoped(app):
+    from app import Campaign, Client, Company, User, db
+
+    with app.app_context():
+        company_a = Company(name="Delete Campaign A", active=True)
+        company_b = Company(name="Delete Campaign B", active=True)
+        db.session.add_all([company_a, company_b])
+        db.session.flush()
+
+        user_a = User(
+            username="delete-campaign-a",
+            email="delete-campaign-a@example.com",
+            role="admin",
+            active=True,
+            company_id=company_a.id,
+        )
+        user_b = User(
+            username="delete-campaign-b",
+            email="delete-campaign-b@example.com",
+            role="admin",
+            active=True,
+            company_id=company_b.id,
+        )
+        user_a.set_password("password123")
+        user_b.set_password("password123")
+        db.session.add_all([user_a, user_b])
+        db.session.flush()
+
+        client = Client(
+            name="Destinatario pendiente",
+            whatsapp="5493625551000",
+            company_id=company_a.id,
+            active=True,
+        )
+        db.session.add(client)
+        db.session.flush()
+
+        own_campaign = CampaignService.create_draft(
+            company_id=company_a.id,
+            user_id=user_a.id,
+            title="Borrador para borrar",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        other_campaign = CampaignService.create_draft(
+            company_id=company_b.id,
+            user_id=user_b.id,
+            title="Campaña de otro comercio",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        db.session.add(
+            TenantCampaignRecipient(
+                campaign_id=own_campaign.id,
+                company_id=company_a.id,
+                client_id=client.id,
+                channel="whatsapp",
+                destination=client.whatsapp,
+                unsubscribe_token="delete-unsent-recipient-token",
+                status="pending",
+            )
+        )
+        db.session.commit()
+
+        own_campaign_id = own_campaign.id
+        other_campaign_id = other_campaign.id
+        with pytest.raises(ValueError, match="Campaña no encontrada"):
+            CampaignService.delete_unsent(
+                company_id=company_a.id,
+                campaign_id=other_campaign_id,
+            )
+        result = CampaignService.delete_unsent(
+            company_id=company_a.id,
+            campaign_id=own_campaign_id,
+        )
+        db.session.commit()
+        db.session.expire_all()
+
+        assert result == {
+            "title": "Borrador para borrar",
+            "recipient_count": 1,
+        }
+        assert Campaign.query.filter_by(id=own_campaign_id).first() is None
+        assert TenantCampaignRecipient.query.filter_by(campaign_id=own_campaign_id).count() == 0
+        assert Campaign.query.filter_by(
+            id=other_campaign_id,
+            company_id=company_b.id,
+        ).first() is not None
+
+
+def test_campaign_delete_preserves_any_delivery_history_or_sales_attribution(app):
+    from app import Campaign, Client, Company, User, db
+
+    with app.app_context():
+        company = Company(name="Campaign History Protection", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="campaign-history-admin",
+            email="campaign-history-admin@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+        client = Client(
+            name="Cliente con actividad",
+            whatsapp="5493625551001",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add(client)
+        db.session.flush()
+
+        sent_campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña con envío",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        attributed_campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña con venta atribuida",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        db.session.flush()
+
+        sent_recipient = TenantCampaignRecipient(
+            campaign_id=sent_campaign.id,
+            company_id=company.id,
+            client_id=client.id,
+            channel="whatsapp",
+            destination=client.whatsapp,
+            unsubscribe_token="campaign-sent-history-token",
+            status="sent",
+            sent_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.session.add(sent_recipient)
+        db.session.flush()
+        db.session.add(
+            TenantCampaignAttribution(
+                campaign_id=attributed_campaign.id,
+                company_id=company.id,
+                client_id=client.id,
+                recipient_id=None,
+                revenue=1250,
+                attribution_type="test",
+            )
+        )
+        db.session.commit()
+
+        with pytest.raises(ValueError, match="actividad de envío"):
+            CampaignService.delete_unsent(
+                company_id=company.id,
+                campaign_id=sent_campaign.id,
+            )
+        with pytest.raises(ValueError, match="ventas atribuidas"):
+            CampaignService.delete_unsent(
+                company_id=company.id,
+                campaign_id=attributed_campaign.id,
+            )
+
+        db.session.expire_all()
+        assert Campaign.query.filter_by(id=sent_campaign.id).first() is not None
+        assert Campaign.query.filter_by(id=attributed_campaign.id).first() is not None
+
