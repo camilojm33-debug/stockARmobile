@@ -177,9 +177,14 @@ def consent_link(client_id):
     from app import Client, db, record_audit, scope_query_to_company
 
     client = scope_query_to_company(Client.query, Client).filter(Client.id == client_id).first_or_404()
+    edit_url = url_for("clients.edit", id=client.id)
+    crm_url = url_for("crm.client_360", client_id=client.id)
+    return_url = request.form.get("return_to")
+    if return_url not in {edit_url, crm_url}:
+        return_url = edit_url
     if not any((client.email, client.whatsapp, client.phone)):
         flash("Cargá al menos un email, WhatsApp o teléfono antes de generar el enlace.", "warning")
-        return redirect(url_for("clients.edit", id=client.id))
+        return redirect(return_url)
 
     if not client.marketing_consent_token:
         client.marketing_consent_token = secrets.token_urlsafe(48)
@@ -193,7 +198,7 @@ def consent_link(client_id):
     )
     db.session.commit()
     flash("Enlace de consentimiento generado. Podés copiarlo y compartirlo con el cliente.", "success")
-    return redirect(url_for("clients.edit", id=client.id))
+    return redirect(return_url)
 
 
 @bp.post("/<int:client_id>/marketing-consent")
@@ -206,6 +211,11 @@ def marketing_consent(client_id):
     from services.whatsapp_share_service import normalize_whatsapp_number
 
     client = scope_query_to_company(Client.query, Client).filter(Client.id == client_id).first_or_404()
+    edit_url = url_for("clients.edit", id=client.id)
+    crm_url = url_for("crm.client_360", client_id=client.id)
+    return_url = request.form.get("return_to")
+    if return_url not in {edit_url, crm_url}:
+        return_url = edit_url
     action = str(request.form.get("action") or "").strip().lower()
     source = str(request.form.get("source") or "in_person").strip().lower()
     source_labels = {
@@ -217,7 +227,7 @@ def marketing_consent(client_id):
     }
     if action not in {"accept_all", "email", "whatsapp", "phone", "reject_all"}:
         flash("La acción de consentimiento no es válida.", "danger")
-        return redirect(url_for("clients.edit", id=client.id))
+        return redirect(return_url)
     if source not in source_labels:
         flash("Seleccioná un origen válido para el consentimiento.", "danger")
         return redirect(url_for("clients.edit", id=client.id))
