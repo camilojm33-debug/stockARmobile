@@ -303,9 +303,17 @@
                 </span>
               </td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-primary px-3" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id) }}">
-                  Abrir <i class="bi bi-arrow-right ms-1"></i>
-                </a>
+                <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                  <a class="btn btn-sm btn-outline-primary px-3" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id) }}">
+                    Abrir <i class="bi bi-arrow-right ms-1"></i>
+                  </a>
+                  {% if campaign.status in ['BORRADOR', 'PENDIENTE_APROBACION', 'CANCELADA', 'SIN_ENVIO', 'FALLIDA'] and not (campaign.sent_count or 0) %}
+                  <form method="post" action="{{ url_for('ai_agents.campaign_delete', campaign_id=campaign.id) }}" onsubmit="return confirm('¿Eliminar definitivamente esta campaña? Solo se permite cuando todavía no tiene envíos registrados.');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar</button>
+                  </form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% endfor %}
