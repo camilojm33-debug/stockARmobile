@@ -2341,7 +2341,7 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
     from datetime import datetime
     from types import SimpleNamespace
 
-    from app import Company, User, db
+    from app import Company, Product, User, db
     import ai_agents
 
     with app.app_context():
@@ -2357,6 +2357,15 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
         )
         user.set_password("password123")
         db.session.add(user)
+        db.session.flush()
+        product = Product(
+            barcode="CAMPAIGN-COCA-001",
+            name="Coca Cola 2.25 L",
+            company_id=company.id,
+            active=True,
+            price=Decimal("2500.00"),
+        )
+        db.session.add(product)
         db.session.flush()
         campaign = CampaignService.create_draft(
             company_id=company.id,
@@ -2396,6 +2405,7 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
                 "objective": "Reactivar mayoristas",
                 "content": "Hola {{cliente}}: {{producto}} a {{precio}}.",
                 "pricing_quantity": "3",
+                "product_id": str(product.id),
                 "scheduled_at_utc": "2026-11-20T18:30:00+00:00",
             },
         ):
@@ -2408,6 +2418,7 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
         assert campaign.objective == "Reactivar mayoristas"
         assert campaign.content == "Hola {{cliente}}: {{producto}} a {{precio}}."
         assert campaign.channel == "whatsapp"
+        assert campaign.product_id == product.id
         assert saved["pricing_quantity"] == "3"
         assert saved["audience_selection_mode"] == "selected"
         assert saved["selected_client_ids"] == [41, 42]
@@ -2421,6 +2432,7 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
                 "objective": "Cantidad incorrecta",
                 "content": "No sobrescribir",
                 "pricing_quantity": "0",
+                "product_id": str(product.id),
             },
         ):
             response = route(campaign.id)
