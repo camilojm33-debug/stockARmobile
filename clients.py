@@ -1,5 +1,6 @@
 """Blueprint de clientes: CRUD y API."""
 
+import secrets
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
