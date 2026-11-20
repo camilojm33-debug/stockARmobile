@@ -603,3 +603,50 @@ def test_tenant_public_consent_link_rejects_invalid_tokens_and_inactive_clients(
     http = app.test_client()
     assert http.get("/crm/consent/no-existe").status_code == 404
     assert http.get("/crm/consent/tenant-consent-token-003").status_code == 404
+
+
+def test_tenant_client_profile_can_generate_consent_link_only_for_own_company(app):
+    from app import Client, Company, User, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Comercio dueño del contacto", active=True)
+    other_company = Company(name="Otro comercio", active=True)
+    db.session.add_all([company, other_company])
+    db.session.flush()
+    user = User(
+        username="consent-link-admin",
+        email="consent-link-admin@example.test",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    user.set_password("test-password")
+    own_client = Client(
+        name="Cliente propio",
+        email="own@example.test",
+        whatsapp="5493625551010",
+        company_id=company.id,
+        active=True,
+    )
+    foreign_client = Client(
+        name="Cliente ajeno",
+        email="foreign@example.test",
+        whatsapp="5493625551011",
+        company_id=other_company.id,
+        active=True,
+    )
+    db.session.add_all([user, own_client, foreign_client])
+    db.session.commit()
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+    response = http.post(f"/clientes/{own_client.id}/consent-link")
+    assert response.status_code == 302
+    db.session.refresh(own_client)
+    assert own_client.marketing_consent_token
+    assert len(own_client.marketing_consent_token) >= 48
+
+    foreign_response = http.post(f"/clientes/{foreign_client.id}/consent-link")
+    assert foreign_response.status_code == 404
+    db.session.refresh(foreign_client)
+    assert foreign_client.marketing_consent_token is None
