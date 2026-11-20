@@ -195,6 +195,110 @@ def consent_link(client_id):
     return redirect(url_for("clients.edit", id=client.id))
 
 
+@bp.post("/<int:client_id>/marketing-consent")
+@tenant_required
+def marketing_consent(client_id):
+    """Record a customer's already-expressed marketing choice from the tenant client profile."""
+    from app import Client, db, record_audit, scope_query_to_company
+    from stockarmobile.helpers.dates import utcnow_naive
+    from services.whatsapp_consent_service import record_whatsapp_consent
+    from services.whatsapp_share_service import normalize_whatsapp_number
+
+    client = scope_query_to_company(Client.query, Client).filter(Client.id == client_id).first_or_404()
+    action = str(request.form.get("action") or "").strip().lower()
+    source = str(request.form.get("source") or "in_person").strip().lower()
+    source_labels = {
+        "in_person": "En el local / verbal",
+        "public_consent_link": "Enlace de consentimiento",
+        "qr_code": "Código QR",
+        "written": "Formulario o documento",
+        "other": "Otro medio",
+    }
+    if action not in {"accept_all", "email", "whatsapp", "phone", "reject_all"}:
+        flash("La acción de consentimiento no es válida.", "danger")
+        return redirect(url_for("clients.edit", id=client.id))
+    if source not in source_labels:
+        flash("Seleccioná un origen válido para el consentimiento.", "danger")
+        return redirect(url_for("clients.edit", id=client.id))
+
+    evidence = str(request.form.get("evidence") or "").strip()[:2000]
+    if not evidence:
+        flash("Contá brevemente cómo y cuándo el cliente expresó su decisión.", "warning")
+        return redirect(url_for("clients.edit", id=client.id))
+
+    normalized_whatsapp = normalize_whatsapp_number(str(client.whatsapp or "").strip())
+    email_value = str(client.email or "").strip()
+    phone_digits = "".join(character for character in str(client.phone or "") if character.isdigit())
+    available = {
+        "email": bool("@" in email_value and "." in email_value.rsplit("@", 1)[-1]),
+        "whatsapp": bool(normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15),
+        "phone": len(phone_digits) >= 7,
+    }
+
+    if action == "reject_all":
+        selected_channels = ("email", "whatsapp", "phone")
+        status = "opted_out"
+    elif action == "accept_all":
+        selected_channels = tuple(channel for channel, is_available in available.items() if is_available)
+        status = "opted_in"
+        if not selected_channels:
+            flash("Cargá al menos un dato de contacto válido antes de autorizar comunicaciones.", "warning")
+            return redirect(url_for("clients.edit", id=client.id))
+    else:
+        selected_channels = (action,)
+        status = "opted_in"
+        if not available[action]:
+            labels = {"email": "un email válido", "whatsapp": "un WhatsApp válido", "phone": "un teléfono válido"}
+            flash(f"Para autorizar este canal, cargá {labels[action]} en la ficha del cliente.", "warning")
+            return redirect(url_for("clients.edit", id=client.id))
+
+    now = utcnow_naive()
+    evidence_text = f"Registrado desde la ficha del cliente ({source_labels[source]}): {evidence}"
+    changed = []
+    for channel in ("email", "phone"):
+        if channel not in selected_channels:
+            continue
+        setattr(client, f"{channel}_marketing_consent", status)
+        setattr(client, f"{channel}_marketing_consent_recorded_at", now)
+        setattr(client, f"{channel}_marketing_consent_source", source)
+        setattr(client, f"{channel}_marketing_consent_evidence", evidence_text)
+        changed.append(channel)
+
+    if "whatsapp" in selected_channels:
+        if status == "opted_in":
+            client.whatsapp = normalized_whatsapp
+        record_whatsapp_consent(
+            client,
+            status,
+            source=source,
+            evidence=evidence_text,
+            actor_user_id=getattr(current_user, "id", None),
+        )
+        changed.append("whatsapp")
+
+    labels = {"email": "Email", "whatsapp": "WhatsApp", "phone": "Llamadas"}
+    summary = ", ".join(labels[channel] for channel in changed)
+    record_audit(
+        action="tenant_client_marketing_consent_quick_update",
+        entity="client",
+        entity_id=client.id,
+        detail=f"Permisos comerciales actualizados: {summary or 'ningún canal'} ({status}). Origen: {source}.",
+        user_id=getattr(current_user, "id", None),
+        company_id=getattr(current_user, "company_id", None),
+    )
+    db.session.commit()
+
+    if action == "accept_all":
+        skipped = [labels[channel] for channel, is_available in available.items() if not is_available]
+        suffix = f" Sin dato válido: {', '.join(skipped)}." if skipped else ""
+        flash(f"Autorización registrada para: {summary}.{suffix}", "success")
+    elif action == "reject_all":
+        flash("Se registró la baja de todos los canales comerciales.", "success")
+    else:
+        flash(f"Autorización registrada para {summary}.", "success")
+    return redirect(url_for("clients.edit", id=client.id))
+
+
 @bp.route("/export.xlsx")
 @tenant_required
 def export_excel():
@@ -439,11 +543,13 @@ def edit(client_id=None, id=None):
         client.phone = request.form.get("phone") or None
         client.whatsapp = request.form.get("whatsapp") or None
         client.email_marketing_consent = email_consent
-        try:
-            _record_client_whatsapp_consent(client, whatsapp_consent, source="client_form")
-        except ValueError as exc:
-            flash(str(exc), "danger")
-            return redirect(url_for("clients.edit", id=client.id))
+        current_whatsapp_consent = str(client.whatsapp_marketing_consent or "unknown")
+        if whatsapp_consent != current_whatsapp_consent or request.form.get("whatsapp_marketing_consent_evidence"):
+            try:
+                _record_client_whatsapp_consent(client, whatsapp_consent, source="client_form")
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("clients.edit", id=client.id))
         client.birthday = _date_form("birthday")
         client.balance = _float_form("balance")
         client.credit_limit = _float_form("credit_limit")
