@@ -1,6 +1,6 @@
 """Add tenant-side public marketing consent preferences and evidence.
 
-Revision ID: 20261119_01_tenant_client_consent
+Revision ID: 20261119_01_tenant_consent
 Revises: 20261110_01_marketing_hardening
 Create Date: 2026-11-19
 """
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20261119_01_tenant_client_consent"
+revision = "20261119_01_tenant_consent"
 down_revision = "20261110_01_marketing_hardening"
 branch_labels = None
 depends_on = None
