@@ -286,7 +286,10 @@
           {% endif %}
         </div>
         <p>El precio se resuelve de manera individual usando el tipo de cliente y su propia lista mayorista vigente. Los minoristas reciben su precio minorista; los mayoristas, el importe de su lista y tramo aplicable.</p>
-        {% elif ('{{precio}}' in campaign.content or 'precio' in campaign.content|lower or '        {% if campaign_price_excluded_count > 0 %}
+        {% elif ('precio' in campaign.content|lower or '$'
+        <div class="alert alert-warning small">El mensaje ofrece un precio pero todavía no tiene producto asociado. Seleccioná el producto correcto arriba y guardá los cambios antes de aprobar.</div>
+        {% endif %}
+        {% if campaign_price_excluded_count > 0 %}
         <div class="alert alert-warning mt-3 mb-0">
           <strong>{{ campaign_price_excluded_count }} contacto(s) no superaron la validación de precio.</strong> No se les enviará una tarifa minorista como reemplazo de una tarifa mayorista faltante.
           {% if campaign_price_exclusions %}
