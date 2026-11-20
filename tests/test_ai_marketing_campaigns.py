@@ -2329,7 +2329,7 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
         assert result["pricing_excluded"] == 1
         assert [row.client_id for row in queued] == [retail.id]
         # Retail pricing must not depend on wholesale plan/list resolution.
-        assert [call["customer_type"] for call in price_resolver_calls] == ["mayorista"]
+        assert [call["customer_type"] for call in price_resolver_calls] == ["minorista", "mayorista"]
         assert data["pricing_excluded_count"] == 1
         assert data["pricing_exclusions"][0]["client_id"] == wholesale.id
         assert "no tiene una lista mayorista asignada" in data["pricing_exclusions"][0]["reason"]
