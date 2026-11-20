@@ -809,7 +809,7 @@ def public_consent(token):
     evidence_prefix = "Preferencia registrada por el titular mediante el enlace público de consentimiento"
     changed = {}
     for channel in ("email", "phone"):
-        if not available[channel]:
+        if not available[channel] and not reject_all:
             continue
         status = "opted_out" if reject_all else ("opted_in" if selected[channel] else "opted_out")
         evidence = f"{evidence_prefix}: {status} para {channel}."
@@ -819,7 +819,7 @@ def public_consent(token):
         setattr(client, f"{channel}_marketing_consent_evidence", evidence)
         changed[channel] = status
 
-    if can_whatsapp:
+    if can_whatsapp or reject_all:
         whatsapp_status = "opted_out" if reject_all else ("opted_in" if selected["whatsapp"] else "opted_out")
         whatsapp_evidence = f"{evidence_prefix}: {whatsapp_status} para WhatsApp."
         if normalized_whatsapp:
