@@ -1834,6 +1834,8 @@ async function createQuickClient() {
         name,
         email: (emailInput?.value || '').trim(),
         whatsapp: (whatsappInput?.value || '').trim(),
+        whatsapp_marketing_consent: document.getElementById('quick-client-marketing-consent')?.value || 'unknown',
+        whatsapp_marketing_consent_evidence: (document.getElementById('quick-client-marketing-evidence')?.value || '').trim(),
         customer_type: customerType,
         price_list_id: customerType === 'mayorista' ? priceListId : '',
       }),
@@ -1859,6 +1861,10 @@ async function createQuickClient() {
     if (nameInput) nameInput.value = '';
     if (emailInput) emailInput.value = '';
     if (whatsappInput) whatsappInput.value = '';
+    const quickConsentInput = document.getElementById('quick-client-marketing-consent');
+    const quickConsentEvidenceInput = document.getElementById('quick-client-marketing-evidence');
+    if (quickConsentInput) quickConsentInput.value = 'unknown';
+    if (quickConsentEvidenceInput) quickConsentEvidenceInput.value = '';
     const quickClientTypeInput = document.getElementById('quick-client-type');
     const quickClientPriceListInput = document.getElementById('quick-client-price-list');
     if (quickClientTypeInput) quickClientTypeInput.value = 'minorista';

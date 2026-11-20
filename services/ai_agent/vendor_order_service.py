@@ -1524,10 +1524,18 @@ class VendorOrderService:
             raise ValueError("No hay un usuario activo para registrar el pedido.")
 
         phone = _normalize_phone(customer_phone)
+        if (
+            not phone
+            and str(getattr(conversation, "channel", "") or "").strip().lower()
+            in {"whatsapp", "whatsapp_business"}
+        ):
+            # The inbound WhatsApp conversation already identifies the sender.
+            # Save that destination in the CRM, but do not infer marketing consent.
+            phone = _normalize_phone(getattr(conversation, "external_conversation_id", None))
         client = _find_registered_client(
             company_id=int(company_id),
             customer_name=customer_name,
-            customer_phone=customer_phone,
+            customer_phone=phone or customer_phone,
         )
 
         if client is None and (customer_name.strip() or phone):
@@ -1797,6 +1805,39 @@ class VendorOrderService:
         }
         if customer_name.strip():
             state["customer_name"] = customer_name.strip()[:160]
+
+        # A purchase is not marketing consent. For WhatsApp conversations,
+        # request an explicit yes/no after the order confirmation only when
+        # this contact's promotional preference is still unknown.
+        if str(getattr(conversation, "channel", "") or "").strip().lower() in {"whatsapp", "whatsapp_business"}:
+            from services.whatsapp_share_service import normalize_whatsapp_number
+
+            candidate_whatsapp = str(
+                getattr(client, "whatsapp", None)
+                or phone
+                or customer_phone
+                or getattr(conversation, "external_conversation_id", None)
+                or ""
+            ).strip()
+            normalized_whatsapp = normalize_whatsapp_number(candidate_whatsapp)
+            if normalized_whatsapp and 11 <= len(normalized_whatsapp) <= 15:
+                client.whatsapp = normalized_whatsapp
+                if not str(getattr(client, "phone", None) or "").strip():
+                    client.phone = normalized_whatsapp[:20]
+                consent_status = str(getattr(client, "whatsapp_marketing_consent", "unknown") or "unknown").strip().lower()
+                consent_is_documented = bool(
+                    consent_status == "opted_in"
+                    and getattr(client, "whatsapp_marketing_consent_recorded_at", None)
+                    and str(getattr(client, "whatsapp_marketing_consent_source", "") or "").strip()
+                    and str(getattr(client, "whatsapp_marketing_consent_evidence", "") or "").strip()
+                )
+                existing_pending = state.get("whatsapp_marketing_opt_in_pending")
+                if consent_status != "opted_out" and not consent_is_documented and not isinstance(existing_pending, dict):
+                    state["whatsapp_marketing_opt_in_pending"] = {
+                        "client_id": int(client.id),
+                        "requested_at": __import__("datetime").datetime.utcnow().isoformat(),
+                    }
+
         # Consume the marker only after the new quote is fully persisted. If
         # validation fails before this point, a retry must still create a new quote.
         state.pop(NEW_QUOTE_CONTEXT_KEY, None)

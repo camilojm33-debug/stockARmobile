@@ -1827,3 +1827,607 @@ def test_tenant_campaign_whatsapp_corrector_does_not_copy_phone_without_explicit
         assert client.whatsapp in (None, "")
         assert result["copied_from_phone"] == 0
         assert result["no_number"] == 1
+
+
+
+def test_selected_campaign_audience_is_limited_to_explicit_customer_ids(app):
+    from app import Client, Company, User, db
+    from services.ai_agent.tenant_campaign_service import _audience_query
+
+    with app.app_context():
+        company = Company(name="Selected Audience Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="selected-audience-admin",
+            email="selected-audience@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        clients = [
+            Client(name=f"Cliente {index}", whatsapp=f"54936240000{index:02d}", company_id=company.id, active=True)
+            for index in range(1, 4)
+        ]
+        db.session.add_all([user, *clients])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Selección manual",
+            objective="Enviar a destinatarios elegidos",
+            campaign_type="recuperacion_clientes_inactivos",
+            content="Hola",
+            system_data={
+                "audience_selection_mode": "selected",
+                "selected_client_ids": [clients[0].id, clients[2].id],
+            },
+            audience_segment="clientes inactivos",
+            audience_count=3,
+        )
+        db.session.flush()
+
+        assert {client.id for client in _audience_query(campaign).all()} == {
+            clients[0].id,
+            clients[2].id,
+        }
+
+        campaign.system_data_json = '{"audience_selection_mode":"selected","selected_client_ids":[]}'
+        db.session.flush()
+        assert _audience_query(campaign).count() == 0
+
+
+def test_campaign_price_is_resolved_for_each_customer_instead_of_using_retail_price(app, monkeypatch):
+    from decimal import Decimal
+    from app import Client, Company, Product, User, db
+    from services.ai_agent.tenant_campaign_service import _render_content
+
+    with app.app_context():
+        company = Company(name="Recipient Price Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="recipient-price-admin",
+            email="recipient-price@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        product = Product(
+            barcode="COCA-RECIPIENT-PRICE",
+            name="Coca",
+            price=Decimal("10000.00"),
+            active=True,
+            company_id=company.id,
+        )
+        retail = Client(
+            name="Cliente Minorista",
+            whatsapp="5493624000001",
+            customer_type="minorista",
+            company_id=company.id,
+            active=True,
+        )
+        wholesale = Client(
+            name="Cliente Mayorista",
+            whatsapp="5493624000002",
+            customer_type="mayorista",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add_all([user, product, retail, wholesale])
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Precio Coca",
+            objective="Informar precio por cliente",
+            campaign_type="promocion_producto",
+            content="Hola {{cliente}}, precio de Coca: {{precio}}.",
+            system_data={"pricing_quantity": 3},
+            audience_segment="clientes activos",
+            audience_count=2,
+            product_id=product.id,
+        )
+        db.session.flush()
+
+        def fake_resolve_product_price(*, company_id, product, quantity, client):
+            assert company_id == company.id
+            assert Decimal(str(quantity)) == Decimal("3")
+            if client.customer_type == "mayorista":
+                return {
+                    "price": Decimal("6000.00"),
+                    "source": "mayorista",
+                    "price_list_name": "Mayorista 3+",
+                    "reason": None,
+                }
+            return {
+                "price": Decimal("10000.00"),
+                "source": "minorista",
+                "price_list_name": None,
+                "reason": None,
+            }
+
+        monkeypatch.setattr(
+            "services.wholesale_pricing_service.resolve_product_price",
+            fake_resolve_product_price,
+        )
+
+        retail_copy = _render_content(campaign, retail)
+        wholesale_copy = _render_content(campaign, wholesale)
+        preview_copy = _render_content(campaign, retail, preview=True)
+
+        assert "precio personalizado según tu lista" in preview_copy
+        assert "$ 10.000" not in preview_copy
+        assert "precio minorista" in retail_copy.lower()
+        assert "precio mayorista" in wholesale_copy.lower()
+        assert "$ 10.000" in retail_copy
+        assert "$ 6.000" in wholesale_copy
+        assert "$ 10.000" not in wholesale_copy
+
+
+def test_campaign_does_not_fallback_to_retail_when_wholesale_price_is_unavailable(app, monkeypatch):
+    from decimal import Decimal
+    from app import Client, Company, Product, User, db
+    from services.ai_agent.tenant_campaign_service import _render_content
+
+    with app.app_context():
+        company = Company(name="No Retail Fallback Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="no-retail-fallback-admin",
+            email="no-retail-fallback@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        product = Product(
+            barcode="COCA-NO-RETAIL-FALLBACK",
+            name="Coca",
+            price=Decimal("10000.00"),
+            active=True,
+            company_id=company.id,
+        )
+        wholesale = Client(
+            name="Mayorista sin lista",
+            whatsapp="5493624000010",
+            customer_type="mayorista",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add_all([user, product, wholesale])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Precio Coca",
+            objective="Precio mayorista",
+            campaign_type="promocion_producto",
+            content="{{producto}} a {{precio}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+            product_id=product.id,
+        )
+        db.session.flush()
+
+        monkeypatch.setattr(
+            "services.wholesale_pricing_service.resolve_product_price",
+            lambda **kwargs: {
+                "price": Decimal("10000.00"),
+                "source": "minorista",
+                "price_list_name": None,
+                "reason": "mayorista_sin_lista",
+            },
+        )
+
+        with pytest.raises(ValueError, match="no tiene una lista mayorista asignada"):
+            _render_content(campaign, wholesale)
+
+
+def test_vendedor_ia_consent_parser_requires_an_explicit_yes_or_no():
+    from whatsapp_agent import _marketing_consent_answer
+
+    assert _marketing_consent_answer("Sí, acepto") == "opted_in"
+    assert _marketing_consent_answer("NO, gracias") == "opted_out"
+    assert _marketing_consent_answer("Quiero consultar el precio") is None
+    assert _marketing_consent_answer("Me interesa el producto") is None
+
+
+
+def test_campaign_recipient_picker_persists_selected_customers(app, monkeypatch):
+    from types import SimpleNamespace
+    from app import Client, Company, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Recipient Picker Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="recipient-picker-admin",
+            email="recipient-picker@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Cliente elegido",
+            whatsapp="5493625551000",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="unknown",
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Selector de destinatarios",
+            objective="Prueba de selección",
+            campaign_type="general",
+            content="Hola",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=1,
+        )
+        # Reproduce the original screen: campaign ended SIN_ENVIO without
+        # preparing any recipients, and must be safely reopenable.
+        campaign.status = "SIN_ENVIO"
+        campaign.target_count = 0
+        campaign.sent_count = 0
+        campaign.failed_count = 0
+        campaign.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.session.flush()
+
+        monkeypatch.setattr(ai_agents, "current_user", SimpleNamespace(company_id=company.id, id=user.id))
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+        monkeypatch.setattr(
+            ai_agents.CampaignService,
+            "_campaign",
+            staticmethod(lambda _company_id, _campaign_id: campaign),
+        )
+
+        route = ai_agents.campaign_update_recipients.__wrapped__
+        with app.test_request_context(
+            f"/campanas/{campaign.id}/destinatarios",
+            method="POST",
+            data={"action": "add", "client_ids": [str(client.id)]},
+        ):
+            route(campaign.id)
+
+        db.session.refresh(campaign)
+        stored = __import__("json").loads(campaign.system_data_json or "{}")
+        assert campaign.status == "BORRADOR"
+        assert campaign.finished_at is None
+        assert stored["audience_selection_mode"] == "selected"
+        assert stored["selected_client_ids"] == [client.id]
+
+def test_campaign_picker_adds_all_eligible_contacts_across_all_pages_and_honors_customer_type(app, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from app import Client, Company, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Bulk Recipient Picker Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="bulk-recipient-picker-admin",
+            email="bulk-recipient-picker@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        eligible_wholesale = [
+            Client(
+                name=f"Mayorista habilitado {index}",
+                whatsapp=f"54936255520{index:02d}",
+                customer_type="mayorista",
+                company_id=company.id,
+                active=True,
+                whatsapp_marketing_consent="opted_in",
+                **_consent_evidence(),
+            )
+            for index in range(1, 32)
+        ]
+        eligible_retail = Client(
+            name="Minorista habilitado",
+            whatsapp="5493625552099",
+            customer_type="minorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        opted_out_wholesale = Client(
+            name="Mayorista con baja",
+            whatsapp="5493625552098",
+            customer_type="mayorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_out",
+        )
+        db.session.add_all([user, *eligible_wholesale, eligible_retail, opted_out_wholesale])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Selección masiva por tipo",
+            objective="Seleccionar todos los mayoristas elegibles",
+            campaign_type="general",
+            content="Hola {{cliente}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=33,
+        )
+        db.session.flush()
+
+        monkeypatch.setattr(ai_agents, "current_user", SimpleNamespace(company_id=company.id, id=user.id))
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+        monkeypatch.setattr(
+            ai_agents.CampaignService,
+            "_campaign",
+            staticmethod(lambda _company_id, _campaign_id: campaign),
+        )
+
+        route = ai_agents.campaign_update_recipients.__wrapped__
+        with app.test_request_context(
+            f"/campanas/{campaign.id}/destinatarios",
+            method="POST",
+            data={
+                "action": "add_all_eligible",
+                "contact_search": "",
+                "contact_type": "mayorista",
+                "contact_state": "ready",
+                "contact_page": "1",
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        stored = json.loads(campaign.system_data_json or "{}")
+        assert stored["audience_selection_mode"] == "selected"
+        assert set(stored["selected_client_ids"]) == {
+            client.id for client in eligible_wholesale
+        }
+        assert eligible_retail.id not in stored["selected_client_ids"]
+        assert opted_out_wholesale.id not in stored["selected_client_ids"]
+
+def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(app, monkeypatch):
+    from decimal import Decimal
+    from app import Client, Company, Product, User, db
+
+    with app.app_context():
+        company = Company(name="Campaign Price Preflight Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="campaign-price-preflight-admin",
+            email="campaign-price-preflight@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        product = Product(
+            barcode="PRICE-PREFLIGHT-COCA",
+            name="Coca",
+            price=Decimal("10000.00"),
+            active=True,
+            company_id=company.id,
+        )
+        retail = Client(
+            name="Minorista habilitado",
+            whatsapp="5493624551001",
+            customer_type="minorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        wholesale = Client(
+            name="Mayorista sin tarifa",
+            whatsapp="5493624551002",
+            customer_type="mayorista",
+            company_id=company.id,
+            active=True,
+            whatsapp_marketing_consent="opted_in",
+            **_consent_evidence(),
+        )
+        db.session.add_all([user, product, retail, wholesale])
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Precio individual Coca",
+            objective="Precio por cliente",
+            campaign_type="promocion_producto",
+            content="{{producto}}: {{precio}}",
+            system_data={},
+            audience_segment="clientes activos",
+            audience_count=2,
+            product_id=product.id,
+        )
+        campaign.status = "APROBADA"
+        db.session.flush()
+
+        connection = {
+            "enabled": True,
+            "phone_number_id": "preflight-phone-id",
+            "business_account_id": "preflight-waba-id",
+            "access_token": "merchant-token",
+            "template_name": "approved_campaign",
+            "template_language": "es_AR",
+        }
+        monkeypatch.setattr(
+            "services.ai_agent.tenant_campaign_service.resolve_tenant_campaign_sender",
+            lambda *_args, **_kwargs: (SimpleNamespace(id=1, is_default=True), connection),
+        )
+
+        price_resolver_calls = []
+
+        def fake_resolve_price(*, company_id, product, quantity, client):
+            price_resolver_calls.append({
+                "client_name": client.name,
+                "customer_type": client.customer_type,
+            })
+            if client.customer_type == "mayorista":
+                return {
+                    "price": Decimal("10000.00"),
+                    "source": "minorista",
+                    "price_list_name": None,
+                    "reason": "mayorista_sin_lista",
+                }
+            return {
+                "price": Decimal("10000.00"),
+                "source": "minorista",
+                "price_list_name": None,
+                "reason": None,
+            }
+
+        monkeypatch.setattr(
+            "services.wholesale_pricing_service.resolve_product_price",
+            fake_resolve_price,
+        )
+
+        result = prepare_recipients(campaign.id, company_id=company.id)
+        db.session.refresh(campaign)
+        data = __import__("json").loads(campaign.system_data_json or "{}")
+        queued = TenantCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id,
+            channel="whatsapp",
+        ).all()
+
+        exclusion_detail = "; ".join(
+            f"{row.get('client_name')}: {row.get('reason')}"
+            for row in (data.get("pricing_exclusions") or [])
+        )
+        assert result["target_count"] == 1, (
+            f"result={result!r}; pricing_exclusions={exclusion_detail}; "
+            f"price_resolver_calls={price_resolver_calls!r}"
+        )
+        assert result["pricing_excluded"] == 1
+        assert [row.client_id for row in queued] == [retail.id]
+        # Retail pricing must not depend on wholesale plan/list resolution.
+        assert [call["customer_type"] for call in price_resolver_calls] == ["minorista", "mayorista"]
+        assert data["pricing_excluded_count"] == 1
+        assert data["pricing_exclusions"][0]["client_id"] == wholesale.id
+        assert "no tiene una lista mayorista asignada" in data["pricing_exclusions"][0]["reason"]
+
+
+
+def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, monkeypatch):
+    import json
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app import Company, User, db
+    import ai_agents
+
+    with app.app_context():
+        company = Company(name="Campaign Editor Regression Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="campaign-editor-regression-admin",
+            email="campaign-editor-regression@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Título original",
+            objective="Objetivo original",
+            campaign_type="promocion_producto",
+            content="Mensaje original",
+            system_data={
+                "channel": "whatsapp",
+                "audience_selection_mode": "selected",
+                "selected_client_ids": [41, 42],
+            },
+            audience_segment="clientes activos",
+            audience_count=2,
+        )
+        db.session.flush()
+
+        monkeypatch.setattr(
+            ai_agents,
+            "current_user",
+            SimpleNamespace(company_id=company.id, id=user.id),
+        )
+        monkeypatch.setattr(ai_agents, "_current_active_company", lambda: company)
+        monkeypatch.setattr(
+            ai_agents,
+            "can_use_ai_feature",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True, reason=""),
+        )
+
+        route = ai_agents.campaign_edit.__wrapped__
+        with app.test_request_context(
+            f"/agentes-ia/campanas/{campaign.id}/edit",
+            method="POST",
+            data={
+                "title": "Promo Coca noviembre",
+                "objective": "Reactivar mayoristas",
+                "content": "Hola {{cliente}}: {{producto}} a {{precio}}.",
+                "pricing_quantity": "3",
+                "scheduled_at_utc": "2026-11-20T18:30:00+00:00",
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        saved = json.loads(campaign.system_data_json or "{}")
+        assert campaign.title == "Promo Coca noviembre"
+        assert campaign.objective == "Reactivar mayoristas"
+        assert campaign.content == "Hola {{cliente}}: {{producto}} a {{precio}}."
+        assert campaign.channel == "whatsapp"
+        assert saved["pricing_quantity"] == "3"
+        assert saved["audience_selection_mode"] == "selected"
+        assert saved["selected_client_ids"] == [41, 42]
+        assert campaign.scheduled_at == datetime(2026, 11, 20, 18, 30)
+
+        with app.test_request_context(
+            f"/agentes-ia/campanas/{campaign.id}/edit",
+            method="POST",
+            data={
+                "title": "No debe guardarse",
+                "objective": "Cantidad incorrecta",
+                "content": "No sobrescribir",
+                "pricing_quantity": "0",
+            },
+        ):
+            response = route(campaign.id)
+            assert response.status_code in (301, 302)
+
+        db.session.refresh(campaign)
+        saved = json.loads(campaign.system_data_json or "{}")
+        assert campaign.title == "Promo Coca noviembre"
+        assert campaign.content == "Hola {{cliente}}: {{producto}} a {{precio}}."
+        assert saved["pricing_quantity"] == "3"

@@ -32,6 +32,15 @@ def test_campaign_creation_is_owned_by_marketing_agent_and_explains_the_flow():
     assert "Este texto lo redactó Marketing IA" in detail
     assert "Con WhatsApp y permiso registrado" in detail
     assert "No se enviará nada con el público en cero" in detail
+    assert "Etapa 1 de 4" in detail
+    assert "Etapa 2 de 4" in detail
+    assert "Etapa 3 de 4" in detail
+    assert "Etapa 4 de 4" in detail
+    assert "Agregar todos los habilitados del filtro" in detail
+    assert "campaign_contact_page_count" in wizard_route
+    assert "campaign_selected_page_count" in wizard_route
+    assert "campaign_selected_page_count" in detail
+    assert "def campaign_edit(campaign_id):" in wizard_route
 
 
 def test_campaign_approval_confirmation_names_merchant_owned_sender():
