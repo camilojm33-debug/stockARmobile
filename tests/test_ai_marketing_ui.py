@@ -64,7 +64,8 @@ def test_tenant_campaigns_can_be_deleted_from_list_and_detail_without_erasing_se
     assert "ai_agents.campaign_delete" in list_template
     assert "ai_agents.campaign_delete" in detail_template
     assert "Eliminar campaña" in detail_template
-    assert "value=\"{{ csrf_token() }}\"" not in list_template
+    assert 'name="csrf_token" value="{{ csrf_token() }}"' in list_template
+    assert 'name="csrf_token" value="{{ csrf_token() }}"' in detail_template
     assert '@bp.post("/campanas/<int:campaign_id>/delete")' in route_source
     delete_route = route_source.split(
         '@bp.post("/campanas/<int:campaign_id>/delete")', 1
