@@ -1466,7 +1466,7 @@ def campaign_detail(campaign_id):
         except ValueError as exc:
             template_preview = f"No se puede mostrar la vista previa: {exc}"
     campaign_sender_phone = str(sender_connection.get("display_phone_number") or "").strip()
-    from app import Client
+    from app import Client, Product
     from sqlalchemy import or_
 
     campaign_can_reopen_for_recipients = bool(
@@ -1553,9 +1553,15 @@ def campaign_detail(campaign_id):
     recipient_rows = TenantCampaignRecipient.query.filter_by(
         campaign_id=campaign.id, company_id=current_user.company_id
     ).order_by(TenantCampaignRecipient.id.asc()).limit(100).all()
+    campaign_products = (
+        Product.query.filter_by(company_id=current_user.company_id, active=True)
+        .order_by(Product.name.asc(), Product.id.asc())
+        .all()
+    )
     return render_template(
         "ai_agents/campaign_detail.html",
         campaign=campaign,
+        campaign_products=campaign_products,
         campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
         detected_audience_count=detected_audience_count,
         excluded_audience_count=excluded_audience_count,
@@ -2090,6 +2096,29 @@ def campaign_edit(campaign_id):
             campaign_data = {}
         if not isinstance(campaign_data, dict):
             campaign_data = {}
+
+        # Let the merchant attach the actual catalog product to an existing
+        # draft. Price variables are resolved against this product and each
+        # recipient's own retail/wholesale tariff at preflight time.
+        if "product_id" in request.form:
+            raw_product_id = str(request.form.get("product_id") or "").strip()
+            if not raw_product_id:
+                campaign.product_id = None
+            else:
+                try:
+                    selected_product_id = int(raw_product_id)
+                except (TypeError, ValueError):
+                    raise ValueError("Seleccioná un producto válido del catálogo.")
+                from app import Product
+
+                selected_product = Product.query.filter_by(
+                    id=selected_product_id,
+                    company_id=current_user.company_id,
+                    active=True,
+                ).first()
+                if selected_product is None:
+                    raise ValueError("El producto seleccionado no pertenece a este comercio o está inactivo.")
+                campaign.product_id = selected_product.id
 
         raw_quantity = str(request.form.get("pricing_quantity") or "").strip()
         if raw_quantity:
