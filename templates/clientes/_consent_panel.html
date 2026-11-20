@@ -33,6 +33,7 @@
     {% if not consent_readonly %}
     <form method="post" action="{{ url_for('clients.marketing_consent', client_id=client.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ url_for('crm.client_360', client_id=client.id) if request.endpoint == 'crm.client_360' else url_for('clients.edit', id=client.id) }}">
       <div class="row g-2 mb-3">
         <div class="col-md-4">
           <label class="form-label small fw-semibold" for="clientConsentSource">¿Cómo lo expresó?</label>
@@ -109,6 +110,7 @@
         {% elif not consent_readonly %}
           <form method="post" action="{{ url_for('clients.consent_link', client_id=client.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_to" value="{{ url_for('crm.client_360', client_id=client.id) if request.endpoint == 'crm.client_360' else url_for('clients.edit', id=client.id) }}">
             <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-link-45deg me-1"></i>Generar enlace para compartir</button>
           </form>
         {% else %}
