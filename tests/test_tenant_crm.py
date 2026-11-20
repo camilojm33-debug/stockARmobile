@@ -650,3 +650,136 @@ def test_tenant_client_profile_can_generate_consent_link_only_for_own_company(ap
     assert foreign_response.status_code == 404
     db.session.refresh(foreign_client)
     assert foreign_client.marketing_consent_token is None
+
+
+def test_tenant_quick_consent_registers_all_valid_channels_with_evidence_and_is_tenant_scoped(app):
+    from app import Client, Company, User, WhatsAppConsentEvent, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Comercio permisos rápidos", active=True)
+    other_company = Company(name="Comercio ajeno", active=True)
+    db.session.add_all([company, other_company])
+    db.session.flush()
+    user = User(
+        username="quick-consent-admin",
+        email="quick-consent-admin@example.test",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    user.set_password("test-password")
+    own_client = Client(
+        name="Cliente autorización rápida",
+        email="quick-consent@example.test",
+        phone="3625551200",
+        whatsapp="5493625551200",
+        company_id=company.id,
+        active=True,
+    )
+    foreign_client = Client(
+        name="Cliente de otro comercio",
+        email="foreign-quick-consent@example.test",
+        whatsapp="5493625551201",
+        company_id=other_company.id,
+        active=True,
+    )
+    db.session.add_all([user, own_client, foreign_client])
+    db.session.commit()
+    own_client_id = own_client.id
+    foreign_client_id = foreign_client.id
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+
+    profile = http.get(f"/clientes/edit/{own_client_id}")
+    assert profile.status_code == 200
+    assert b"Permisos comerciales" in profile.data
+    assert b"Autorizar todos los disponibles" in profile.data
+
+    missing_evidence = http.post(
+        f"/clientes/{own_client_id}/marketing-consent",
+        data={"action": "accept_all", "source": "in_person"},
+    )
+    assert missing_evidence.status_code == 302
+    db.session.expire_all()
+    assert db.session.get(Client, own_client_id).email_marketing_consent == "unknown"
+
+    saved = http.post(
+        f"/clientes/{own_client_id}/marketing-consent",
+        data={
+            "action": "accept_all",
+            "source": "in_person",
+            "evidence": "El cliente autorizó verbalmente en el mostrador el 20/11/2026.",
+        },
+    )
+    assert saved.status_code == 302
+    db.session.expire_all()
+    stored = db.session.get(Client, own_client_id)
+    assert stored.email_marketing_consent == "opted_in"
+    assert stored.whatsapp_marketing_consent == "opted_in"
+    assert stored.phone_marketing_consent == "opted_in"
+    assert stored.email_marketing_consent_recorded_at is not None
+    assert stored.email_marketing_consent_source == "in_person"
+    assert "autorizó verbalmente" in stored.email_marketing_consent_evidence
+    assert stored.phone_marketing_consent_recorded_at is not None
+    assert stored.phone_marketing_consent_source == "in_person"
+    event = WhatsAppConsentEvent.query.filter_by(
+        company_id=company.id,
+        client_id=own_client_id,
+        new_status="opted_in",
+    ).one()
+    assert event.source == "in_person"
+    assert "autorizó verbalmente" in event.evidence
+
+    foreign = http.post(
+        f"/clientes/{foreign_client_id}/marketing-consent",
+        data={
+            "action": "accept_all",
+            "source": "in_person",
+            "evidence": "El cliente autorizó verbalmente.",
+        },
+    )
+    assert foreign.status_code == 404
+    db.session.expire_all()
+    assert db.session.get(Client, foreign_client_id).email_marketing_consent == "unknown"
+
+
+def test_tenant_public_consent_accept_all_shortcut_authorizes_only_available_channels(app):
+    from app import Client, Company, db
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(name="Comercio aceptar todos", active=True)
+    db.session.add(company)
+    db.session.flush()
+    client_record = Client(
+        name="Cliente aceptar todos",
+        email="accept-all@example.test",
+        phone="3625551300",
+        whatsapp="5493625551300",
+        company_id=company.id,
+        active=True,
+        marketing_consent_token="tenant-consent-accept-all",
+    )
+    db.session.add(client_record)
+    db.session.commit()
+    client_id = client_record.id
+
+    http = app.test_client()
+    page = http.get("/crm/consent/tenant-consent-accept-all")
+    assert page.status_code == 200
+    assert b"Aceptar todos" in page.data
+
+    response = http.post(
+        "/crm/consent/tenant-consent-accept-all",
+        data={"action": "accept_all"},
+    )
+    assert response.status_code == 200
+    assert b"Preferencias guardadas" in response.data
+
+    db.session.expire_all()
+    stored = db.session.get(Client, client_id)
+    assert stored.email_marketing_consent == "opted_in"
+    assert stored.whatsapp_marketing_consent == "opted_in"
+    assert stored.phone_marketing_consent == "opted_in"
+    assert stored.email_marketing_consent_recorded_at is not None
+    assert stored.phone_marketing_consent_recorded_at is not None
