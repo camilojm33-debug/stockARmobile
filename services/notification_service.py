@@ -203,22 +203,127 @@ def _current_notification_state(items):
     return state, signature, read_keys
 
 
-def get_notification_payload():
-    """Return unread notifications for the current user."""
-    items = _notification_items_with_keys(build_notifications())
-    if not getattr(current_user, "is_authenticated", False):
-        return {"items": [], "count": 0, "signature": None}
+def _notification_category(item):
+    explicit = str(item.get("category") or "").strip().lower()
+    if explicit in {"sales", "inventory", "payments", "orders", "system", "support", "commercial", "general"}:
+        return explicit
+    text = " ".join(str(item.get(field) or "") for field in ("title", "body", "href")).lower()
+    if any(term in text for term in ("stock", "inventario", "producto")):
+        return "inventory"
+    if any(term in text for term in ("pago", "factura", "suscrip", "cobro", "proveedor")):
+        return "payments"
+    if any(term in text for term in ("pedido", "presupuesto", "venta")):
+        return "orders"
+    if any(term in text for term in ("backup", "webhook", "error", "incidencia", "sistema")):
+        return "system"
+    if any(term in text for term in ("ticket", "soporte")):
+        return "support"
+    return "general"
 
-    state, signature, read_keys = _current_notification_state(items)
-    unread_items = [
-        item for item in items
-        if item["notification_key"] not in read_keys
-    ]
+
+def _notification_priority(item):
+    explicit = str(item.get("priority") or "").strip().lower()
+    if explicit in {"critical", "high", "normal", "low"}:
+        return explicit
+    kind = str(item.get("type") or "").lower()
+    return "critical" if kind == "danger" else "high" if kind == "warning" else "normal"
+
+
+def _persist_notifications(items):
+    """Upsert visible notifications in the signed-in user's current tenant context."""
+    from app import NotificationEvent, db, utcnow
+
+    user_id = int(current_user.id)
+    company_id = getattr(current_user, "company_id", None)
+    now = utcnow()
+    rows = []
+    for item in items:
+        key = str(item.get("notification_key") or _notification_key(item)).strip()[:128]
+        if not key:
+            continue
+        row = NotificationEvent.query.filter_by(user_id=user_id, notification_key=key).first()
+        if row is None:
+            row = NotificationEvent(
+                user_id=user_id,
+                company_id=company_id,
+                notification_key=key,
+                category=_notification_category(item),
+                priority=_notification_priority(item),
+                title=str(item.get("title") or "Notificación")[:180],
+                body=str(item.get("body") or ""),
+                href=str(item.get("href") or "/")[:700],
+                source_type=str(item.get("source_type") or "")[:80] or None,
+                source_id=str(item.get("source_id") or "")[:120] or None,
+                created_at=now,
+                updated_at=now,
+            )
+            db.session.add(row)
+        else:
+            # Refresh the rendered details without resetting read/resolved state.
+            row.company_id = company_id
+            row.category = _notification_category(item)
+            row.priority = _notification_priority(item)
+            row.title = str(item.get("title") or "Notificación")[:180]
+            row.body = str(item.get("body") or "")
+            row.href = str(item.get("href") or "/")[:700]
+            row.updated_at = now
+        rows.append(row)
+    if rows:
+        db.session.commit()
+    return rows
+
+
+def _event_to_payload(row):
     return {
-        "items": unread_items,
-        "count": len(unread_items),
-        "signature": signature,
+        "id": row.id,
+        "notification_key": row.notification_key,
+        "type": "danger" if row.priority == "critical" else "warning" if row.priority == "high" else "info",
+        "category": row.category,
+        "priority": row.priority,
+        "title": row.title,
+        "body": row.body,
+        "href": row.href,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "read": bool(row.read_at),
+        "read_at": row.read_at.isoformat() if row.read_at else None,
+        "resolved": bool(row.resolved_at),
+        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        "archived": bool(row.archived_at),
     }
+
+
+def get_notification_payload(view="unread"):
+    """Return persisted notifications plus unread count for the current account."""
+    if not getattr(current_user, "is_authenticated", False):
+        return {"items": [], "count": 0, "signature": None, "unread_count": 0}
+
+    current_items = _notification_items_with_keys(build_notifications())
+    try:
+        _persist_notifications(current_items)
+        from app import NotificationEvent
+        query = NotificationEvent.query.filter_by(user_id=current_user.id)
+        if view == "unread":
+            query = query.filter(NotificationEvent.read_at.is_(None), NotificationEvent.archived_at.is_(None), NotificationEvent.resolved_at.is_(None))
+        elif view == "alerts":
+            query = query.filter(NotificationEvent.priority.in_(["critical", "high"]), NotificationEvent.archived_at.is_(None))
+        elif view == "tasks":
+            query = query.filter(NotificationEvent.resolved_at.is_(None), NotificationEvent.archived_at.is_(None))
+        else:
+            query = query.filter(NotificationEvent.archived_at.is_(None))
+        rows = query.order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc()).limit(100).all()
+        unread_count = NotificationEvent.query.filter_by(user_id=current_user.id).filter(
+            NotificationEvent.read_at.is_(None),
+            NotificationEvent.archived_at.is_(None),
+            NotificationEvent.resolved_at.is_(None),
+        ).count()
+        signature = _signature_for_items(current_items)
+        items = [_event_to_payload(row) for row in rows]
+        return {"items": items, "count": unread_count, "unread_count": unread_count, "signature": signature}
+    except (OperationalError, ProgrammingError):
+        # Backward-compatible fallback during deployment/migration.
+        state, signature, read_keys = _current_notification_state(current_items)
+        unread = [item for item in current_items if item["notification_key"] not in read_keys]
+        return {"items": unread, "count": len(unread), "unread_count": len(unread), "signature": signature}
 
 
 def mark_notification_read(notification_key):
