@@ -59,17 +59,17 @@ class NotificationService:
                 ]
                 href = "/admin/portal"
                 stable_event = event_id or f"{source}:{event}:{payment_id or subscription_id or invoice_id or 'system'}:{status or ''}"
-                with db_session.begin_nested():
+                                with db_session.begin_nested():
                     record_notification_event(
                         db_session,
-                    event_key=stable_event,
-                    title="Incidencia de pago" if normalized_status in {"failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"} else "Incidencia de billing",
-                    body=str(detail or event)[:1500],
-                    href=href,
-                    category="payments",
-                    priority="high",
-                    company_id=int(company_id),
-                    recipient_user_ids=recipients,
+                        event_key=stable_event,
+                        title="Incidencia de pago" if normalized_status in {"failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"} else "Incidencia de billing",
+                        body=str(detail or event)[:1500],
+                        href=href,
+                        category="payments",
+                        priority="high",
+                        company_id=int(company_id),
+                        recipient_user_ids=recipients,
                         source_type=source,
                         source_id=str(payment_id or subscription_id or invoice_id or event_id or ""),
                     )
