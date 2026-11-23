@@ -118,8 +118,14 @@
         <div>Fecha y hora: {{ quote.delivery.picked_up_at_local or '—' }}</div>
         {% if quote.delivery.picked_up_by %}<div>Entregado por: {{ quote.delivery.picked_up_by.name or quote.delivery.picked_up_by.username }}</div>{% endif %}
       </div>
+      {% elif quote.delivery.pickup_status == 'partial' %}
+      <div class="alert alert-info mb-0">
+        <div class="fw-bold">Retiro parcial</div>
+        <div>Retirado: {{ "%.3g"|format(pickup_summary.picked_quantity) }} de {{ "%.3g"|format(pickup_summary.total_quantity) }} unidades · Pendiente: {{ "%.3g"|format(pickup_summary.remaining_quantity) }}</div>
+        <div class="small mt-1">Registrá cada cantidad desde la columna Retiro de los productos.</div>
+      </div>
       {% elif quote.delivery.pickup_status == 'pending' and (quote.status == 'CONVERTIDO' or quote.converted_sale_id) %}
-      <div class="alert alert-warning mb-0"><div class="fw-bold">Listo para retirar</div><div class="small">La venta está confirmada; falta registrar la entrega física desde Pedidos IA.</div></div>
+      <div class="alert alert-warning mb-0"><div class="fw-bold">Listo para retirar</div><div class="small">La venta está confirmada; podés registrar cantidades por producto desde esta misma ficha o desde Pedidos IA.</div></div>
       {% elif quote.delivery.pickup_status == 'pending' %}
       <div class="alert alert-light border mb-0"><div class="fw-bold">Retiro pendiente de confirmación comercial</div><div class="small">No se habilita el registro físico hasta confirmar la venta por el flujo habitual.</div></div>
       {% else %}
