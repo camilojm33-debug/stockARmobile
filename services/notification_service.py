@@ -203,92 +203,302 @@ def _current_notification_state(items):
     return state, signature, read_keys
 
 
-def get_notification_payload():
-    """Return unread notifications for the current user."""
-    items = _notification_items_with_keys(build_notifications())
-    if not getattr(current_user, "is_authenticated", False):
-        return {"items": [], "count": 0, "signature": None}
+def record_notification_event(
+    db_session,
+    *,
+    event_key,
+    title,
+    body,
+    href,
+    category="general",
+    priority="normal",
+    company_id=None,
+    recipient_user_ids=None,
+    source_type="event",
+    source_id=None,
+):
+    """Create an idempotent notification for explicit business/system events.
 
-    state, signature, read_keys = _current_notification_state(items)
-    unread_items = [
-        item for item in items
-        if item["notification_key"] not in read_keys
-    ]
-    return {
-        "items": unread_items,
-        "count": len(unread_items),
-        "signature": signature,
+    Caller owns the transaction: this helper adds rows but never commits.
+    Recipient IDs are resolved by the event producer to enforce its audience.
+    """
+    from app import NotificationEvent, utcnow
+
+    recipients = sorted({int(value) for value in (recipient_user_ids or []) if value})
+    if not recipients:
+        return 0
+    source_key = str(event_key or "").strip()
+    if not source_key:
+        raise ValueError("event_key is required for idempotent notifications")
+    now = utcnow()
+    inserted = 0
+    for user_id in recipients:
+        key = sha256(f"event:{company_id or 0}:{user_id}:{source_key}".encode("utf-8")).hexdigest()
+        row = db_session.query(NotificationEvent).filter_by(user_id=user_id, notification_key=key).first()
+        if row is None:
+            db_session.add(NotificationEvent(
+                user_id=user_id,
+                company_id=company_id,
+                notification_key=key,
+                category=str(category or "general")[:40],
+                priority=str(priority or "normal")[:20],
+                title=str(title or "Notificación")[:180],
+                body=str(body or ""),
+                href=str(href or "/")[:700],
+                source_type=str(source_type or "event")[:80],
+                source_id=str(source_id or source_key)[:120],
+                created_at=now,
+                updated_at=now,
+            ))
+            inserted += 1
+    return inserted
+
+
+def _notification_category(item):
+    explicit = str(item.get("category") or "").strip().lower()
+    if explicit in {"sales", "inventory", "payments", "orders", "system", "support", "commercial", "general"}:
+        return explicit
+    text = " ".join(str(item.get(field) or "") for field in ("title", "body", "href")).lower()
+    if any(term in text for term in ("stock", "inventario", "producto")):
+        return "inventory"
+    if any(term in text for term in ("pago", "factura", "suscrip", "cobro", "proveedor")):
+        return "payments"
+    if any(term in text for term in ("pedido", "presupuesto", "venta")):
+        return "orders"
+    if any(term in text for term in ("backup", "webhook", "error", "incidencia", "sistema")):
+        return "system"
+    if any(term in text for term in ("ticket", "soporte")):
+        return "support"
+    return "general"
+
+
+def _notification_priority(item):
+    explicit = str(item.get("priority") or "").strip().lower()
+    if explicit in {"critical", "high", "normal", "low"}:
+        return explicit
+    kind = str(item.get("type") or "").lower()
+    return "critical" if kind == "danger" else "high" if kind == "warning" else "normal"
+
+
+def _persist_notifications(items):
+    """Upsert visible notifications in the signed-in user's current tenant context."""
+    from app import NotificationEvent, db, utcnow
+
+    user_id = int(current_user.id)
+    company_id = getattr(current_user, "company_id", None)
+    now = utcnow()
+    rows = []
+    for item in items:
+        source_key = str(item.get("notification_key") or _notification_key(item)).strip()
+        if not source_key:
+            continue
+        key = sha256(f"{user_id}:{company_id or 0}:{source_key}".encode("utf-8")).hexdigest()
+        source_type = str(item.get("source_type") or "snapshot")[:80] or None
+        source_id = str(item.get("source_id") or "")[:120] or None
+        if source_type == "ai_order" and source_id:
+            NotificationEvent.query.filter_by(
+                user_id=user_id,
+                company_id=company_id,
+                source_type="ai_order",
+                source_id=source_id,
+                resolved_at=None,
+                archived_at=None,
+            ).filter(NotificationEvent.notification_key != key).update(
+                {"resolved_at": now, "read_at": now, "updated_at": now},
+                synchronize_session=False,
+            )
+        row = NotificationEvent.query.filter_by(user_id=user_id, notification_key=key).first()
+        if row is None:
+            row = NotificationEvent(
+                user_id=user_id,
+                company_id=company_id,
+                notification_key=key,
+                category=_notification_category(item),
+                priority=_notification_priority(item),
+                title=str(item.get("title") or "Notificación")[:180],
+                body=str(item.get("body") or ""),
+                href=str(item.get("href") or "/")[:700],
+                source_type=source_type,
+                source_id=source_id,
+                created_at=now,
+                updated_at=now,
+            )
+            db.session.add(row)
+        else:
+            # Refresh the rendered details without resetting read/resolved state.
+            row.company_id = company_id
+            row.category = _notification_category(item)
+            row.priority = _notification_priority(item)
+            row.title = str(item.get("title") or "Notificación")[:180]
+            row.body = str(item.get("body") or "")
+            row.href = str(item.get("href") or "/")[:700]
+            row.updated_at = now
+        rows.append(row)
+    # Snapshot-style counters and threshold alerts should not remain active
+    # forever after the underlying condition disappears. Preserve them in the
+    # audit/history table but archive their active state when absent.
+    active_snapshot_keys = {
+        sha256(f"{user_id}:{company_id or 0}:{str(item.get('notification_key') or _notification_key(item)).strip()}".encode("utf-8")).hexdigest()
+        for item in items
     }
+    stale_snapshots = NotificationEvent.query.filter_by(
+        user_id=user_id,
+        company_id=company_id,
+        source_type="snapshot",
+        archived_at=None,
+    )
+    if active_snapshot_keys:
+        stale_snapshots = stale_snapshots.filter(NotificationEvent.notification_key.notin_(active_snapshot_keys))
+    now = utcnow()
+    stale_snapshots.update({"archived_at": now, "read_at": now, "updated_at": now}, synchronize_session=False)
+    if rows or active_snapshot_keys:
+        db.session.commit()
+    return rows
+
+
+def _current_user_notification_query():
+    from app import NotificationEvent
+    query = NotificationEvent.query.filter_by(user_id=current_user.id)
+    if getattr(current_user, "role", None) == "superadmin":
+        return query.filter(NotificationEvent.company_id.is_(None))
+    company_id = getattr(current_user, "company_id", None)
+    if company_id:
+        return query.filter(NotificationEvent.company_id == int(company_id))
+    return query.filter(NotificationEvent.company_id.is_(None))
+
+
+def _event_to_payload(row):
+    return {
+        "id": row.id,
+        "notification_key": row.notification_key,
+        "type": "danger" if row.priority == "critical" else "warning" if row.priority == "high" else "info",
+        "category": row.category,
+        "priority": row.priority,
+        "title": row.title,
+        "body": row.body,
+        "href": row.href,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "read": bool(row.read_at),
+        "read_at": row.read_at.isoformat() if row.read_at else None,
+        "resolved": bool(row.resolved_at),
+        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        "archived": bool(row.archived_at),
+    }
+
+
+def get_notification_payload(view="unread", persist=False):
+    """Return persisted notifications plus unread count for the current account."""
+    if not getattr(current_user, "is_authenticated", False):
+        return {"items": [], "count": 0, "signature": None, "unread_count": 0}
+
+    current_items = _notification_items_with_keys(build_notifications())
+    if not persist:
+        state, signature, read_keys = _current_notification_state(current_items)
+        unread_items = [item for item in current_items if item["notification_key"] not in read_keys]
+        return {"items": unread_items, "count": len(unread_items), "unread_count": len(unread_items), "signature": signature}
+    try:
+        _persist_notifications(current_items)
+        from app import NotificationEvent
+        query = _current_user_notification_query()
+        if view == "unread":
+            query = query.filter(NotificationEvent.read_at.is_(None), NotificationEvent.archived_at.is_(None), NotificationEvent.resolved_at.is_(None))
+        elif view == "alerts":
+            query = query.filter(NotificationEvent.priority.in_(["critical", "high"]), NotificationEvent.archived_at.is_(None))
+        elif view == "tasks":
+            query = query.filter(NotificationEvent.resolved_at.is_(None), NotificationEvent.archived_at.is_(None))
+        elif view != "all":
+            query = query.filter(NotificationEvent.archived_at.is_(None))
+        rows = query.order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc()).limit(100).all()
+        if view == "unread" and rows:
+            company_context = getattr(current_user, "company_id", None) or 0
+            ordered_keys = [
+                sha256(f"{int(current_user.id)}:{company_context}:{item['notification_key']}".encode("utf-8")).hexdigest()
+                for item in current_items
+            ]
+            order_map = {key: index for index, key in enumerate(ordered_keys)}
+            rows.sort(key=lambda row: order_map.get(row.notification_key, len(order_map) + row.id))
+        unread_count = _current_user_notification_query().filter(
+            NotificationEvent.read_at.is_(None),
+            NotificationEvent.archived_at.is_(None),
+            NotificationEvent.resolved_at.is_(None),
+        ).count()
+        signature = _signature_for_items(current_items)
+        items = [_event_to_payload(row) for row in rows]
+        return {"items": items, "count": unread_count, "unread_count": unread_count, "signature": signature}
+    except (OperationalError, ProgrammingError):
+        # Backward-compatible fallback during deployment/migration.
+        state, signature, read_keys = _current_notification_state(current_items)
+        unread = [item for item in current_items if item["notification_key"] not in read_keys]
+        return {"items": unread, "count": len(unread), "unread_count": len(unread), "signature": signature}
+
+
+def _owned_notification(notification_key):
+    query = _current_user_notification_query()
+    return query.filter_by(notification_key=str(notification_key or "").strip()).first()
 
 
 def mark_notification_read(notification_key):
-    """Persist one visible notification as read and return remaining unread count."""
+    """Mark one persisted notification as read, scoped to the signed-in user."""
     if not getattr(current_user, "is_authenticated", False):
         return {"ok": False, "count": 0}
-
-    from app import NotificationReadState, db, utcnow
-
-    requested_key = str(notification_key or "").strip()
-    if not requested_key or len(requested_key) > 128:
+    from app import NotificationEvent, db, utcnow
+    requested = str(notification_key or "").strip()
+    if not requested or len(requested) > 128:
         return {"ok": False, "count": 0}
-
-    items = _notification_items_with_keys(build_notifications())
-    visible_keys = {item["notification_key"] for item in items}
-    if requested_key not in visible_keys:
-        # Do not accept arbitrary keys: a user can only mark a notification
-        # that belongs to their current, already permission-filtered stream.
-        unread_count = len(items)
-        try:
-            state, signature, read_keys = _current_notification_state(items)
-            unread_count = sum(1 for item in items if item["notification_key"] not in read_keys)
-        except Exception:
-            pass
-        return {"ok": False, "count": unread_count}
-
-    state, signature, read_keys = _current_notification_state(items)
-    read_keys.add(requested_key)
+    row = _owned_notification(requested)
+    if row is None:
+        # First request may arrive before the notification snapshot was persisted.
+        get_notification_payload(persist=True)
+        row = _owned_notification(requested)
+    if row is None:
+        return {"ok": False, "count": 0}
     now = utcnow()
-    if state is None:
-        state = NotificationReadState(
-            user_id=current_user.id,
-            last_seen_signature=signature,
-            last_seen_at=now,
-        )
-        db.session.add(state)
-    state.last_seen_signature = signature
-    _save_read_notification_keys(state, list(read_keys), now)
+    row.read_at = row.read_at or now
+    row.updated_at = now
     db.session.commit()
+    count = _current_user_notification_query().filter(
+        NotificationEvent.read_at.is_(None),
+        NotificationEvent.archived_at.is_(None),
+        NotificationEvent.resolved_at.is_(None),
+    ).count()
+    return {"ok": True, "count": count, "notification_key": requested}
 
-    unread_count = sum(1 for item in items if item["notification_key"] not in read_keys)
-    return {
-        "ok": True,
-        "count": unread_count,
-        "signature": signature,
-        "notification_key": requested_key,
-    }
+
+def mark_all_notifications_read():
+    if not getattr(current_user, "is_authenticated", False):
+        return {"ok": False, "count": 0}
+    from app import NotificationEvent, db, utcnow
+    now = utcnow()
+    _current_user_notification_query().filter(
+        NotificationEvent.read_at.is_(None),
+        NotificationEvent.archived_at.is_(None),
+    ).update({"read_at": now, "updated_at": now}, synchronize_session=False)
+    db.session.commit()
+    return {"ok": True, "count": 0}
+
+
+def update_notification_state(notification_key, action):
+    """Resolve or archive a notification owned by the authenticated user."""
+    if not getattr(current_user, "is_authenticated", False):
+        return {"ok": False, "error": "authentication_required"}
+    from app import db, utcnow
+    row = _owned_notification(notification_key)
+    if row is None:
+        return {"ok": False, "error": "notification_not_found"}
+    now = utcnow()
+    if action == "resolve":
+        row.resolved_at = row.resolved_at or now
+        row.read_at = row.read_at or now
+    elif action == "archive":
+        row.archived_at = row.archived_at or now
+        row.read_at = row.read_at or now
+    else:
+        return {"ok": False, "error": "invalid_action"}
+    row.updated_at = now
+    db.session.commit()
+    return {"ok": True, "notification_key": row.notification_key}
 
 
 def mark_notifications_seen():
-    """Compatibility endpoint: mark the current notification stream as read."""
-    if not getattr(current_user, "is_authenticated", False):
-        return {"ok": False, "count": 0}
-
-    from app import NotificationReadState, db, utcnow
-
-    items = _notification_items_with_keys(build_notifications())
-    signature = _signature_for_items(items)
-    state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
-    now = utcnow()
-    read_keys = set(_load_read_notification_keys(state))
-    read_keys.update(item["notification_key"] for item in items)
-    if state is None:
-        state = NotificationReadState(
-            user_id=current_user.id,
-            last_seen_signature=signature,
-            last_seen_at=now,
-        )
-        db.session.add(state)
-    state.last_seen_signature = signature
-    _save_read_notification_keys(state, list(read_keys), now)
-    db.session.commit()
-    return {"ok": True, "count": 0, "signature": signature}
+    """Backward-compatible alias for marking the current notification scope as read."""
+    return mark_all_notifications_read()

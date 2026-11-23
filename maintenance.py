@@ -107,6 +107,28 @@ def run_backup_maintenance():
                 company.id,
                 exc,
             )
+            try:
+                from app import User
+                from services.notification_service import record_notification_event
+                operators = [row.id for row in db.session.query(User.id).filter(User.role == "superadmin", User.active.is_(True)).all()]
+                with db.session.begin_nested():
+                    record_notification_event(
+                        db.session,
+                        event_key=f"backup-failed:{company.id}:{today.isoformat()}",
+                        title="Backup de comercio fallido",
+                        body=f"Falló el respaldo automático del comercio #{company.id}. Revisá el log operativo.",
+                        href="/superadmin",
+                        category="system",
+                        priority="critical",
+                        company_id=None,
+                        recipient_user_ids=operators,
+                        source_type="backup",
+                        source_id=str(company.id),
+                    )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Could not persist Superadmin backup notification company_id=%s", company.id)
             results.append(
                 {
                     "company_id": company.id,

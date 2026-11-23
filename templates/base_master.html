@@ -996,19 +996,37 @@
   </div>
   {% if current_user.is_authenticated %}
   <button class="btn btn-primary rounded-circle position-fixed d-lg-none" style="right:16px;bottom:18px;width:56px;height:56px;z-index:1010" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" aria-label="Buscar"><i class="bi bi-search"></i></button>
-  <div class="offcanvas offcanvas-end" tabindex="-1" id="notificationCenter">
-    <div class="offcanvas-header">
-      <h5 class="offcanvas-title">Notificaciones</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="notificationCenter" data-notification-view="unread">
+    <div class="offcanvas-header border-bottom">
+      <div>
+        <h5 class="offcanvas-title mb-1">Centro de notificaciones</h5>
+        <div class="small text-muted"><span id="notificationUnreadCount">{{ notification_count }}</span> sin leer</div>
+      </div>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
     </div>
-    <div class="offcanvas-body">
+    <div class="px-3 pt-3">
+      <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Filtrar notificaciones">
+        <button type="button" class="btn btn-outline-primary js-notification-view active" data-view="unread">No leídas</button>
+        <button type="button" class="btn btn-outline-primary js-notification-view" data-view="all">Todas</button>
+        <button type="button" class="btn btn-outline-primary js-notification-view" data-view="alerts">Alertas</button>
+        <button type="button" class="btn btn-outline-primary js-notification-view" data-view="tasks">Tareas</button>
+      </div>
+      <button type="button" class="btn btn-sm btn-link px-0 js-notification-mark-all">Marcar todas como leídas</button>
+    </div>
+    <div class="offcanvas-body pt-2" id="notificationList">
       {% for item in notification_items %}
-      <a class="d-block text-decoration-none text-reset border rounded-3 p-3 mb-2 js-notification-item" href="{{ item.href }}" data-notification-key="{{ item.notification_key }}">
-        <span class="badge text-bg-{{ item.type }} mb-2">{{ item.title }}</span>
-        <div class="small text-muted">{{ item.body }}</div>
-      </a>
+      <div class="border rounded-3 p-3 mb-2 js-notification-card" data-category="{{ item.category or 'general' }}" data-priority="{{ item.priority or 'normal' }}">
+        <a class="d-block text-decoration-none text-reset js-notification-item" href="{{ item.href }}" data-notification-key="{{ item.notification_key }}">
+          <span class="badge text-bg-{{ item.type }} mb-2">{{ item.title }}</span>
+          <div class="small text-muted">{{ item.body }}</div>
+        </a>
+        <div class="d-flex gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-outline-success js-notification-action" data-action="resolve" data-key="{{ item.notification_key }}">Resolver</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary js-notification-action" data-action="archive" data-key="{{ item.notification_key }}">Archivar</button>
+        </div>
+      </div>
       {% else %}
-      <div class="empty-state">Sin alertas importantes.</div>
+      <div class="empty-state">No hay notificaciones pendientes.</div>
       {% endfor %}
     </div>
   </div>
@@ -1102,59 +1120,137 @@
         bootstrap.Toast.getOrCreateInstance(toastEl).show();
       });
       const notificationCenter = document.getElementById('notificationCenter');
+      const notificationList = document.getElementById('notificationList');
+      let notificationView = 'unread';
+      let notificationRefreshBusy = false;
       function updateNotificationBadges(count) {
         const normalizedCount = Number.isFinite(Number(count)) ? Number(count) : 0;
         document.querySelectorAll('.js-notification-badge').forEach(function(el) {
-          if (normalizedCount <= 0) {
-            el.remove();
-          } else {
-            el.textContent = normalizedCount;
-          }
+          if (normalizedCount <= 0) el.remove();
+          else el.textContent = normalizedCount;
+        });
+        const countLabel = document.getElementById('notificationUnreadCount');
+        if (countLabel) countLabel.textContent = normalizedCount;
+      }
+      function renderNotificationItems(items) {
+        if (!notificationList) return;
+        notificationList.replaceChildren();
+        if (!items || !items.length) {
+          const empty = document.createElement('div');
+          empty.className = 'empty-state';
+          empty.textContent = notificationView === 'unread' ? 'No hay notificaciones pendientes.' : 'No hay notificaciones para este filtro.';
+          notificationList.appendChild(empty);
+          return;
+        }
+        items.forEach(function(item) {
+          const card = document.createElement('div');
+          card.className = 'border rounded-3 p-3 mb-2 js-notification-card';
+          card.dataset.category = item.category || 'general';
+          card.dataset.priority = item.priority || 'normal';
+          if (item.read) card.classList.add('opacity-75');
+          const link = document.createElement('a');
+          link.className = 'd-block text-decoration-none text-reset js-notification-item';
+          link.href = item.href || '#';
+          link.dataset.notificationKey = item.notification_key || '';
+          const badge = document.createElement('span');
+          badge.className = 'badge mb-2 text-bg-' + (item.type || 'secondary');
+          badge.textContent = item.title || 'Notificación';
+          const body = document.createElement('div');
+          body.className = 'small text-muted';
+          body.textContent = item.body || '';
+          link.append(badge, body);
+          card.appendChild(link);
+          const statusText = item.archived ? 'Archivada' : item.resolved ? 'Resuelta' : item.read ? 'Leída' : 'Sin leer';
+          const status = document.createElement('div');
+          status.className = 'small text-muted mt-2';
+          status.textContent = statusText + (item.created_at ? ' · ' + new Date(item.created_at).toLocaleString() : '');
+          card.appendChild(status);
+          const actions = document.createElement('div');
+          actions.className = 'd-flex gap-2 mt-2';
+          ['resolve', 'archive'].forEach(function(action) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-sm ' + (action === 'resolve' ? 'btn-outline-success' : 'btn-outline-secondary') + ' js-notification-action';
+            button.dataset.action = action;
+            button.dataset.key = item.notification_key || '';
+            button.textContent = action === 'resolve' ? 'Resolver' : 'Archivar';
+            actions.appendChild(button);
+          });
+          card.appendChild(actions);
+          notificationList.appendChild(card);
         });
       }
+      function refreshNotifications(view) {
+        if (notificationRefreshBusy) return Promise.resolve();
+        notificationRefreshBusy = true;
+        const selectedView = view || notificationView;
+        return fetch('/api/notifications?view=' + encodeURIComponent(selectedView), {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+          .then(function(response) { if (!response.ok) throw new Error('notification fetch failed'); return response.json(); })
+          .then(function(payload) {
+            notificationView = selectedView;
+            if (notificationCenter) notificationCenter.dataset.notificationView = selectedView;
+            updateNotificationBadges(payload.unread_count ?? payload.count ?? 0);
+            renderNotificationItems(payload.items || []);
+          })
+          .catch(function() {})
+          .finally(function() { notificationRefreshBusy = false; });
+      }
       notificationCenter?.addEventListener('click', function(event) {
+        const viewButton = event.target.closest('.js-notification-view');
+        if (viewButton) {
+          notificationCenter.querySelectorAll('.js-notification-view').forEach(function(button) { button.classList.toggle('active', button === viewButton); });
+          refreshNotifications(viewButton.dataset.view || 'unread');
+          return;
+        }
+        const markAll = event.target.closest('.js-notification-mark-all');
+        if (markAll) {
+          fetch('/api/notifications/mark-all-read', {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'X-CSRFToken': '{{ csrf_token() }}', 'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+          }).then(function(response) { if (!response.ok) throw new Error(); return response.json(); })
+            .then(function(payload) { updateNotificationBadges(payload.count || 0); return refreshNotifications(notificationView); })
+            .catch(function() {});
+          return;
+        }
+        const actionButton = event.target.closest('.js-notification-action');
+        if (actionButton) {
+          const action = actionButton.dataset.action;
+          const key = actionButton.dataset.key;
+          if (!action || !key || actionButton.disabled) return;
+          actionButton.disabled = true;
+          fetch('/api/notifications/' + encodeURIComponent(key) + '/' + action, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'X-CSRFToken': '{{ csrf_token() }}', 'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+          }).then(function(response) { if (!response.ok) throw new Error(); return response.json(); })
+            .then(function() { return refreshNotifications(notificationView); })
+            .catch(function() { actionButton.disabled = false; });
+          return;
+        }
         const link = event.target.closest('.js-notification-item');
         if (!link || !notificationCenter.contains(link)) return;
-
         const notificationKey = link.dataset.notificationKey;
         const targetHref = link.href;
         if (!notificationKey || link.dataset.processing === '1') return;
-
         event.preventDefault();
         link.dataset.processing = '1';
-        link.setAttribute('aria-busy', 'true');
-
         fetch('/api/notifications/mark-read', {
           method: 'POST',
-          headers: {
-            'X-CSRFToken': '{{ csrf_token() }}',
-            'Content-Type': 'application/json',
-          },
+          headers: {'X-CSRFToken': '{{ csrf_token() }}', 'Content-Type': 'application/json'},
           credentials: 'same-origin',
-          body: JSON.stringify({ notification_key: notificationKey }),
+          body: JSON.stringify({notification_key: notificationKey}),
           keepalive: true,
-        })
-          .then(function(response) {
-            if (!response.ok) throw new Error('No se pudo marcar la notificacion como leida.');
-            return response.json();
-          })
-          .then(function(payload) {
-            link.remove();
-            updateNotificationBadges(payload.count);
-            if (!notificationCenter.querySelector('.js-notification-item')) {
-              const body = notificationCenter.querySelector('.offcanvas-body');
-              if (body) {
-                body.innerHTML = '<div class="empty-state">Sin alertas importantes.</div>';
-              }
-            }
-            window.location.assign(targetHref);
-          })
-          .catch(function() {
-            // Nunca bloqueamos la navegacion hacia el destino por un fallo de
-            // lectura; el usuario igualmente puede consultar la alerta.
-            window.location.assign(targetHref);
-          });
+        }).then(function(response) {
+          if (!response.ok) throw new Error('mark read failed');
+          return response.json();
+        }).then(function(payload) {
+          updateNotificationBadges(payload.count);
+          window.location.assign(targetHref);
+        }).catch(function() { window.location.assign(targetHref); });
       });
+      notificationCenter?.addEventListener('show.bs.offcanvas', function() { refreshNotifications(notificationView); });
+      window.setInterval(function() { refreshNotifications('unread'); }, 60000);
       function clearCartStorage() {
         const tenantKey = document.body?.dataset.cartTenant;
         const keys = ['stockarmobile_cart'];

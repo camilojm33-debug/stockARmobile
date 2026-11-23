@@ -58,6 +58,27 @@ def new_ticket():
         )
         db.session.add(ticket)
         db.session.flush()
+        try:
+            from app import User
+            from services.notification_service import record_notification_event
+            superadmins = [row.id for row in db.session.query(User.id).filter(User.role == "superadmin", User.active.is_(True)).all()]
+            with db.session.begin_nested():
+                record_notification_event(
+                    db.session,
+                    event_key=f"support-ticket:{ticket.id}",
+                    title="Nuevo ticket de soporte",
+                    body=f"{reason} · {description[:500]}",
+                    href=url_for("support.admin_detail", ticket_id=ticket.id),
+                    category="support",
+                    priority="high",
+                    company_id=None,
+                    recipient_user_ids=superadmins,
+                    source_type="support_ticket",
+                    source_id=str(ticket.id),
+                )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("No se pudo notificar el nuevo ticket a Superadmin")
         record_audit(
             action="support_ticket_create",
             entity="support_ticket",
