@@ -51,6 +51,10 @@
         <div class="col-md-4"><label class="form-label fw-semibold">Buscar comercio o contacto</label><input class="form-control" name="q" value="{{ q }}" placeholder="Nombre, email, teléfono o rubro"></div>
         <div class="col-md-2"><label class="form-label fw-semibold">Desde</label><input class="form-control" type="date" name="created_from" value="{{ filters.created_from or '' }}"></div>
         <div class="col-md-2"><label class="form-label fw-semibold">Hasta</label><input class="form-control" type="date" name="created_to" value="{{ filters.created_to or '' }}"></div>
+        <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ filters.industry or '' }}" placeholder="Ej.: Ferretería"></div>
+        <div class="col-md-3"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ filters.province or '' }}" placeholder="Ej.: Chaco"></div>
+        <div class="col-md-3"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" value="{{ filters.locality or '' }}" placeholder="Ej.: Resistencia"></div>
+        <div class="col-md-3"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" value="{{ filters.segment or '' }}" placeholder="Ej.: kioscos"></div>
         <div class="col-md-4"><label class="form-label fw-semibold">Fuente</label>
           <select class="form-select" name="source">
             <option value="">Todas las fuentes</option>
@@ -154,9 +158,9 @@
         </table>
       </div>
       <div class="d-flex justify-content-between align-items-center mt-3">
-        <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if lead_page <= 1 else '' }}" href="{{ url_for('saas.crm_new_prospects', page=lead_page-1, period=period, q=q, source=filters.source, import_id=filters.import_id, channel=channel, created_from=filters.created_from, created_to=filters.created_to, never_campaign='1' if filters.never_campaign else '', never_contacted='1' if filters.never_contacted else '') }}">Anterior</a>
+        <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if lead_page <= 1 else '' }}" href="{{ url_for('saas.crm_new_prospects', page=lead_page-1, period=period, q=q, source=filters.source, import_id=filters.import_id, channel=channel, created_from=filters.created_from, created_to=filters.created_to, industry=filters.industry, province=filters.province, locality=filters.locality, segment=filters.segment, never_campaign='1' if filters.never_campaign else '', never_contacted='1' if filters.never_contacted else '') }}">Anterior</a>
         <span class="small text-muted">Página {{ lead_page }} / {{ lead_pages }}</span>
-        <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if lead_page >= lead_pages else '' }}" href="{{ url_for('saas.crm_new_prospects', page=lead_page+1, period=period, q=q, source=filters.source, import_id=filters.import_id, channel=channel, created_from=filters.created_from, created_to=filters.created_to, never_campaign='1' if filters.never_campaign else '', never_contacted='1' if filters.never_contacted else '') }}">Siguiente</a>
+        <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if lead_page >= lead_pages else '' }}" href="{{ url_for('saas.crm_new_prospects', page=lead_page+1, period=period, q=q, source=filters.source, import_id=filters.import_id, channel=channel, created_from=filters.created_from, created_to=filters.created_to, industry=filters.industry, province=filters.province, locality=filters.locality, segment=filters.segment, never_campaign='1' if filters.never_campaign else '', never_contacted='1' if filters.never_contacted else '') }}">Siguiente</a>
       </div>
     </div>
   </section>
