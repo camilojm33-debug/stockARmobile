@@ -39,6 +39,136 @@ _NOTIFICATION_ROUTE_PERMISSIONS = {
     "/superadmin": EMPLOYEE_ADMIN_ONLY,
 }
 
+_NOTIFICATION_CATEGORY_LABELS = {
+    "platform": "Plataforma",
+    "billing": "Facturación",
+    "referrals": "Referidos",
+    "support": "Soporte",
+    "system": "Sistema",
+    "sales": "Ventas",
+    "inventory": "Inventario",
+    "clients": "Clientes",
+    "reports": "Reportes",
+    "cash": "Caja",
+    "quotes": "Presupuestos",
+    "ai": "Agentes IA",
+    "purchases": "Compras",
+    "expenses": "Gastos",
+    "general": "General",
+}
+
+_NOTIFICATION_PERMISSION_CATEGORIES = {
+    "sales": "sales",
+    "inventory": "inventory",
+    "clients": "clients",
+    "reports": "reports",
+    "cash": "cash",
+    "quotes_view": "quotes",
+    "ai_access": "ai",
+}
+
+_NOTIFICATION_TYPE_PRESENTATION = {
+    "danger": ("critical", "Crítica", "bi-exclamation-octagon-fill", 0),
+    "warning": ("high", "Prioritaria", "bi-exclamation-triangle-fill", 1),
+    "primary": ("normal", "Operativa", "bi-bell-fill", 2),
+    "success": ("normal", "Informativa", "bi-check-circle-fill", 3),
+    "info": ("normal", "Informativa", "bi-info-circle-fill", 4),
+    "secondary": ("normal", "Informativa", "bi-dot", 5),
+}
+
+
+def _notification_category(item, role=None):
+    """Classify alerts into consistent areas without changing their access rules."""
+    explicit = str(item.get("category") or "").strip().lower()
+    if explicit in _NOTIFICATION_CATEGORY_LABELS:
+        return explicit
+
+    permission = str(item.get("permission") or "").strip().lower()
+    if permission in _NOTIFICATION_PERMISSION_CATEGORIES:
+        return _NOTIFICATION_PERMISSION_CATEGORIES[permission]
+
+    title = str(item.get("title") or "").strip().lower()
+    path = urlparse(str(item.get("href") or "")).path.lower()
+
+    # SuperAdmin alerts often share a single destination, so their title is the
+    # most reliable category signal and must be checked before the generic path.
+    title_rules = (
+        (("backup", "respaldo"), "system"),
+        (("webhook", "evento del sistema", "sistema"), "system"),
+        (("ayuda", "soporte", "ticket"), "support"),
+        (("referid", "comision"), "referrals"),
+        (("pago", "suscrip", "factur"), "billing"),
+        (("empresa", "alta"), "platform"),
+        (("pedido ia", "vendedor ia", "agente ia", "envío", "envio"), "ai"),
+        (("presupuesto", "cotización", "cotizacion"), "quotes"),
+        (("venta",), "sales"),
+        (("stock", "inventario", "producto"), "inventory"),
+        (("cliente",), "clients"),
+        (("caja",), "cash"),
+        (("compra", "proveedor"), "purchases"),
+        (("gasto",), "expenses"),
+        (("reporte",), "reports"),
+    )
+    for needles, category in title_rules:
+        if any(needle in title for needle in needles):
+            return category
+
+    path_rules = (
+        (("/superadmin",), "platform"),
+        (("/soporte",), "support"),
+        (("/referidos",), "referrals"),
+        (("/admin/portal", "/subscription"), "billing"),
+        (("/ventas",), "sales"),
+        (("/productos",), "inventory"),
+        (("/clientes",), "clients"),
+        (("/reportes",), "reports"),
+        (("/caja",), "cash"),
+        (("/presupuestos",), "quotes"),
+        (("/agentes-ia", "/pedidos-ia", "/ai-orders"), "ai"),
+        (("/compras",), "purchases"),
+        (("/gastos",), "expenses"),
+    )
+    for prefixes, category in path_rules:
+        if any(path.startswith(prefix) for prefix in prefixes):
+            return category
+
+    return "platform" if role == "superadmin" else "general"
+
+
+def prepare_notification_items(items, role=None):
+    """Add consistent priority, category and action metadata to the notification feed.
+
+    The original title/body/href/type fields remain unchanged for compatibility
+    with older clients and integrations. Sorting is stable within each priority.
+    """
+    prepared = []
+    for index, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "secondary").strip().lower()
+        severity, severity_label, icon, priority = _NOTIFICATION_TYPE_PRESENTATION.get(
+            item_type,
+            ("normal", "Informativa", "bi-info-circle-fill", 5),
+        )
+        category = _notification_category(item, role=role)
+        prepared.append(
+            {
+                **item,
+                "category": category,
+                "category_label": _NOTIFICATION_CATEGORY_LABELS[category],
+                "severity": severity,
+                "severity_label": severity_label,
+                "icon": icon,
+                "priority": priority,
+                "is_urgent": severity in {"critical", "high"},
+                "action_label": str(item.get("action_label") or "Revisar"),
+            }
+        )
+
+    prepared.sort(key=lambda item: item["priority"])
+    return prepared
+
+
 
 def _notification_required_permission(item):
     explicit = str(item.get("permission") or "").strip()
@@ -111,12 +241,13 @@ def filter_notifications_for_user(items):
 def build_notifications():
     if not getattr(current_user, "is_authenticated", False):
         return []
-    if getattr(current_user, "role", None) == "superadmin":
+    role = user_role(current_user)
+    if role == "superadmin":
         items = _build_superadmin_notifications()
-        return filter_notifications_for_user(items)
-    if getattr(current_user, "role", None) == "seller":
+        return prepare_notification_items(filter_notifications_for_user(items), role=role)
+    if role == "seller":
         items = _build_seller_notifications()
-        return filter_notifications_for_user(items)
+        return prepare_notification_items(filter_notifications_for_user(items), role=role)
 
     # Lazy import is intentional: order_notifications imports the AI runtime,
     # which imports models that are initialized while the application is being
@@ -124,7 +255,7 @@ def build_notifications():
     from services.ai_agent.order_notifications import build_ai_order_notifications
 
     items = build_ai_order_notifications() + _build_user_notifications()
-    return filter_notifications_for_user(items)
+    return prepare_notification_items(filter_notifications_for_user(items), role=role)
 
 
 def _notification_key(item):
@@ -207,7 +338,7 @@ def get_notification_payload():
     """Return unread notifications for the current user."""
     items = _notification_items_with_keys(build_notifications())
     if not getattr(current_user, "is_authenticated", False):
-        return {"items": [], "count": 0, "signature": None}
+        return {"items": [], "count": 0, "urgent_count": 0, "signature": None}
 
     state, signature, read_keys = _current_notification_state(items)
     unread_items = [
@@ -217,6 +348,7 @@ def get_notification_payload():
     return {
         "items": unread_items,
         "count": len(unread_items),
+        "urgent_count": sum(1 for item in unread_items if item.get("is_urgent")),
         "signature": signature,
     }
 
