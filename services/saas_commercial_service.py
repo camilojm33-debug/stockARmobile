@@ -530,8 +530,13 @@ def apply_prospect_filters(query, filters: dict):
     except (TypeError, ValueError):
         import_id = 0
     if import_id > 0:
+        # A batch selector means prospects first created by that exact import.
+        # Rows that merely updated or duplicated an existing lead are not "new".
         query = query.filter(
-            SaaSLead.import_records.any(SaaSLeadImportRecord.import_id == import_id)
+            SaaSLead.import_records.any(
+                (SaaSLeadImportRecord.import_id == import_id)
+                & (SaaSLeadImportRecord.outcome == "new")
+            )
         )
 
     source = str(filters.get("source") or "").strip()
