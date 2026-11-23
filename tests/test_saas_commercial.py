@@ -1526,3 +1526,186 @@ def test_whatsapp_send_normalizes_legacy_local_destination(app, monkeypatch):
         assert provider_id == "wamid.local-number-normalized"
         assert sent[0]["to"] == "5493624228396"
         assert recipient.destination == "5493624228396"
+
+
+def test_prospect_import_records_new_updated_and_duplicate_rows(app):
+    from app import SaaSLeadImportRecord, User, db
+    from services.saas_commercial_service import import_prospect_rows
+
+    with app.app_context():
+        user = User(
+            username="import-history-admin",
+            email="import-history-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        row = {
+            "company_name": "Ferretería Importada",
+            "contact_name": "Ana",
+            "email": "ventas@importada.example",
+            "phone": None,
+            "whatsapp": "5491112345678",
+            "industry": "Ferretería",
+            "subindustry": None,
+            "province": "Chaco",
+            "locality": "Resistencia",
+            "lead_score": 75,
+            "email_status": "valid",
+            "phone_status": "unknown",
+            "email_consent_status": "unknown",
+            "whatsapp_consent_status": "unknown",
+            "phone_consent_status": "unknown",
+            "do_not_contact": False,
+            "source": "import_publico",
+        }
+        first = import_prospect_rows(
+            db.session,
+            rows=[row, {**row, "company_name": "Ferretería repetida"}],
+            filename="comercios.xlsx",
+            user_id=user.id,
+        )
+        db.session.commit()
+
+        assert first.inserted_count == 1
+        assert first.duplicate_count == 1
+        first_records = SaaSLeadImportRecord.query.filter_by(import_id=first.id).order_by(
+            SaaSLeadImportRecord.row_number.asc()
+        ).all()
+        assert [record.outcome for record in first_records] == ["new", "duplicate"]
+        assert first_records[0].lead_id is not None
+        assert first_records[1].lead_id == first_records[0].lead_id
+
+        second = import_prospect_rows(
+            db.session,
+            rows=[row],
+            filename="repeticion.csv",
+            user_id=user.id,
+        )
+        db.session.commit()
+        assert second.inserted_count == 0
+        assert second.updated_count == 0
+        assert second.duplicate_count == 1
+        assert SaaSLeadImportRecord.query.filter_by(
+            import_id=second.id, outcome="duplicate"
+        ).count() == 1
+
+
+def test_campaign_segments_by_import_date_and_never_campaign(app):
+    import json
+    from datetime import datetime
+    from app import (
+        SaaSCampaign,
+        SaaSCampaignRecipient,
+        SaaSLead,
+        SaaSLeadImport,
+        SaaSLeadImportRecord,
+        User,
+        db,
+    )
+
+    with app.app_context():
+        user = User(
+            username="prospect-segment-admin",
+            email="prospect-segment-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        batch = SaaSLeadImport(
+            file_name="lote-nuevos.csv",
+            file_format="csv",
+            source="import_publico",
+            created_by_user_id=user.id,
+        )
+        db.session.add(batch)
+        db.session.flush()
+
+        new_lead = SaaSLead(
+            company_name="Nuevo de la importación",
+            contact_name="Contacto nuevo",
+            email="nuevo@segmento.example",
+            email_status="valid",
+            email_consent_status="opted_in",
+            created_at=datetime(2026, 11, 20, 10, 0, 0),
+            created_by_user_id=user.id,
+        )
+        old_lead = SaaSLead(
+            company_name="Antiguo de la importación",
+            contact_name="Contacto antiguo",
+            email="antiguo@segmento.example",
+            email_status="valid",
+            email_consent_status="opted_in",
+            created_at=datetime(2026, 10, 20, 10, 0, 0),
+            created_by_user_id=user.id,
+        )
+        already_campaigned = SaaSLead(
+            company_name="Ya incluido en otra campaña",
+            contact_name="Contacto previo",
+            email="previo@segmento.example",
+            email_status="valid",
+            email_consent_status="opted_in",
+            created_at=datetime(2026, 11, 21, 10, 0, 0),
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([new_lead, old_lead, already_campaigned])
+        db.session.flush()
+
+        db.session.add_all([
+            SaaSLeadImportRecord(
+                import_id=batch.id, lead_id=new_lead.id, row_number=1,
+                outcome="new", company_name=new_lead.company_name,
+            ),
+            SaaSLeadImportRecord(
+                import_id=batch.id, lead_id=old_lead.id, row_number=2,
+                outcome="new", company_name=old_lead.company_name,
+            ),
+            SaaSLeadImportRecord(
+                import_id=batch.id, lead_id=already_campaigned.id, row_number=3,
+                outcome="new", company_name=already_campaigned.company_name,
+            ),
+        ])
+
+        previous_campaign = SaaSCampaign(
+            name="Campaña anterior",
+            subject="Presentación",
+            channel="email",
+            status="ENVIADA",
+            body_html="<p>Hola</p>",
+            created_by_user_id=user.id,
+        )
+        target_campaign = SaaSCampaign(
+            name="Solo nuevos del lote",
+            subject="StockArMobile",
+            channel="email",
+            status="BORRADOR",
+            body_html="<p>Hola {{contacto}}</p>",
+            segment_json=json.dumps({
+                "created_from": "2026-11-01",
+                "created_to": "2026-11-30",
+                "import_id": batch.id,
+                "never_campaign": True,
+            }),
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([previous_campaign, target_campaign])
+        db.session.flush()
+        db.session.add(SaaSCampaignRecipient(
+            campaign_id=previous_campaign.id,
+            lead_id=already_campaigned.id,
+            channel="email",
+            destination=already_campaigned.email,
+            status="sent",
+        ))
+        db.session.commit()
+
+        result = build_campaign_recipients(db.session, target_campaign.id)
+        assert result["eligible"] == 1
+        assert result["added"] == 1
+        assert [recipient.lead_id for recipient in target_campaign.recipients] == [new_lead.id]
