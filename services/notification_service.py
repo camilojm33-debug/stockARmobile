@@ -203,6 +203,57 @@ def _current_notification_state(items):
     return state, signature, read_keys
 
 
+def record_notification_event(
+    db_session,
+    *,
+    event_key,
+    title,
+    body,
+    href,
+    category="general",
+    priority="normal",
+    company_id=None,
+    recipient_user_ids=None,
+    source_type="event",
+    source_id=None,
+):
+    """Create an idempotent notification for explicit business/system events.
+
+    Caller owns the transaction: this helper adds rows but never commits.
+    Recipient IDs are resolved by the event producer to enforce its audience.
+    """
+    from app import NotificationEvent, utcnow
+
+    recipients = sorted({int(value) for value in (recipient_user_ids or []) if value})
+    if not recipients:
+        return 0
+    source_key = str(event_key or "").strip()
+    if not source_key:
+        raise ValueError("event_key is required for idempotent notifications")
+    now = utcnow()
+    inserted = 0
+    for user_id in recipients:
+        key = sha256(f"event:{company_id or 0}:{user_id}:{source_key}".encode("utf-8")).hexdigest()
+        row = db_session.query(NotificationEvent).filter_by(user_id=user_id, notification_key=key).first()
+        if row is None:
+            db_session.add(NotificationEvent(
+                user_id=user_id,
+                company_id=company_id,
+                notification_key=key,
+                category=str(category or "general")[:40],
+                priority=str(priority or "normal")[:20],
+                title=str(title or "Notificación")[:180],
+                body=str(body or ""),
+                href=str(href or "/")[:700],
+                source_type=str(source_type or "event")[:80],
+                source_id=str(source_id or source_key)[:120],
+                created_at=now,
+                updated_at=now,
+            ))
+            inserted += 1
+    return inserted
+
+
 def _notification_category(item):
     explicit = str(item.get("category") or "").strip().lower()
     if explicit in {"sales", "inventory", "payments", "orders", "system", "support", "commercial", "general"}:
