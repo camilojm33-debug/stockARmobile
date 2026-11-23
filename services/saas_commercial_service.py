@@ -13,6 +13,7 @@ import time
 import socket
 import unicodedata
 from datetime import date, datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 from html import escape
 from io import BytesIO, StringIO
@@ -515,10 +516,15 @@ def apply_prospect_filters(query, filters: dict):
     if int(filters.get("min_score") or 0):
         query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
 
+    admin_timezone = ZoneInfo("America/Argentina/Buenos_Aires")
     created_from = str(filters.get("created_from") or "").strip()
     if created_from:
         try:
-            start_at = datetime.combine(date.fromisoformat(created_from), datetime.min.time())
+            local_start = datetime.combine(
+                date.fromisoformat(created_from),
+                datetime.min.time(),
+            ).replace(tzinfo=admin_timezone)
+            start_at = local_start.astimezone(timezone.utc).replace(tzinfo=None)
             query = query.filter(SaaSLead.created_at >= start_at)
         except ValueError:
             pass
@@ -526,7 +532,11 @@ def apply_prospect_filters(query, filters: dict):
     created_to = str(filters.get("created_to") or "").strip()
     if created_to:
         try:
-            end_at = datetime.combine(date.fromisoformat(created_to) + timedelta(days=1), datetime.min.time())
+            local_end = datetime.combine(
+                date.fromisoformat(created_to) + timedelta(days=1),
+                datetime.min.time(),
+            ).replace(tzinfo=admin_timezone)
+            end_at = local_end.astimezone(timezone.utc).replace(tzinfo=None)
             query = query.filter(SaaSLead.created_at < end_at)
         except ValueError:
             pass
