@@ -1565,7 +1565,7 @@ def view_quote(quote_id):
 @tenant_required
 @login_required
 def register_quote_item_pickup(quote_id):
-    from app import record_audit
+    from app import db, record_audit
     from services.quote_pickup_service import register_item_pickup
 
     _require_quote_permission("quotes_view")
@@ -1585,6 +1585,7 @@ def register_quote_item_pickup(quote_id):
     except LookupError:
         abort(404)
     except ValueError as exc:
+        db.session.rollback()
         flash(str(exc), "warning")
         return redirect(url_for("quotes.view_quote", quote_id=quote.id))
     record_audit(
@@ -1592,6 +1593,7 @@ def register_quote_item_pickup(quote_id):
         detail=f"Retiro de {event.quantity} unidades del renglón #{item_id}; estado {status}",
         ip_address=request.remote_addr,
     )
+    db.session.commit()
     flash("Cantidad retirada registrada. El seguimiento se actualizó sin modificar la venta ni el stock.", "success")
     return redirect(url_for("quotes.view_quote", quote_id=quote.id))
 
