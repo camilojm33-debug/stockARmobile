@@ -286,7 +286,6 @@ def _persist_notifications(items):
 
     user_id = int(current_user.id)
     company_id = getattr(current_user, "company_id", None)
-    context_key = sha256(f"{user_id}:{company_id or 0}:".encode("utf-8"))
     now = utcnow()
     rows = []
     for item in items:
@@ -305,7 +304,7 @@ def _persist_notifications(items):
                 title=str(item.get("title") or "Notificación")[:180],
                 body=str(item.get("body") or ""),
                 href=str(item.get("href") or "/")[:700],
-                source_type=str(item.get("source_type") or "")[:80] or None,
+                source_type=str(item.get("source_type") or "snapshot")[:80] or None,
                 source_id=str(item.get("source_id") or "")[:120] or None,
                 created_at=now,
                 updated_at=now,
@@ -321,7 +320,24 @@ def _persist_notifications(items):
             row.href = str(item.get("href") or "/")[:700]
             row.updated_at = now
         rows.append(row)
-    if rows:
+    # Snapshot-style counters and threshold alerts should not remain active
+    # forever after the underlying condition disappears. Preserve them in the
+    # audit/history table but archive their active state when absent.
+    active_snapshot_keys = {
+        sha256(f"{user_id}:{company_id or 0}:{str(item.get('notification_key') or _notification_key(item)).strip()}".encode("utf-8")).hexdigest()
+        for item in items
+    }
+    stale_snapshots = NotificationEvent.query.filter_by(
+        user_id=user_id,
+        company_id=company_id,
+        source_type="snapshot",
+        archived_at=None,
+    )
+    if active_snapshot_keys:
+        stale_snapshots = stale_snapshots.filter(NotificationEvent.notification_key.notin_(active_snapshot_keys))
+    now = utcnow()
+    stale_snapshots.update({"archived_at": now, "read_at": now, "updated_at": now}, synchronize_session=False)
+    if rows or active_snapshot_keys:
         db.session.commit()
     return rows
 
