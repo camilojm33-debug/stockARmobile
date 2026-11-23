@@ -162,13 +162,13 @@ def register_item_pickup(*, company_id, quote_id, quote_item_id, quantity, actor
 
 def register_all_remaining_pickup(*, company_id, quote_id, actor_user_id, note=""):
     """Bulk quick action used by the AI order screen; commits all line events atomically."""
-    from app import QuoteItem
+    from app import QuoteItem, QuoteItemPickupEvent
 
     quote, delivery = _locked_quote_and_delivery(company_id, quote_id)
     items = QuoteItem.query.filter_by(quote_id=int(quote.id)).with_for_update().all()
     changed = 0
     for item in items:
-        picked = db.session.query(func.coalesce(func.sum(__import__("app").QuoteItemPickupEvent.quantity), 0)).filter_by(
+        picked = db.session.query(func.coalesce(func.sum(QuoteItemPickupEvent.quantity), 0)).filter_by(
             company_id=int(company_id), quote_id=int(quote.id), quote_item_id=int(item.id)
         ).scalar()
         remaining = max(_decimal(item.quantity) - _decimal(picked), Decimal("0"))
