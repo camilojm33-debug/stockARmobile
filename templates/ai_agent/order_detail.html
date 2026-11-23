@@ -226,13 +226,18 @@
               <div class="fw-bold">Registro anterior al seguimiento de retiros</div>
               <div class="small">No hay evidencia histórica suficiente para saber si el cliente ya retiró la mercadería; no se presume pendiente ni retirada.</div>
             </div>
-            {% elif order.sale_id and delivery and delivery.pickup_status == 'pending' %}
-            <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
-              <div><div class="fw-bold">Listo para retirar</div><div class="small">Venta confirmada. El retiro aún no fue registrado.</div></div>
-              <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_picked_up', quote_id=order.quote_id) }}" onsubmit="return confirm('¿Confirmás que el cliente retiró toda la mercadería?');">
+            {% elif order.sale_id and delivery and delivery.pickup_status in ['pending', 'partial'] %}
+            <div class="alert {% if delivery.pickup_status == 'partial' %}alert-info{% else %}alert-warning{% endif %} d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
+              <div>
+                <div class="fw-bold">{% if delivery.pickup_status == 'partial' %}Retiro parcial{% else %}Listo para retirar{% endif %}</div>
+                <div class="small">Registrado: {{ '%.3g'|format(pickup_summary.picked_quantity) }} de {{ '%.3g'|format(pickup_summary.total_quantity) }} unidades · Pendiente: {{ '%.3g'|format(pickup_summary.remaining_quantity) }}</div>
+              </div>
+              {% if pickup_summary.remaining_quantity > 0 %}
+              <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_picked_up', quote_id=order.quote_id) }}" onsubmit="return confirm('¿Confirmás que el cliente retiró toda la cantidad pendiente?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-success"><i class="bi bi-box-seam me-1"></i>Marcar retirado</button>
+                <button type="submit" class="btn btn-success"><i class="bi bi-box-seam me-1"></i>Registrar todo lo pendiente</button>
               </form>
+              {% endif %}
             </div>
             {% else %}
             <div class="alert alert-light border mb-0">
