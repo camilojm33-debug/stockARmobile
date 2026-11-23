@@ -2479,6 +2479,7 @@ class SaaSLead(db.Model):
     assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_leads_assigned")
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_leads_created")
     consent = db.relationship("SaaSLeadConsent", back_populates="lead", uselist=False, cascade="all, delete-orphan")
+    import_records = db.relationship("SaaSLeadImportRecord", back_populates="lead")
 
 
 class SaaSLeadSuppression(db.Model):
@@ -2529,6 +2530,41 @@ class SaaSLeadImport(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
     completed_at = db.Column(db.DateTime)
     created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+
+
+class SaaSLeadImportRecord(db.Model):
+    __tablename__ = "saas_lead_import_records"
+    __table_args__ = (
+        db.UniqueConstraint("import_id", "row_number", name="uq_saas_lead_import_row"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    import_id = db.Column(
+        db.Integer,
+        db.ForeignKey("saas_lead_imports.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    lead_id = db.Column(
+        db.Integer,
+        db.ForeignKey("saas_leads.id", ondelete="SET NULL"),
+        index=True,
+    )
+    row_number = db.Column(db.Integer, nullable=False)
+    outcome = db.Column(db.String(20), nullable=False, index=True)
+    company_name = db.Column(db.String(160))
+    contact_name = db.Column(db.String(160))
+    email = db.Column(db.String(160))
+    phone = db.Column(db.String(40))
+    whatsapp = db.Column(db.String(40))
+    industry = db.Column(db.String(100))
+    province = db.Column(db.String(100))
+    locality = db.Column(db.String(120))
+    details = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+
+    import_batch = db.relationship("SaaSLeadImport", backref="records")
+    lead = db.relationship("SaaSLead", back_populates="import_records")
 
 
 class SaaSCampaign(db.Model):
