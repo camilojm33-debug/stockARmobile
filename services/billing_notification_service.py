@@ -43,8 +43,8 @@ class NotificationService:
         normalized_status = str(status or "").strip().lower()
         event_name = str(event or "").strip().lower()
         alert_event = (
-            normalized_status in {"failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"}
-            or any(token in event_name for token in ("error", "failed", "reversed", "refund"))
+            normalized_status in {"approved", "failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"}
+            or any(token in event_name for token in ("error", "failed", "reversed", "refund", "activated"))
         )
         if alert_event:
             try:
@@ -63,11 +63,11 @@ class NotificationService:
                     record_notification_event(
                         db_session,
                         event_key=stable_event,
-                        title="Incidencia de pago" if normalized_status in {"failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"} else "Incidencia de billing",
+                        title="Pago acreditado" if normalized_status == "approved" else "Incidencia de pago" if normalized_status in {"failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"} else "Incidencia de billing",
                         body=str(detail or event)[:1500],
                         href=href,
                         category="payments",
-                        priority="high",
+                        priority="normal" if normalized_status == "approved" else "high",
                         company_id=int(company_id),
                         recipient_user_ids=recipients,
                         source_type=source,
