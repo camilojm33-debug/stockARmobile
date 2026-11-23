@@ -3447,7 +3447,7 @@ def api_notifications():
     view = str(request.args.get("view") or "unread").strip().lower()
     if view not in {"unread", "all", "alerts", "tasks"}:
         view = "unread"
-    payload = get_notification_payload(view=view)
+    payload = get_notification_payload(view=view, persist=True)
     # Keep legacy response keys while adding category/state metadata.
     return jsonify({
         "items": payload["items"],
