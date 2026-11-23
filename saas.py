@@ -2657,13 +2657,14 @@ def crm_new_prospects():
 
     _require_superadmin()
     now = utcnow()
+    local_now = now.replace(tzinfo=timezone.utc).astimezone(_admin_timezone())
     filters = segment_filters_from_request(request)
     period = (request.args.get("period") or "30d").strip().lower()
     if period in {"today", "7d", "15d", "30d"}:
         days = {"today": 0, "7d": 7, "15d": 15, "30d": 30}[period]
-        filters["created_from"] = (now - _timedelta(days=days)).date().isoformat()
+        filters["created_from"] = (local_now - _timedelta(days=days)).date().isoformat()
         if period == "today":
-            filters["created_from"] = now.date().isoformat()
+            filters["created_from"] = local_now.date().isoformat()
         filters["created_to"] = ""
     elif period == "all":
         filters["created_from"] = ""
@@ -2720,7 +2721,11 @@ def crm_new_prospects():
         .all()
     )
 
-    today_start = _datetime.combine(now.date(), _datetime.min.time())
+    local_today_start = _datetime.combine(
+        local_now.date(),
+        _datetime.min.time(),
+    ).replace(tzinfo=_admin_timezone())
+    today_start = local_today_start.astimezone(timezone.utc).replace(tzinfo=None)
     last_7_days = now - _timedelta(days=7)
     last_30_days = now - _timedelta(days=30)
     summary = {
