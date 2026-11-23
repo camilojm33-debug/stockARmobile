@@ -391,11 +391,8 @@ def get_notification_payload(view="unread"):
 
 
 def _owned_notification(notification_key):
-    from app import NotificationEvent
-    return NotificationEvent.query.filter_by(
-        user_id=current_user.id,
-        notification_key=str(notification_key or "").strip(),
-    ).first()
+    query = _current_user_notification_query()
+    return query.filter_by(notification_key=str(notification_key or "").strip()).first()
 
 
 def mark_notification_read(notification_key):
