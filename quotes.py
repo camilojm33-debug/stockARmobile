@@ -949,7 +949,7 @@ def _quote_rows(quote):
         wholesale_info = _quote_wholesale_discount_info(item)
         rows.append(
             {
-                "item_id": int(item.id),
+                "item_id": int(item.id) if getattr(item, "id", None) is not None else None,
                 "name": item.description,
                 "quantity": float(item.quantity or 0),
                 "price": float(item.unit_price or 0),
