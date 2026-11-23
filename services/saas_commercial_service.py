@@ -12,7 +12,7 @@ import threading
 import time
 import socket
 import unicodedata
-from datetime import date, datetime, time, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from email.message import EmailMessage
 from html import escape
 from io import BytesIO, StringIO
@@ -512,7 +512,7 @@ def apply_prospect_filters(query, filters: dict):
     created_from = str(filters.get("created_from") or "").strip()
     if created_from:
         try:
-            start_at = datetime.combine(date.fromisoformat(created_from), time.min)
+            start_at = datetime.combine(date.fromisoformat(created_from), datetime.min.time())
             query = query.filter(SaaSLead.created_at >= start_at)
         except ValueError:
             pass
@@ -520,7 +520,7 @@ def apply_prospect_filters(query, filters: dict):
     created_to = str(filters.get("created_to") or "").strip()
     if created_to:
         try:
-            end_at = datetime.combine(date.fromisoformat(created_to) + timedelta(days=1), time.min)
+            end_at = datetime.combine(date.fromisoformat(created_to) + timedelta(days=1), datetime.min.time())
             query = query.filter(SaaSLead.created_at < end_at)
         except ValueError:
             pass
