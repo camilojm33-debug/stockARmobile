@@ -1274,6 +1274,36 @@ class QuoteItem(db.Model):
         return self.subtotal or Decimal("0.00")
 
 
+class QuoteItemPickupEvent(db.Model):
+    """Auditable physical pickup quantity recorded against one quote line."""
+    __tablename__ = "quote_item_pickup_events"
+    __table_args__ = (
+        db.Index("ix_quote_item_pickup_company_quote", "company_id", "quote_id"),
+        db.Index("ix_quote_item_pickup_line", "quote_item_id", "picked_up_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey("quotes.id", ondelete="CASCADE"), nullable=False, index=True)
+    quote_item_id = db.Column(db.Integer, db.ForeignKey("quote_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    quantity = db.Column(db.Numeric(12, 3), nullable=False)
+    picked_up_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+    picked_up_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    note = db.Column(db.String(500), nullable=True)
+
+    quote = db.relationship("Quote")
+    quote_item = db.relationship("QuoteItem")
+    company = db.relationship("Company")
+    picked_up_by = db.relationship("User")
+
+    @property
+    def picked_up_at_local(self):
+        from stockarmobile.helpers.dates import format_local_datetime
+        return format_local_datetime(
+            self.picked_up_at, getattr(self.company, "timezone", None), "%d/%m/%Y %H:%M"
+        )
+
+
 class QuoteDelivery(db.Model):
     __tablename__ = "quote_deliveries"
     __table_args__ = (
