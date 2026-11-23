@@ -1490,6 +1490,7 @@ def ai_order_mark_item_picked_up(quote_id: int):
     except LookupError:
         abort(404)
     except ValueError as exc:
+        db.session.rollback()
         flash(str(exc), "warning")
         return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
     record_audit(
@@ -1497,6 +1498,7 @@ def ai_order_mark_item_picked_up(quote_id: int):
         detail=f"Retiro de {event.quantity} unidades del renglón #{item_id}; estado {status}",
         ip_address=request.remote_addr,
     )
+    db.session.commit()
     flash("Retiro parcial/por producto registrado. Venta, pago y stock no se alteraron.", "success")
     return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
 
@@ -1526,6 +1528,7 @@ def ai_order_mark_picked_up(quote_id: int):
             detail=f"Retiro total rápido; renglones registrados: {changed}",
             ip_address=request.remote_addr,
         )
+        db.session.commit()
         flash("Se registraron todas las cantidades pendientes del retiro.", "success")
     else:
         flash("No quedaban cantidades pendientes; no se duplicó ningún retiro.", "info")
