@@ -1160,6 +1160,11 @@
           body.textContent = item.body || '';
           link.append(badge, body);
           card.appendChild(link);
+          const statusText = item.archived ? 'Archivada' : item.resolved ? 'Resuelta' : item.read ? 'Leída' : 'Sin leer';
+          const status = document.createElement('div');
+          status.className = 'small text-muted mt-2';
+          status.textContent = statusText + (item.created_at ? ' · ' + new Date(item.created_at).toLocaleString() : '');
+          card.appendChild(status);
           const actions = document.createElement('div');
           actions.className = 'd-flex gap-2 mt-2';
           ['resolve', 'archive'].forEach(function(action) {
