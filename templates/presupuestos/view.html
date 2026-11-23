@@ -63,7 +63,7 @@
   <div class="card app-card mb-4">
     <div class="table-responsive">
       <table class="table align-middle mb-0">
-        <thead class="table-light"><tr><th>Producto</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Desc.</th><th class="text-end">Subtotal</th></tr></thead>
+        <thead class="table-light"><tr><th>Producto</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Desc.</th><th class="text-end">Subtotal</th><th>Retiro</th></tr></thead>
         <tbody>
           {% for item in rows %}
           <tr>
@@ -81,6 +81,24 @@
             <td class="text-end">${{ "%.2f"|format(item.price or 0) }}</td>
             <td class="text-end">${{ "%.2f"|format(item.discount or 0) }}</td>
             <td class="text-end fw-semibold">${{ "%.2f"|format(item.total or 0) }}</td>
+            <td style="min-width:190px">
+              {% if item.status == 'picked_up' %}
+              <span class="badge text-bg-success">Retirado {{ "%.3g"|format(item.picked_quantity) }}/{{ "%.3g"|format(item.quantity) }}</span>
+              {% elif item.status == 'partial' %}
+              <span class="badge text-bg-warning">Parcial {{ "%.3g"|format(item.picked_quantity) }} · faltan {{ "%.3g"|format(item.remaining_quantity) }}</span>
+              {% else %}
+              <span class="badge text-bg-secondary">Pendiente</span>
+              {% endif %}
+              {% if quote.delivery and quote.delivery.method != 'envio' and (quote.converted_sale_id or quote.status == 'CONVERTIDO') and item.remaining_quantity > 0 %}
+              <form method="post" action="{{ url_for('quotes.register_quote_item_pickup', quote_id=quote.id) }}" class="mt-2 d-flex gap-1 align-items-center" onsubmit="return confirm('¿Registrar esta cantidad como retirada?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="quote_item_id" value="{{ item.item_id }}">
+                <input class="form-control form-control-sm" type="number" name="quantity" min="0.001" max="{{ item.remaining_quantity }}" step="0.001" value="{{ item.remaining_quantity }}" aria-label="Cantidad retirada de {{ item.name }}" required style="max-width:95px">
+                <button class="btn btn-sm btn-outline-success" type="submit">Retirar</button>
+              </form>
+              {% endif %}
+              {% if item.last_picked_at %}<div class="small text-muted mt-1">{{ item.last_picked_at }}{% if item.last_picked_by %} · {{ item.last_picked_by }}{% endif %}</div>{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
