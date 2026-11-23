@@ -949,6 +949,7 @@ def _quote_rows(quote):
         wholesale_info = _quote_wholesale_discount_info(item)
         rows.append(
             {
+                "item_id": int(item.id) if getattr(item, "id", None) is not None else None,
                 "name": item.description,
                 "quantity": float(item.quantity or 0),
                 "price": float(item.unit_price or 0),
@@ -1551,7 +1552,50 @@ def view_quote(quote_id):
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     company = Company.query.filter_by(id=quote.company_id).first()
-    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote), display_observations=_quote_observations_for_display(quote, company=company))
+    from services.quote_pickup_service import pickup_rows_for_quote
+    pickup_summary = pickup_rows_for_quote(quote)
+    pickup_by_item = {row["item_id"]: row for row in pickup_summary["rows"]}
+    rows = _quote_rows(quote)
+    for row in rows:
+        row.update(pickup_by_item.get(row.get("item_id"), {}))
+    return render_template("presupuestos/view.html", quote=quote, rows=rows, pickup_summary=pickup_summary, statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote), display_observations=_quote_observations_for_display(quote, company=company))
+
+
+@bp.post("/<int:quote_id>/retirar-item")
+@tenant_required
+@login_required
+def register_quote_item_pickup(quote_id):
+    from app import db, record_audit
+    from services.quote_pickup_service import register_item_pickup
+
+    _require_quote_permission("quotes_view")
+    quote = _quote_lookup(quote_id)
+    _require_owned_or_authorized(quote)
+    item_id = request.form.get("quote_item_id", type=int)
+    quantity = request.form.get("quantity", type=str)
+    note = request.form.get("note", type=str) or ""
+    if not item_id:
+        flash("Seleccioná un producto del presupuesto.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+    try:
+        event, status = register_item_pickup(
+            company_id=int(quote.company_id), quote_id=int(quote.id),
+            quote_item_id=item_id, quantity=quantity, actor_user_id=int(current_user.id), note=note,
+        )
+    except LookupError:
+        abort(404)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+    record_audit(
+        action="quote_item_pickup", entity="quote", entity_id=quote.id,
+        detail=f"Retiro de {event.quantity} unidades del renglón #{item_id}; estado {status}",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Cantidad retirada registrada. El seguimiento se actualizó sin modificar la venta ni el stock.", "success")
+    return redirect(url_for("quotes.view_quote", quote_id=quote.id))
 
 
 @bp.route("/<int:quote_id>/editar", methods=["GET", "POST"])

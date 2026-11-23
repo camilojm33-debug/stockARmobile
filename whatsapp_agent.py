@@ -1397,7 +1397,7 @@ def ai_orders():
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
         or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
-        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending")
+        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") in {"pending", "partial"})
         or (selected_status == "picked_up" and row.get("delivery", {}).get("pickup_status") == "picked_up")
         or (selected_status not in {"shipping_pending", "human", "pickup_pending", "picked_up"} and row["order_key"] == selected_status)
     ]
@@ -1413,7 +1413,7 @@ def ai_orders():
         "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
-        "pickup_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending"),
+        "pickup_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") in {"pending", "partial"}),
         "picked_up": sum(1 for row in all_rows if row.get("delivery", {}).get("pickup_status") == "picked_up"),
         "human_attention": sum(1 for row in all_rows if row.get("attention", {}).get("key") == "human"),
         "channel_keys": channel_keys,
@@ -1467,40 +1467,71 @@ def _tenant_attention_actor():
 
 
 
+@bp.post("/pedidos-ia/<int:quote_id>/retirar-item")
+@login_required
+def ai_order_mark_item_picked_up(quote_id: int):
+    """Record one line quantity from an AI-originated quote."""
+    company_id, _company = _tenant_attention_actor()
+    quote = _tenant_ai_order_query(company_id, quote_id).first()
+    if quote is None:
+        abort(404)
+    item_id = request.form.get("quote_item_id", type=int)
+    quantity = request.form.get("quantity", type=str)
+    note = request.form.get("note", type=str) or ""
+    if not item_id:
+        flash("Seleccioná un producto del pedido.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+    from services.quote_pickup_service import register_item_pickup
+    try:
+        event, status = register_item_pickup(
+            company_id=int(company_id), quote_id=int(quote.id),
+            quote_item_id=item_id, quantity=quantity, actor_user_id=int(current_user.id), note=note,
+        )
+    except LookupError:
+        abort(404)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+    record_audit(
+        action="ai_quote_item_pickup", entity="quote", entity_id=quote.id,
+        detail=f"Retiro de {event.quantity} unidades del renglón #{item_id}; estado {status}",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Retiro parcial/por producto registrado. Venta, pago y stock no se alteraron.", "success")
+    return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+
 @bp.post("/pedidos-ia/<int:quote_id>/retirar")
 @login_required
 def ai_order_mark_picked_up(quote_id: int):
-    """Confirm physical pickup on the existing quote delivery, without altering sale/payment."""
+    """Quick action: record all remaining quote quantities as picked up."""
     company_id, _company = _tenant_attention_actor()
-    from app import Quote, QuoteDelivery
-    from stockarmobile.helpers.dates import utcnow_naive
-
     quote = _tenant_ai_order_query(company_id, quote_id).with_for_update().first()
     if quote is None:
         abort(404)
-
-    delivery = QuoteDelivery.query.filter_by(
-        quote_id=int(quote.id),
-        company_id=int(company_id),
-    ).with_for_update().first()
-    if delivery is None or str(delivery.method or "retiro").strip().lower() != "retiro":
-        flash("Este pedido no está configurado para retiro en el comercio.", "warning")
+    from services.quote_pickup_service import register_all_remaining_pickup
+    try:
+        changed, status = register_all_remaining_pickup(
+            company_id=int(company_id), quote_id=int(quote.id), actor_user_id=int(current_user.id),
+            note="Retiro completo registrado desde la acción rápida de Pedidos IA.",
+        )
+    except LookupError:
+        abort(404)
+    except ValueError as exc:
+        flash(str(exc), "warning")
         return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
-
-    if not getattr(quote, "converted_sale_id", None):
-        flash("Primero confirmá la venta por el flujo habitual antes de registrar el retiro.", "warning")
-        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
-
-    current_status = str(getattr(delivery, "pickup_status", None) or "pending").strip().lower()
-    if current_status == "picked_up" or getattr(delivery, "picked_up_at", None):
-        flash("El retiro ya estaba registrado; no se creó un segundo registro.", "info")
-        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
-
-    delivery.pickup_status = "picked_up"
-    delivery.picked_up_at = utcnow_naive()
-    delivery.picked_up_by_user_id = int(current_user.id)
-    db.session.commit()
-    flash("Retiro registrado con fecha, hora y usuario responsable.", "success")
+    if changed:
+        record_audit(
+            action="ai_quote_pickup_all", entity="quote", entity_id=quote.id,
+            detail=f"Retiro total rápido; renglones registrados: {changed}",
+            ip_address=request.remote_addr,
+        )
+        db.session.commit()
+        flash("Se registraron todas las cantidades pendientes del retiro.", "success")
+    else:
+        flash("No quedaban cantidades pendientes; no se duplicó ningún retiro.", "info")
     return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
 
 
@@ -1924,12 +1955,16 @@ def ai_order_detail(quote_id: int):
     quote = _tenant_ai_order_query(company_id, quote_id).first()
     if quote is None:
         abort(404)
+    from services.quote_pickup_service import pickup_rows_for_quote
+    pickup_summary = pickup_rows_for_quote(quote)
     return render_template(
         "ai_agent/order_detail.html",
         order=_ai_order_row(company_id, quote),
         quote=quote,
         items=list(getattr(quote, "items", []) or []),
         payment=_ai_order_payment(company_id, quote.id),
+        pickup_summary=pickup_summary,
+        pickup_by_item={row["item_id"]: row for row in pickup_summary["rows"]},
     )
 
 

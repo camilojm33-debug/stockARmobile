@@ -23,7 +23,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261119_01_tenant_consent"
+HEAD_REVISION = "20261123_01_quote_item_pickup"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -131,8 +131,7 @@ def main() -> None:
             connection.execute(text("DROP TABLE IF EXISTS branch_vendor_licenses CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS saas_settings CASCADE"))
             connection.execute(text('ALTER TABLE "conversations" DROP COLUMN IF EXISTS "branch_id" CASCADE'))
-            connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
-
+            connection.execute(text("DROP TABLE IF EXISTS quote_item_pickup_events CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
         _progress("Schema rewind complete")
 
@@ -281,7 +280,7 @@ def main() -> None:
             "branches", "user_branch_access", "branch_stock", "branch_stock_movements",
             "branch_stock_transfers", "branch_stock_transfer_batches",
             "whatsapp_channel_registrations", "company_memberships", "branch_vendor_licenses",
-            "saas_settings",
+            "saas_settings", "quote_item_pickup_events",
         }
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:

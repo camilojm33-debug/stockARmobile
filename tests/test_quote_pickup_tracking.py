@@ -51,12 +51,14 @@ def test_pickup_tracking_is_shown_in_both_ai_order_and_quote_screens():
     quote_detail = (REPO_ROOT / "templates/presupuestos/view.html").read_text(encoding="utf-8")
     quote_index = (REPO_ROOT / "templates/presupuestos/index.html").read_text(encoding="utf-8")
 
-    assert "Marcar retirado" in ai_detail
+    assert "Registrar todo lo pendiente" in ai_detail
+    assert "ai_order_mark_item_picked_up" in ai_detail
     assert "delivery.picked_up_at_local" in ai_detail
     assert "pickup_pending" in ai_orders
     assert "picked_up" in ai_orders
     assert "Seguimiento de entrega" in quote_detail
     assert "quote.delivery.picked_up_at_local" in quote_detail
+    assert "register_quote_item_pickup" in quote_detail
     assert "Listo para retirar" in quote_index
 
 

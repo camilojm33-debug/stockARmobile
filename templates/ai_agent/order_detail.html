@@ -3,6 +3,7 @@
 {% block title %}{{ order.number }} - Pedidos IA{% endblock %}
 
 {% block content %}
+{% set delivery = order.delivery %}
 <div class="app-shell">
   <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
     <div>
@@ -105,10 +106,34 @@
         <div class="card-body p-0">
           <div class="table-responsive">
             <table class="table align-middle mb-0">
-              <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th><th>Retiro</th></tr></thead>
               <tbody>
                 {% for item in items %}
-                <tr><td class="fw-semibold">{{ item.description }}</td><td>{{ item.quantity }}</td><td>{{ order.currency }} {{ '%.2f'|format(item.unit_price or 0) }}</td><td class="text-end fw-semibold">{{ order.currency }} {{ '%.2f'|format(item.subtotal or 0) }}</td></tr>
+                <tr>
+                  <td class="fw-semibold">{{ item.description }}</td>
+                  <td>{{ item.quantity }}</td>
+                  <td>{{ order.currency }} {{ '%.2f'|format(item.unit_price or 0) }}</td>
+                  <td class="text-end fw-semibold">{{ order.currency }} {{ '%.2f'|format(item.subtotal or 0) }}</td>
+                  <td style="min-width:205px">
+                    {% set pickup_line = pickup_by_item.get(item.id, {}) %}
+                    {% if pickup_line.status == 'picked_up' %}
+                    <span class="badge text-bg-success">Retirado {{ '%.3g'|format(pickup_line.picked_quantity) }}/{{ '%.3g'|format(pickup_line.quantity) }}</span>
+                    {% elif pickup_line.status == 'partial' %}
+                    <span class="badge text-bg-warning">Parcial · faltan {{ '%.3g'|format(pickup_line.remaining_quantity) }}</span>
+                    {% else %}
+                    <span class="badge text-bg-secondary">Pendiente</span>
+                    {% endif %}
+                    {% if order.sale_id and delivery and delivery.method != 'envio' and pickup_line.remaining_quantity > 0 %}
+                    <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_item_picked_up', quote_id=order.quote_id) }}" class="mt-2 d-flex gap-1 align-items-center" onsubmit="return confirm('¿Registrar esta cantidad como retirada?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="quote_item_id" value="{{ item.id }}">
+                      <input class="form-control form-control-sm" type="number" name="quantity" min="0.001" max="{{ pickup_line.remaining_quantity }}" step="0.001" value="{{ pickup_line.remaining_quantity }}" aria-label="Cantidad retirada de {{ item.description }}" required style="max-width:95px">
+                      <button class="btn btn-sm btn-outline-success" type="submit">Retirar</button>
+                    </form>
+                    {% endif %}
+                    {% if pickup_line.last_picked_at %}<div class="small text-muted mt-1">{{ pickup_line.last_picked_at }}{% if pickup_line.last_picked_by %} · {{ pickup_line.last_picked_by }}{% endif %}</div>{% endif %}
+                  </td>
+                </tr>
                 {% endfor %}
               </tbody>
               <tfoot><tr><th colspan="3" class="text-end">Total</th><th class="text-end">{{ order.currency }} {{ '%.2f'|format(order.total) }}</th></tr></tfoot>
@@ -202,13 +227,18 @@
               <div class="fw-bold">Registro anterior al seguimiento de retiros</div>
               <div class="small">No hay evidencia histórica suficiente para saber si el cliente ya retiró la mercadería; no se presume pendiente ni retirada.</div>
             </div>
-            {% elif order.sale_id and delivery and delivery.pickup_status == 'pending' %}
-            <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
-              <div><div class="fw-bold">Listo para retirar</div><div class="small">Venta confirmada. El retiro aún no fue registrado.</div></div>
-              <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_picked_up', quote_id=order.quote_id) }}" onsubmit="return confirm('¿Confirmás que el cliente retiró toda la mercadería?');">
+            {% elif order.sale_id and delivery and delivery.pickup_status in ['pending', 'partial'] %}
+            <div class="alert {% if delivery.pickup_status == 'partial' %}alert-info{% else %}alert-warning{% endif %} d-flex flex-wrap justify-content-between align-items-center gap-3 mb-0">
+              <div>
+                <div class="fw-bold">{% if delivery.pickup_status == 'partial' %}Retiro parcial{% else %}Listo para retirar{% endif %}</div>
+                <div class="small">Registrado: {{ '%.3g'|format(pickup_summary.picked_quantity) }} de {{ '%.3g'|format(pickup_summary.total_quantity) }} unidades · Pendiente: {{ '%.3g'|format(pickup_summary.remaining_quantity) }}</div>
+              </div>
+              {% if pickup_summary.remaining_quantity > 0 %}
+              <form method="post" action="{{ url_for('whatsapp_agent.ai_order_mark_picked_up', quote_id=order.quote_id) }}" onsubmit="return confirm('¿Confirmás que el cliente retiró toda la cantidad pendiente?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-success"><i class="bi bi-box-seam me-1"></i>Marcar retirado</button>
+                <button type="submit" class="btn btn-success"><i class="bi bi-box-seam me-1"></i>Registrar todo lo pendiente</button>
               </form>
+              {% endif %}
             </div>
             {% else %}
             <div class="alert alert-light border mb-0">
