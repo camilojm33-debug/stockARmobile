@@ -402,7 +402,7 @@ def get_notification_payload(view="unread"):
             query = query.filter(NotificationEvent.priority.in_(["critical", "high"]), NotificationEvent.archived_at.is_(None))
         elif view == "tasks":
             query = query.filter(NotificationEvent.resolved_at.is_(None), NotificationEvent.archived_at.is_(None))
-        else:
+        elif view != "all":
             query = query.filter(NotificationEvent.archived_at.is_(None))
         rows = query.order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc()).limit(100).all()
         unread_count = _current_user_notification_query().filter(
