@@ -235,12 +235,14 @@ def _persist_notifications(items):
 
     user_id = int(current_user.id)
     company_id = getattr(current_user, "company_id", None)
+    context_key = sha256(f"{user_id}:{company_id or 0}:".encode("utf-8"))
     now = utcnow()
     rows = []
     for item in items:
-        key = str(item.get("notification_key") or _notification_key(item)).strip()[:128]
-        if not key:
+        source_key = str(item.get("notification_key") or _notification_key(item)).strip()
+        if not source_key:
             continue
+        key = sha256(f"{user_id}:{company_id or 0}:{source_key}".encode("utf-8")).hexdigest()
         row = NotificationEvent.query.filter_by(user_id=user_id, notification_key=key).first()
         if row is None:
             row = NotificationEvent(
@@ -271,6 +273,17 @@ def _persist_notifications(items):
     if rows:
         db.session.commit()
     return rows
+
+
+def _current_user_notification_query():
+    from app import NotificationEvent
+    query = _current_user_notification_query()
+    if getattr(current_user, "role", None) == "superadmin":
+        return query.filter(NotificationEvent.company_id.is_(None))
+    company_id = getattr(current_user, "company_id", None)
+    if company_id:
+        return query.filter(NotificationEvent.company_id == int(company_id))
+    return query.filter(NotificationEvent.company_id.is_(None))
 
 
 def _event_to_payload(row):
@@ -311,7 +324,7 @@ def get_notification_payload(view="unread"):
         else:
             query = query.filter(NotificationEvent.archived_at.is_(None))
         rows = query.order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc()).limit(100).all()
-        unread_count = NotificationEvent.query.filter_by(user_id=current_user.id).filter(
+        unread_count = _current_user_notification_query().filter(
             NotificationEvent.read_at.is_(None),
             NotificationEvent.archived_at.is_(None),
             NotificationEvent.resolved_at.is_(None),
@@ -353,7 +366,7 @@ def mark_notification_read(notification_key):
     row.read_at = row.read_at or now
     row.updated_at = now
     db.session.commit()
-    count = NotificationEvent.query.filter_by(user_id=current_user.id).filter(
+    count = _current_user_notification_query().filter(
         NotificationEvent.read_at.is_(None),
         NotificationEvent.archived_at.is_(None),
         NotificationEvent.resolved_at.is_(None),
@@ -366,7 +379,7 @@ def mark_all_notifications_read():
         return {"ok": False, "count": 0}
     from app import NotificationEvent, db, utcnow
     now = utcnow()
-    NotificationEvent.query.filter_by(user_id=current_user.id).filter(
+    _current_user_notification_query().filter(
         NotificationEvent.read_at.is_(None),
         NotificationEvent.archived_at.is_(None),
     ).update({"read_at": now, "updated_at": now}, synchronize_session=False)
@@ -397,26 +410,5 @@ def update_notification_state(notification_key, action):
 
 
 def mark_notifications_seen():
-    """Compatibility endpoint: mark the current notification stream as read."""
-    if not getattr(current_user, "is_authenticated", False):
-        return {"ok": False, "count": 0}
-
-    from app import NotificationReadState, db, utcnow
-
-    items = _notification_items_with_keys(build_notifications())
-    signature = _signature_for_items(items)
-    state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
-    now = utcnow()
-    read_keys = set(_load_read_notification_keys(state))
-    read_keys.update(item["notification_key"] for item in items)
-    if state is None:
-        state = NotificationReadState(
-            user_id=current_user.id,
-            last_seen_signature=signature,
-            last_seen_at=now,
-        )
-        db.session.add(state)
-    state.last_seen_signature = signature
-    _save_read_notification_keys(state, list(read_keys), now)
-    db.session.commit()
-    return {"ok": True, "count": 0, "signature": signature}
+    """Backward-compatible alias for marking the current notification scope as read."""
+    return mark_all_notifications_read()
