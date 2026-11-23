@@ -545,7 +545,7 @@ def apply_prospect_filters(query, filters: dict):
         # provenance, while including every newly tracked import regardless of
         # the prospect's original source label from the spreadsheet.
         query = query.filter(
-            SaaSLead.source == source
+            (SaaSLead.source == source)
             | SaaSLead.import_records.any(SaaSLeadImportRecord.outcome == "new")
         )
     elif source:
