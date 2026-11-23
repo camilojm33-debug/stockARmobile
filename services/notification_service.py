@@ -386,12 +386,16 @@ def _event_to_payload(row):
     }
 
 
-def get_notification_payload(view="unread"):
+def get_notification_payload(view="unread", persist=False):
     """Return persisted notifications plus unread count for the current account."""
     if not getattr(current_user, "is_authenticated", False):
         return {"items": [], "count": 0, "signature": None, "unread_count": 0}
 
     current_items = _notification_items_with_keys(build_notifications())
+    if not persist:
+        state, signature, read_keys = _current_notification_state(current_items)
+        unread_items = [item for item in current_items if item["notification_key"] not in read_keys]
+        return {"items": unread_items, "count": len(unread_items), "unread_count": len(unread_items), "signature": signature}
     try:
         _persist_notifications(current_items)
         from app import NotificationEvent
@@ -405,6 +409,14 @@ def get_notification_payload(view="unread"):
         elif view != "all":
             query = query.filter(NotificationEvent.archived_at.is_(None))
         rows = query.order_by(NotificationEvent.created_at.desc(), NotificationEvent.id.desc()).limit(100).all()
+        if view == "unread" and rows:
+            company_context = getattr(current_user, "company_id", None) or 0
+            ordered_keys = [
+                sha256(f"{int(current_user.id)}:{company_context}:{item['notification_key']}".encode("utf-8")).hexdigest()
+                for item in current_items
+            ]
+            order_map = {key: index for index, key in enumerate(ordered_keys)}
+            rows.sort(key=lambda row: order_map.get(row.notification_key, len(order_map) + row.id))
         unread_count = _current_user_notification_query().filter(
             NotificationEvent.read_at.is_(None),
             NotificationEvent.archived_at.is_(None),
@@ -436,7 +448,7 @@ def mark_notification_read(notification_key):
     row = _owned_notification(requested)
     if row is None:
         # First request may arrive before the notification snapshot was persisted.
-        get_notification_payload()
+        get_notification_payload(persist=True)
         row = _owned_notification(requested)
     if row is None:
         return {"ok": False, "count": 0}
