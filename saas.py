@@ -2652,7 +2652,7 @@ def crm_import():
 @superadmin_required
 def crm_new_prospects():
     from datetime import datetime as _datetime, timedelta as _timedelta
-    from app import SaaSCampaignRecipient, SaaSLead, SaaSLeadImport, SaaSLeadImportRecord, db, utcnow
+    from app import SaaSLead, SaaSLeadImport, SaaSLeadImportRecord, db, utcnow
     from services.saas_commercial_service import apply_prospect_filters, segment_filters_from_request
 
     _require_superadmin()
@@ -3015,7 +3015,7 @@ def crm_campaign_bulk_consent(campaign_id):
 @bp.get("/crm/campaigns/<int:campaign_id>")
 @superadmin_required
 def crm_campaign_detail(campaign_id):
-    from app import SaaSCampaign, db
+    from app import SaaSCampaign, SaaSLead, SaaSLeadImport, db
     from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
     from services.saas_campaign_preflight import campaign_preflight
@@ -3030,7 +3030,6 @@ def crm_campaign_detail(campaign_id):
         segment_filters = {}
     if not isinstance(segment_filters, dict):
         segment_filters = {}
-    from app import SaaSLead
     from services.saas_commercial_service import apply_prospect_filters, parse_segment_json
 
     consent_candidates = []
