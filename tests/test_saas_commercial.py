@@ -1726,3 +1726,60 @@ def test_campaign_segments_by_import_date_and_never_campaign(app):
         assert result["eligible"] == 1
         assert result["added"] == 1
         assert [recipient.lead_id for recipient in target_campaign.recipients] == [new_lead.id]
+
+
+def test_prospect_date_segments_use_superadmin_local_calendar_days(app):
+    from datetime import datetime
+    from app import SaaSLead, User, db
+    from services.saas_commercial_service import apply_prospect_filters
+
+    with app.app_context():
+        user = User(
+            username="prospect-local-date-admin",
+            email="prospect-local-date-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        db.session.add(user)
+        db.session.flush()
+
+        before_local_midnight = SaaSLead(
+            company_name="Alta anterior al día local",
+            contact_name="Contacto",
+            created_at=datetime(2026, 11, 22, 2, 59, 59),
+            created_by_user_id=user.id,
+        )
+        on_local_midnight = SaaSLead(
+            company_name="Alta al inicio del día local",
+            contact_name="Contacto",
+            created_at=datetime(2026, 11, 22, 3, 0, 0),
+            created_by_user_id=user.id,
+        )
+        before_next_local_midnight = SaaSLead(
+            company_name="Alta antes del próximo día local",
+            contact_name="Contacto",
+            created_at=datetime(2026, 11, 23, 2, 59, 59),
+            created_by_user_id=user.id,
+        )
+        on_next_local_midnight = SaaSLead(
+            company_name="Alta al día local siguiente",
+            contact_name="Contacto",
+            created_at=datetime(2026, 11, 23, 3, 0, 0),
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([
+            before_local_midnight,
+            on_local_midnight,
+            before_next_local_midnight,
+            on_next_local_midnight,
+        ])
+        db.session.flush()
+
+        query = apply_prospect_filters(
+            SaaSLead.query,
+            {"created_from": "2026-11-22", "created_to": "2026-11-22"},
+        )
+        assert {lead.id for lead in query.all()} == {
+            on_local_midnight.id,
+            before_next_local_midnight.id,
+        }
