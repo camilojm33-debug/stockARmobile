@@ -2006,7 +2006,7 @@ def crm_inbox():
         lead = None
         lead_id = metadata.get("lead_id")
         if str(lead_id or "").isdigit():
-            from app import SaaSLead, SaaSLeadImport
+            from app import SaaSLead
             lead = SaaSLead.query.filter_by(id=int(lead_id)).first()
 
         selected_messages = (
