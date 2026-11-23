@@ -27,7 +27,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
 from config.logging_config import configure_logging
-from services.notification_service import get_notification_payload, mark_notification_read, mark_notifications_seen
+from services.notification_service import get_notification_payload, mark_notification_read, mark_notifications_seen, mark_all_notifications_read, update_notification_state
 from services.search_service import global_search
 from stockarmobile import create_app
 from stockarmobile.audit import record_audit_entry
@@ -3444,13 +3444,18 @@ def api_search():
 @app.route("/api/notifications")
 @login_required
 def api_notifications():
-    payload = get_notification_payload()
-    # Preserve the legacy keys while exposing the canonical payload shape.
+    view = str(request.args.get("view") or "unread").strip().lower()
+    if view not in {"unread", "all", "alerts", "tasks"}:
+        view = "unread"
+    payload = get_notification_payload(view=view)
+    # Keep legacy response keys while adding category/state metadata.
     return jsonify({
         "items": payload["items"],
         "notifications": payload["items"],
         "count": payload["count"],
         "notification_count": payload["count"],
+        "unread_count": payload.get("unread_count", payload["count"]),
+        "view": view,
     })
 
 
@@ -3469,6 +3474,20 @@ def api_notifications_mark_read():
     result = mark_notification_read(notification_key)
     status_code = 200 if result.get("ok") else 400
     return jsonify(result), status_code
+
+@app.route("/api/notifications/mark-all-read", methods=["POST"])
+@login_required
+def api_notifications_mark_all_read():
+    return jsonify(mark_all_notifications_read())
+
+
+@app.route("/api/notifications/<notification_key>/<action>", methods=["POST"])
+@login_required
+def api_notifications_update_state(notification_key, action):
+    if action not in {"resolve", "archive"}:
+        return jsonify({"ok": False, "error": "invalid_action"}), 400
+    result = update_notification_state(notification_key, action)
+    return jsonify(result), 200 if result.get("ok") else 404
 
 
 @app.route("/manifest.json")
