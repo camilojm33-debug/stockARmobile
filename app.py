@@ -959,6 +959,35 @@ class NotificationReadState(db.Model):
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
+class NotificationEvent(db.Model):
+    """Durable, per-user notification snapshot and lifecycle state."""
+    __tablename__ = "notification_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "notification_key", name="uq_notification_events_user_key"),
+        Index("ix_notification_events_user_created", "user_id", "created_at"),
+        Index("ix_notification_events_company_created", "company_id", "created_at"),
+        Index("ix_notification_events_user_state", "user_id", "read_at", "resolved_at", "archived_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
+    notification_key = db.Column(db.String(128), nullable=False)
+    category = db.Column(db.String(40), nullable=False, default="general")
+    priority = db.Column(db.String(20), nullable=False, default="normal")
+    title = db.Column(db.String(180), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    href = db.Column(db.String(700), nullable=False)
+    source_type = db.Column(db.String(80), nullable=True)
+    source_id = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    read_at = db.Column(db.DateTime, nullable=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    archived_at = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+
 class Product(db.Model):
     __tablename__ = "products"
     __table_args__ = (
