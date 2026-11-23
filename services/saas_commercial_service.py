@@ -12,7 +12,7 @@ import threading
 import time
 import socket
 import unicodedata
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 from email.message import EmailMessage
 from html import escape
 from io import BytesIO, StringIO
@@ -318,24 +318,49 @@ def _merge_if_empty(target, field: str, value) -> bool:
     return False
 
 def import_prospect_rows(db_session, *, rows: list[dict], filename: str, user_id: int, source: str = "import_publico"):
-    from app import SaaSLead, SaaSLeadConsent, SaaSLeadImport, utcnow
+    from app import SaaSLead, SaaSLeadConsent, SaaSLeadImport, SaaSLeadImportRecord, utcnow
+
     imp = SaaSLeadImport(
         file_name=_clean(filename)[:255] or "import.csv",
         file_format="xlsx" if filename.lower().endswith((".xlsx", ".xlsm")) else "csv",
         source=_clean(source).lower()[:80] or "import_publico",
-        status="completed", rows_read=len(rows), created_by_user_id=user_id,
+        status="completed",
+        rows_read=len(rows),
+        created_by_user_id=user_id,
     )
     db_session.add(imp)
     db_session.flush()
-    seen = set()
-    for row in rows:
+    seen = {}
+    for row_number, row in enumerate(rows, start=1):
         email = row.get("email")
         phones = {p for p in (row.get("phone"), row.get("whatsapp")) if p}
         key = ("email", email) if email else (("phone", sorted(phones)[0]) if phones else None)
+        snapshot = {
+            "row_number": row_number,
+            "company_name": (row.get("company_name") or "")[:160] or None,
+            "contact_name": (row.get("contact_name") or "")[:160] or None,
+            "email": (email or None),
+            "phone": (row.get("phone") or None),
+            "whatsapp": (row.get("whatsapp") or None),
+            "industry": (row.get("industry") or "")[:100] or None,
+            "province": (row.get("province") or "")[:100] or None,
+            "locality": (row.get("locality") or "")[:120] or None,
+        }
         if key and key in seen:
             imp.duplicate_count += 1
+            db_session.add(
+                SaaSLeadImportRecord(
+                    import_id=imp.id,
+                    lead_id=seen[key],
+                    outcome="duplicate",
+                    details="Registro repetido dentro del mismo archivo.",
+                    **snapshot,
+                )
+            )
             continue
-        if key: seen.add(key)
+        if key:
+            seen[key] = None
+
         lead = SaaSLead.query.filter(SaaSLead.email == email).first() if email else None
         if lead is None and phones:
             lead = SaaSLead.query.filter(
@@ -346,7 +371,9 @@ def import_prospect_rows(db_session, *, rows: list[dict], filename: str, user_id
             lead = SaaSLead(
                 company_name=row["company_name"][:160],
                 contact_name=row["contact_name"][:160],
-                email=email, phone=row.get("phone") or None, whatsapp=row.get("whatsapp") or None,
+                email=email,
+                phone=row.get("phone") or None,
+                whatsapp=row.get("whatsapp") or None,
                 industry=row.get("industry")[:100] if row.get("industry") else None,
                 subindustry=row.get("subindustry")[:100] if row.get("subindustry") else None,
                 province=row.get("province")[:100] if row.get("province") else None,
@@ -365,31 +392,59 @@ def import_prospect_rows(db_session, *, rows: list[dict], filename: str, user_id
                 whatsapp_consent_status=row.get("whatsapp_consent_status", "unknown"),
                 phone_consent_status=row.get("phone_consent_status", "unknown"),
                 do_not_contact=bool(row.get("do_not_contact")),
-                captured_at=now, validated_at=now, created_by_user_id=user_id,
+                captured_at=now,
+                validated_at=now,
+                created_by_user_id=user_id,
             )
             db_session.add(lead)
             db_session.flush()
             imp.inserted_count += 1
+            outcome = "new"
         else:
             changed = False
-            for field in ("contact_name","email","phone","whatsapp","industry","subindustry","province","locality","address","website","instagram","facebook","source","source_url","segment"):
+            for field in (
+                "contact_name", "email", "phone", "whatsapp", "industry", "subindustry",
+                "province", "locality", "address", "website", "instagram", "facebook",
+                "source", "source_url", "segment",
+            ):
                 changed |= _merge_if_empty(lead, field, row.get(field))
             if row.get("lead_score", 0) > (lead.lead_score or 0):
-                lead.lead_score = row["lead_score"]; changed = True
-            for field in ("email_consent_status","whatsapp_consent_status","phone_consent_status"):
+                lead.lead_score = row["lead_score"]
+                changed = True
+            for field in ("email_consent_status", "whatsapp_consent_status", "phone_consent_status"):
                 incoming = row.get(field, "unknown")
                 if incoming != "unknown" and getattr(lead, field, "unknown") == "unknown":
-                    setattr(lead, field, incoming); changed = True
+                    setattr(lead, field, incoming)
+                    changed = True
             if row.get("do_not_contact"):
-                if not lead.do_not_contact: changed = True
+                if not lead.do_not_contact:
+                    changed = True
                 lead.do_not_contact = True
                 lead.do_not_contact_at = lead.do_not_contact_at or now
             lead.validated_at = now
             if changed:
                 lead.updated_at = now
                 imp.updated_count += 1
+                outcome = "updated"
             else:
                 imp.duplicate_count += 1
+                outcome = "duplicate"
+
+        if key:
+            seen[key] = lead.id
+        db_session.add(
+            SaaSLeadImportRecord(
+                import_id=imp.id,
+                lead_id=lead.id,
+                outcome=outcome,
+                details={
+                    "new": "Prospecto incorporado por primera vez.",
+                    "updated": "Se completaron o mejoraron datos de un prospecto existente.",
+                    "duplicate": "El prospecto ya estaba registrado y no hubo cambios.",
+                }[outcome],
+                **snapshot,
+            )
+        )
         consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
         if not consent.unsubscribe_token:
             consent.unsubscribe_token = secrets.token_urlsafe(48)
@@ -403,7 +458,6 @@ def import_prospect_rows(db_session, *, rows: list[dict], filename: str, user_id
     imp.completed_at = utcnow()
     db_session.flush()
     return imp
-
 def segment_filters_from_request(request) -> dict:
     try:
         score = max(0, min(100, int(request.form.get("min_score") or request.args.get("min_score") or 0)))
@@ -414,15 +468,81 @@ def segment_filters_from_request(request) -> dict:
         cleaned = _clean(value)
         return "" if cleaned.lower() in {"todos", "todas", "all", "*"} else cleaned
 
+    def clean_date(value):
+        cleaned = clean_filter(value)
+        if not cleaned:
+            return ""
+        try:
+            return date.fromisoformat(cleaned[:10]).isoformat()
+        except ValueError:
+            return ""
+
+    try:
+        import_id = max(0, int(request.form.get("import_id") or request.args.get("import_id") or 0))
+    except (TypeError, ValueError):
+        import_id = 0
+
+    truthy = {"1", "true", "yes", "on"}
     return {
         "industry": clean_filter(request.form.get("industry") or request.args.get("industry")),
         "province": clean_filter(request.form.get("province") or request.args.get("province")),
         "locality": clean_filter(request.form.get("locality") or request.args.get("locality")),
         "segment": clean_filter(request.form.get("segment") or request.args.get("segment")),
         "min_score": score,
+        "created_from": clean_date(request.form.get("created_from") or request.args.get("created_from")),
+        "created_to": clean_date(request.form.get("created_to") or request.args.get("created_to")),
+        "import_id": import_id,
+        "source": clean_filter(request.form.get("source") or request.args.get("source"))[:80],
+        "never_campaign": str(request.form.get("never_campaign") or request.args.get("never_campaign") or "").lower() in truthy,
+        "never_contacted": str(request.form.get("never_contacted") or request.args.get("never_contacted") or "").lower() in truthy,
     }
 
 
+def apply_prospect_filters(query, filters: dict):
+    """Apply CRM segment filters consistently to the prospect dashboard and campaigns."""
+    from app import SaaSLead, SaaSLeadImportRecord
+
+    for field in ("industry", "province", "locality", "segment"):
+        value = str(filters.get(field) or "").strip()
+        if value:
+            query = query.filter(getattr(SaaSLead, field).ilike(f"%{value}%"))
+    if int(filters.get("min_score") or 0):
+        query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
+
+    created_from = str(filters.get("created_from") or "").strip()
+    if created_from:
+        try:
+            start_at = datetime.combine(date.fromisoformat(created_from), time.min)
+            query = query.filter(SaaSLead.created_at >= start_at)
+        except ValueError:
+            pass
+
+    created_to = str(filters.get("created_to") or "").strip()
+    if created_to:
+        try:
+            end_at = datetime.combine(date.fromisoformat(created_to) + timedelta(days=1), time.min)
+            query = query.filter(SaaSLead.created_at < end_at)
+        except ValueError:
+            pass
+
+    try:
+        import_id = int(filters.get("import_id") or 0)
+    except (TypeError, ValueError):
+        import_id = 0
+    if import_id > 0:
+        query = query.filter(
+            SaaSLead.import_records.any(SaaSLeadImportRecord.import_id == import_id)
+        )
+
+    source = str(filters.get("source") or "").strip()
+    if source:
+        query = query.filter(SaaSLead.source == source)
+
+    if filters.get("never_campaign"):
+        query = query.filter(~SaaSLead.campaign_recipients.any())
+    if filters.get("never_contacted"):
+        query = query.filter(SaaSLead.last_contacted_at.is_(None))
+    return query
 def register_lead_suppression(db_session, *, lead, user_id: int, reason: str = "superadmin_delete") -> bool:
     """Persist identity suppression before deleting a CRM lead."""
     from app import SaaSLeadSuppression
@@ -642,12 +762,10 @@ def _lead_whatsapp_destination(lead) -> str | None:
 def _eligible_leads_query(channel: str, filters: dict):
     from app import SaaSLead
 
-    query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
-    for field in ("industry", "province", "locality", "segment"):
-        if filters.get(field):
-            query = query.filter(getattr(SaaSLead, field).ilike(f"%{filters[field]}%"))
-    if int(filters.get("min_score") or 0):
-        query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
+    query = apply_prospect_filters(
+        SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False)),
+        filters,
+    )
     if channel == "email":
         # Email: usar toda la base con email válido que no haya pedido baja.
         # Los bloqueos generales y bajas explícitas siguen excluidos.
@@ -672,20 +790,16 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
     from app import SaaSLead
 
     filters = parse_segment_json(campaign.segment_json)
-    query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
-    for field in ("industry", "province", "locality", "segment"):
-        if filters.get(field):
-            query = query.filter(getattr(SaaSLead, field).ilike(f"%{filters[field]}%"))
-    if int(filters.get("min_score") or 0):
-        query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
+    query = apply_prospect_filters(
+        SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False)),
+        filters,
+    )
 
     total = query.count()
-    blocked_query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(True))
-    for field in ("industry", "province", "locality", "segment"):
-        if filters.get(field):
-            blocked_query = blocked_query.filter(getattr(SaaSLead, field).ilike(f"%{filters[field]}%"))
-    if int(filters.get("min_score") or 0):
-        blocked_query = blocked_query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
+    blocked_query = apply_prospect_filters(
+        SaaSLead.query.filter(SaaSLead.do_not_contact.is_(True)),
+        filters,
+    )
     blocked = blocked_query.count()
     email_candidates = query.filter(
         SaaSLead.email.isnot(None),
