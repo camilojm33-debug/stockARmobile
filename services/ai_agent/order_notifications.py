@@ -78,6 +78,11 @@ def build_ai_order_notifications():
                     "body": f"{number} de {customer} necesita costo de envío antes de generar el cobro.",
                     "href": url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id),
                     "permission": "ai_access",
+                    "notification_key": f"ai-order:{company_id}:{quote.id}:shipping_quote",
+                    "category": "orders",
+                    "priority": "high",
+                    "source_type": "ai_order",
+                    "source_id": str(quote.id),
                 }
             )
             continue
@@ -89,6 +94,11 @@ def build_ai_order_notifications():
                     "title": "Pedido IA · venta manual",
                     "body": f"{number} de {customer} · {currency} {total:.2f}. Venta confirmada manualmente desde seguimiento.",
                     "href": url_for("whatsapp_agent.ai_orders", status="confirmed"),
+                    "notification_key": f"ai-order:{company_id}:{quote.id}:manual_sale",
+                    "category": "orders",
+                    "priority": "normal",
+                    "source_type": "ai_order",
+                    "source_id": str(quote.id),
                 }
             )
             continue
@@ -101,6 +111,11 @@ def build_ai_order_notifications():
                     "title": "Pago aprobado · revisar pedido IA",
                     "body": f"{number} de {customer} tiene el pago aprobado, pero todavía no figura como venta confirmada.",
                     "href": url_for("whatsapp_agent.ai_orders", status="paid"),
+                    "notification_key": f"ai-order:{company_id}:{quote.id}:paid_review",
+                    "category": "orders",
+                    "priority": "high",
+                    "source_type": "ai_order",
+                    "source_id": str(quote.id),
                 }
             )
         elif payment_status in {"pending", "in_process", "authorized"}:
@@ -110,6 +125,11 @@ def build_ai_order_notifications():
                     "title": "Nuevo pedido IA",
                     "body": f"{number} de {customer} · {currency} {total:.2f}. Esperando aprobación de pago.",
                     "href": url_for("whatsapp_agent.ai_orders", status="pending"),
+                    "notification_key": f"ai-order:{company_id}:{quote.id}:payment_pending",
+                    "category": "orders",
+                    "priority": "normal",
+                    "source_type": "ai_order",
+                    "source_id": str(quote.id),
                 }
             )
         else:
@@ -119,6 +139,11 @@ def build_ai_order_notifications():
                     "title": "Incidencia en pedido IA",
                     "body": f"{number} de {customer} · estado de pago: {payment_status.replace('_', ' ')}.",
                     "href": url_for("whatsapp_agent.ai_orders", status="problem"),
+                    "notification_key": f"ai-order:{company_id}:{quote.id}:payment_{payment_status}",
+                    "category": "orders",
+                    "priority": "critical",
+                    "source_type": "ai_order",
+                    "source_id": str(quote.id),
                 }
             )
     return items[:6]
