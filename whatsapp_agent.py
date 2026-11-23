@@ -1397,7 +1397,7 @@ def ai_orders():
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
         or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
-        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") == "pending")
+        or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and row.get("delivery", {}).get("pickup_status") in {"pending", "partial"})
         or (selected_status == "picked_up" and row.get("delivery", {}).get("pickup_status") == "picked_up")
         or (selected_status not in {"shipping_pending", "human", "pickup_pending", "picked_up"} and row["order_key"] == selected_status)
     ]
@@ -1952,14 +1952,16 @@ def ai_order_detail(quote_id: int):
     quote = _tenant_ai_order_query(company_id, quote_id).first()
     if quote is None:
         abort(404)
+    from services.quote_pickup_service import pickup_rows_for_quote
+    pickup_summary = pickup_rows_for_quote(quote)
     return render_template(
         "ai_agent/order_detail.html",
         order=_ai_order_row(company_id, quote),
         quote=quote,
         items=list(getattr(quote, "items", []) or []),
         payment=_ai_order_payment(company_id, quote.id),
-        pickup_summary=__import__("services.quote_pickup_service", fromlist=["pickup_rows_for_quote"]).pickup_rows_for_quote(quote),
-        pickup_by_item={row["item_id"]: row for row in __import__("services.quote_pickup_service", fromlist=["pickup_rows_for_quote"]).pickup_rows_for_quote(quote)["rows"]},
+        pickup_summary=pickup_summary,
+        pickup_by_item={row["item_id"]: row for row in pickup_summary["rows"]},
     )
 
 
