@@ -1555,9 +1555,10 @@ def view_quote(quote_id):
     from services.quote_pickup_service import pickup_rows_for_quote
     pickup_summary = pickup_rows_for_quote(quote)
     pickup_by_item = {row["item_id"]: row for row in pickup_summary["rows"]}
-    for row in _quote_rows(quote):
+    rows = _quote_rows(quote)
+    for row in rows:
         row.update(pickup_by_item.get(row.get("item_id"), {}))
-    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), pickup_summary=pickup_summary, statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote), display_observations=_quote_observations_for_display(quote, company=company))
+    return render_template("presupuestos/view.html", quote=quote, rows=rows, pickup_summary=pickup_summary, statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote), display_observations=_quote_observations_for_display(quote, company=company))
 
 
 @bp.post("/<int:quote_id>/retirar-item")
