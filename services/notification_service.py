@@ -97,9 +97,10 @@ def _notification_category(item, role=None):
         (("webhook", "evento del sistema", "sistema"), "system"),
         (("ayuda", "soporte", "ticket"), "support"),
         (("referid", "comision"), "referrals"),
-        (("pago", "suscrip", "factur"), "billing"),
-        (("empresa", "alta"), "platform"),
         (("pedido ia", "vendedor ia", "agente ia", "envío", "envio"), "ai"),
+        (("pago a proveedor", "compra", "proveedor"), "purchases"),
+        (("alertas administrativas", "pago", "suscrip", "factur"), "billing"),
+        (("empresa", "alta"), "platform"),
         (("presupuesto", "cotización", "cotizacion"), "quotes"),
         (("venta",), "sales"),
         (("stock", "inventario", "producto"), "inventory"),
@@ -257,6 +258,21 @@ def build_notifications():
     items = build_ai_order_notifications() + _build_user_notifications()
     return prepare_notification_items(filter_notifications_for_user(items), role=role)
 
+def _build_notification_feed():
+    """Normalize the final feed after notification extensions have run.
+
+    Some modules wrap build_notifications() and append their own alerts after
+    the facade returns. Reapplying employee filtering and presentation here
+    keeps those extension-generated alerts inside the same permission boundary
+    and ensures every alert has the metadata expected by the UI.
+    """
+    role = user_role(current_user)
+    items = build_notifications()
+    if role == "user":
+        items = filter_notifications_for_user(items)
+    return prepare_notification_items(items, role=role)
+
+
 
 def _notification_key(item):
     """Return a stable per-notification key from the rendered notification identity."""
@@ -336,9 +352,9 @@ def _current_notification_state(items):
 
 def get_notification_payload():
     """Return unread notifications for the current user."""
-    items = _notification_items_with_keys(build_notifications())
     if not getattr(current_user, "is_authenticated", False):
         return {"items": [], "count": 0, "urgent_count": 0, "signature": None}
+    items = _notification_items_with_keys(_build_notification_feed())
 
     state, signature, read_keys = _current_notification_state(items)
     unread_items = [
@@ -364,7 +380,7 @@ def mark_notification_read(notification_key):
     if not requested_key or len(requested_key) > 128:
         return {"ok": False, "count": 0}
 
-    items = _notification_items_with_keys(build_notifications())
+    items = _notification_items_with_keys(_build_notification_feed())
     visible_keys = {item["notification_key"] for item in items}
     if requested_key not in visible_keys:
         # Do not accept arbitrary keys: a user can only mark a notification
@@ -407,7 +423,7 @@ def mark_notifications_seen():
 
     from app import NotificationReadState, db, utcnow
 
-    items = _notification_items_with_keys(build_notifications())
+    items = _notification_items_with_keys(_build_notification_feed())
     signature = _signature_for_items(items)
     state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
     now = utcnow()
