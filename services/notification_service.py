@@ -277,7 +277,7 @@ def _persist_notifications(items):
 
 def _current_user_notification_query():
     from app import NotificationEvent
-    query = _current_user_notification_query()
+    query = NotificationEvent.query.filter_by(user_id=current_user.id)
     if getattr(current_user, "role", None) == "superadmin":
         return query.filter(NotificationEvent.company_id.is_(None))
     company_id = getattr(current_user, "company_id", None)
@@ -314,7 +314,7 @@ def get_notification_payload(view="unread"):
     try:
         _persist_notifications(current_items)
         from app import NotificationEvent
-        query = NotificationEvent.query.filter_by(user_id=current_user.id)
+        query = _current_user_notification_query()
         if view == "unread":
             query = query.filter(NotificationEvent.read_at.is_(None), NotificationEvent.archived_at.is_(None), NotificationEvent.resolved_at.is_(None))
         elif view == "alerts":
