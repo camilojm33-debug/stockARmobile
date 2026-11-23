@@ -326,51 +326,74 @@ def get_notification_payload(view="unread"):
         return {"items": unread, "count": len(unread), "unread_count": len(unread), "signature": signature}
 
 
+def _owned_notification(notification_key):
+    from app import NotificationEvent
+    return NotificationEvent.query.filter_by(
+        user_id=current_user.id,
+        notification_key=str(notification_key or "").strip(),
+    ).first()
+
+
 def mark_notification_read(notification_key):
-    """Persist one visible notification as read and return remaining unread count."""
+    """Mark one persisted notification as read, scoped to the signed-in user."""
     if not getattr(current_user, "is_authenticated", False):
         return {"ok": False, "count": 0}
-
-    from app import NotificationReadState, db, utcnow
-
-    requested_key = str(notification_key or "").strip()
-    if not requested_key or len(requested_key) > 128:
+    from app import NotificationEvent, db, utcnow
+    requested = str(notification_key or "").strip()
+    if not requested or len(requested) > 128:
         return {"ok": False, "count": 0}
-
-    items = _notification_items_with_keys(build_notifications())
-    visible_keys = {item["notification_key"] for item in items}
-    if requested_key not in visible_keys:
-        # Do not accept arbitrary keys: a user can only mark a notification
-        # that belongs to their current, already permission-filtered stream.
-        unread_count = len(items)
-        try:
-            state, signature, read_keys = _current_notification_state(items)
-            unread_count = sum(1 for item in items if item["notification_key"] not in read_keys)
-        except Exception:
-            pass
-        return {"ok": False, "count": unread_count}
-
-    state, signature, read_keys = _current_notification_state(items)
-    read_keys.add(requested_key)
+    row = _owned_notification(requested)
+    if row is None:
+        # First request may arrive before the notification snapshot was persisted.
+        get_notification_payload()
+        row = _owned_notification(requested)
+    if row is None:
+        return {"ok": False, "count": 0}
     now = utcnow()
-    if state is None:
-        state = NotificationReadState(
-            user_id=current_user.id,
-            last_seen_signature=signature,
-            last_seen_at=now,
-        )
-        db.session.add(state)
-    state.last_seen_signature = signature
-    _save_read_notification_keys(state, list(read_keys), now)
+    row.read_at = row.read_at or now
+    row.updated_at = now
     db.session.commit()
+    count = NotificationEvent.query.filter_by(user_id=current_user.id).filter(
+        NotificationEvent.read_at.is_(None),
+        NotificationEvent.archived_at.is_(None),
+        NotificationEvent.resolved_at.is_(None),
+    ).count()
+    return {"ok": True, "count": count, "notification_key": requested}
 
-    unread_count = sum(1 for item in items if item["notification_key"] not in read_keys)
-    return {
-        "ok": True,
-        "count": unread_count,
-        "signature": signature,
-        "notification_key": requested_key,
-    }
+
+def mark_all_notifications_read():
+    if not getattr(current_user, "is_authenticated", False):
+        return {"ok": False, "count": 0}
+    from app import NotificationEvent, db, utcnow
+    now = utcnow()
+    NotificationEvent.query.filter_by(user_id=current_user.id).filter(
+        NotificationEvent.read_at.is_(None),
+        NotificationEvent.archived_at.is_(None),
+    ).update({"read_at": now, "updated_at": now}, synchronize_session=False)
+    db.session.commit()
+    return {"ok": True, "count": 0}
+
+
+def update_notification_state(notification_key, action):
+    """Resolve or archive a notification owned by the authenticated user."""
+    if not getattr(current_user, "is_authenticated", False):
+        return {"ok": False, "error": "authentication_required"}
+    from app import db, utcnow
+    row = _owned_notification(notification_key)
+    if row is None:
+        return {"ok": False, "error": "notification_not_found"}
+    now = utcnow()
+    if action == "resolve":
+        row.resolved_at = row.resolved_at or now
+        row.read_at = row.read_at or now
+    elif action == "archive":
+        row.archived_at = row.archived_at or now
+        row.read_at = row.read_at or now
+    else:
+        return {"ok": False, "error": "invalid_action"}
+    row.updated_at = now
+    db.session.commit()
+    return {"ok": True, "notification_key": row.notification_key}
 
 
 def mark_notifications_seen():
