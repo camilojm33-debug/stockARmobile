@@ -51,6 +51,7 @@ Fila incompleta;;;;;;;si
     assert result["format"] == "csv"
     assert len(result["rows"]) == 1
     assert result["rows"][0]["email_consent_status"] == "opted_in"
+    assert result["rows"][0]["_source_row_number"] == 2
     assert result["invalid_count"] == 1
 
 
