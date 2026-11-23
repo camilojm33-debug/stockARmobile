@@ -273,11 +273,12 @@ def parse_prospect_file(file_bytes: bytes, filename: str) -> dict:
         headers = reader.fieldnames or []
         header_map = _header_map(headers)
         rows, invalid = [], 0
-        for raw in reader:
+        for source_row_number, raw in enumerate(reader, start=2):
             if len(rows) + invalid >= MAX_IMPORT_ROWS:
                 break
             row = _build_row(raw, header_map)
             if row["valid"]:
+                row["_source_row_number"] = source_row_number
                 rows.append(row)
             else:
                 invalid += 1
@@ -294,11 +295,12 @@ def parse_prospect_file(file_bytes: bytes, filename: str) -> dict:
         headers = [str(v or "") for v in next(values, [])]
         header_map = _header_map(headers)
         rows, invalid = [], 0
-        for values_row in values:
+        for source_row_number, values_row in enumerate(values, start=2):
             if len(rows) + invalid >= MAX_IMPORT_ROWS:
                 break
             row = _build_row(dict(zip(headers, values_row)), header_map)
             if row["valid"]:
+                row["_source_row_number"] = source_row_number
                 rows.append(row)
             else:
                 invalid += 1
@@ -331,7 +333,11 @@ def import_prospect_rows(db_session, *, rows: list[dict], filename: str, user_id
     db_session.add(imp)
     db_session.flush()
     seen = {}
-    for row_number, row in enumerate(rows, start=1):
+    for sequence_number, row in enumerate(rows, start=1):
+        try:
+            row_number = max(1, int(row.get("_source_row_number") or sequence_number))
+        except (TypeError, ValueError):
+            row_number = sequence_number
         email = row.get("email")
         phones = {p for p in (row.get("phone"), row.get("whatsapp")) if p}
         key = ("email", email) if email else (("phone", sorted(phones)[0]) if phones else None)
