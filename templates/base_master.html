@@ -933,7 +933,7 @@
       {% endif %}
       <div class="d-flex gap-2">
         <button class="btn btn-outline-primary flex-shrink-0" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" title="Buscar Ctrl+K"><i class="bi bi-search"></i></button>
-        <button class="btn btn-outline-secondary flex-shrink-0 position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter" title="Notificaciones"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
+        <button class="btn btn-outline-secondary flex-shrink-0 position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter" title="Notificaciones"><i class="bi bi-bell"></i><span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger{% if not notification_count %} d-none{% endif %}">{{ notification_count or 0 }}</span></button>
         <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="themeToggle" title="Cambiar tema"><i class="bi bi-moon-stars"></i></button>
         <form method="post" action="{{ url_for('auth.logout') }}" class="flex-grow-1">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -955,7 +955,7 @@
         <span class="device-clock d-none d-sm-inline"><i class="bi bi-clock"></i><time data-device-clock>--:--:--</time></span>
         <span id="offlineConnectivityBadgeCompact" class="badge text-bg-secondary d-none d-md-inline">Verificando...</span>
         <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal"><i class="bi bi-search"></i></button>
-        <button class="btn btn-outline-secondary btn-sm position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
+        <button class="btn btn-outline-secondary btn-sm position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter"><i class="bi bi-bell"></i><span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger{% if not notification_count %} d-none{% endif %}">{{ notification_count or 0 }}</span></button>
       </div>
     </div>
   {% endif %}
@@ -996,20 +996,40 @@
   </div>
   {% if current_user.is_authenticated %}
   <button class="btn btn-primary rounded-circle position-fixed d-lg-none" style="right:16px;bottom:18px;width:56px;height:56px;z-index:1010" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" aria-label="Buscar"><i class="bi bi-search"></i></button>
-  <div class="offcanvas offcanvas-end" tabindex="-1" id="notificationCenter">
-    <div class="offcanvas-header">
-      <h5 class="offcanvas-title">Notificaciones</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="notificationCenter" aria-labelledby="notificationCenterTitle">
+    <div class="offcanvas-header border-bottom">
+      <div>
+        <h5 class="offcanvas-title fw-bold mb-1" id="notificationCenterTitle"><i class="bi bi-bell me-2 text-primary"></i>Centro de notificaciones</h5>
+        <div class="small text-muted" id="notificationSummary" aria-live="polite">{{ notification_count or 0 }} sin leer · {{ notification_items|selectattr('is_urgent')|list|length }} prioritarias</div>
+      </div>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
     </div>
-    <div class="offcanvas-body">
-      {% for item in notification_items %}
-      <a class="d-block text-decoration-none text-reset border rounded-3 p-3 mb-2 js-notification-item" href="{{ item.href }}" data-notification-key="{{ item.notification_key }}">
-        <span class="badge text-bg-{{ item.type }} mb-2">{{ item.title }}</span>
-        <div class="small text-muted">{{ item.body }}</div>
-      </a>
-      {% else %}
-      <div class="empty-state">Sin alertas importantes.</div>
-      {% endfor %}
+    <div class="offcanvas-body d-flex flex-column gap-3">
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary flex-grow-1" type="button" id="refreshNotifications"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
+        <button class="btn btn-sm btn-outline-primary flex-grow-1" type="button" id="markAllNotificationsRead"{% if not notification_count %} hidden{% endif %}><i class="bi bi-check2-all me-1"></i>Marcar todas leídas</button>
+      </div>
+      <div class="btn-group btn-group-sm w-100" role="group" aria-label="Filtrar notificaciones">
+        <button class="btn btn-primary" type="button" data-notification-filter="all" aria-pressed="true">Todas</button>
+        <button class="btn btn-outline-secondary" type="button" data-notification-filter="urgent" aria-pressed="false">Prioritarias</button>
+        <button class="btn btn-outline-secondary" type="button" data-notification-filter="other" aria-pressed="false">Otras</button>
+      </div>
+      <div id="notificationList" class="d-flex flex-column gap-2" aria-live="polite">
+        {% for item in notification_items %}
+        <a class="d-block text-decoration-none text-reset border rounded-3 p-3 js-notification-item" href="{{ item.href }}" data-notification-key="{{ item.notification_key }}" data-category="{{ item.category|default('general') }}" data-severity="{{ item.severity|default('normal') }}">
+          <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+            <span class="badge text-bg-{{ 'danger' if item.severity == 'critical' else 'warning' if item.severity == 'high' else item.type }}">{{ item.severity_label|default('Notificación') }}</span>
+            <span class="small text-muted">{{ item.category_label|default('General') }}</span>
+          </div>
+          <div class="fw-semibold mb-1"><i class="bi {{ item.icon|default('bi-info-circle-fill') }} me-1"></i>{{ item.title }}</div>
+          <div class="small text-muted">{{ item.body }}</div>
+          <div class="small text-primary fw-semibold mt-2">{{ item.action_label|default('Revisar') }} <i class="bi bi-arrow-right"></i></div>
+        </a>
+        {% else %}
+        <div class="empty-state py-4 text-center" id="notificationEmpty"><i class="bi bi-check2-circle d-block fs-2 mb-2 text-success"></i>No tenés notificaciones pendientes.</div>
+        {% endfor %}
+      </div>
+      <div class="small text-muted mt-auto">Las alertas se actualizan al abrir este panel. También podés actualizarlas manualmente.</div>
     </div>
   </div>
   <div class="modal fade" id="spotlightModal" tabindex="-1">
@@ -1102,17 +1122,188 @@
         bootstrap.Toast.getOrCreateInstance(toastEl).show();
       });
       const notificationCenter = document.getElementById('notificationCenter');
+      const notificationList = document.getElementById('notificationList');
+      const notificationSummary = document.getElementById('notificationSummary');
+      const markAllNotificationsButton = document.getElementById('markAllNotificationsRead');
+      const notificationCsrfToken = '{{ csrf_token() }}';
+      let notificationRefreshPending = false;
+      let activeNotificationFilter = 'all';
+
       function updateNotificationBadges(count) {
-        const normalizedCount = Number.isFinite(Number(count)) ? Number(count) : 0;
+        const parsedCount = Number(count);
+        const normalizedCount = Number.isFinite(parsedCount) ? Math.max(0, parsedCount) : 0;
         document.querySelectorAll('.js-notification-badge').forEach(function(el) {
-          if (normalizedCount <= 0) {
-            el.remove();
-          } else {
-            el.textContent = normalizedCount;
+          el.textContent = String(normalizedCount);
+          el.classList.toggle('d-none', normalizedCount <= 0);
+        });
+        if (markAllNotificationsButton) {
+          markAllNotificationsButton.hidden = normalizedCount <= 0;
+        }
+      }
+
+      function notificationTargetUrl(href) {
+        try {
+          const target = new URL(String(href || '/'), window.location.origin);
+          if (target.origin !== window.location.origin || !['http:', 'https:'].includes(target.protocol)) {
+            return '/';
           }
+          return target.pathname + target.search + target.hash;
+        } catch (error) {
+          return '/';
+        }
+      }
+
+      function makeNotificationElement(item) {
+        const link = document.createElement('a');
+        link.className = 'd-block text-decoration-none text-reset border rounded-3 p-3 js-notification-item';
+        link.href = notificationTargetUrl(item.href);
+        link.dataset.notificationKey = String(item.notification_key || '');
+        link.dataset.category = String(item.category || 'general');
+        link.dataset.severity = String(item.severity || 'normal');
+
+        const metadata = document.createElement('div');
+        metadata.className = 'd-flex align-items-center justify-content-between gap-2 mb-2';
+        const severity = document.createElement('span');
+        severity.className = 'badge ' + (
+          item.severity === 'critical' ? 'text-bg-danger' :
+          item.severity === 'high' ? 'text-bg-warning' :
+          'text-bg-' + (['primary', 'success', 'info', 'secondary'].includes(item.type) ? item.type : 'secondary')
+        );
+        severity.textContent = String(item.severity_label || 'Notificación');
+        const category = document.createElement('span');
+        category.className = 'small text-muted';
+        category.textContent = String(item.category_label || 'General');
+        metadata.append(severity, category);
+
+        const title = document.createElement('div');
+        title.className = 'fw-semibold mb-1';
+        const icon = document.createElement('i');
+        icon.className = 'bi ' + String(item.icon || 'bi-info-circle-fill') + ' me-1';
+        title.append(icon, document.createTextNode(String(item.title || 'Notificación')));
+
+        const body = document.createElement('div');
+        body.className = 'small text-muted';
+        body.textContent = String(item.body || '');
+
+        const action = document.createElement('div');
+        action.className = 'small text-primary fw-semibold mt-2';
+        action.textContent = String(item.action_label || 'Revisar') + ' →';
+
+        link.append(metadata, title, body, action);
+        return link;
+      }
+
+      function applyNotificationFilter() {
+        if (!notificationList) return;
+        notificationList.querySelectorAll('.js-notification-item').forEach(function(item) {
+          const urgent = ['critical', 'high'].includes(item.dataset.severity);
+          const visible = activeNotificationFilter === 'all' ||
+            (activeNotificationFilter === 'urgent' && urgent) ||
+            (activeNotificationFilter === 'other' && !urgent);
+          item.hidden = !visible;
+        });
+        notificationCenter?.querySelectorAll('[data-notification-filter]').forEach(function(button) {
+          const selected = button.dataset.notificationFilter === activeNotificationFilter;
+          button.classList.toggle('btn-primary', selected);
+          button.classList.toggle('btn-outline-secondary', !selected);
+          button.setAttribute('aria-pressed', selected ? 'true' : 'false');
         });
       }
+
+      function updateNotificationSummary(items, count) {
+        if (!notificationSummary) return;
+        const urgentCount = (items || []).filter(function(item) {
+          return item && (item.severity === 'critical' || item.severity === 'high');
+        }).length;
+        notificationSummary.textContent = count <= 0
+          ? 'Estás al día. No hay notificaciones pendientes.'
+          : count + ' sin leer · ' + urgentCount + ' prioritarias';
+      }
+
+      function renderNotificationItems(items) {
+        if (!notificationList) return;
+        notificationList.replaceChildren();
+        if (!Array.isArray(items) || items.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'empty-state py-4 text-center';
+          const icon = document.createElement('i');
+          icon.className = 'bi bi-check2-circle d-block fs-2 mb-2 text-success';
+          const label = document.createElement('span');
+          label.textContent = 'No tenés notificaciones pendientes.';
+          empty.append(icon, label);
+          notificationList.append(empty);
+          return;
+        }
+        items.forEach(function(item) {
+          if (item && typeof item === 'object') notificationList.append(makeNotificationElement(item));
+        });
+        applyNotificationFilter();
+      }
+
+      async function refreshNotificationCenter() {
+        if (notificationRefreshPending || !notificationCenter) return;
+        notificationRefreshPending = true;
+        const refreshButton = document.getElementById('refreshNotifications');
+        if (refreshButton) refreshButton.disabled = true;
+        try {
+          const response = await fetch('/api/notifications', {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json' },
+          });
+          if (!response.ok) throw new Error('No se pudieron actualizar las notificaciones.');
+          const payload = await response.json();
+          const items = Array.isArray(payload.items) ? payload.items : (Array.isArray(payload.notifications) ? payload.notifications : []);
+          const count = Number(payload.count ?? payload.notification_count ?? items.length) || 0;
+          renderNotificationItems(items);
+          updateNotificationBadges(count);
+          updateNotificationSummary(items, count);
+        } catch (error) {
+          if (notificationSummary) notificationSummary.textContent = 'No se pudieron actualizar las alertas. Podés reintentar.';
+        } finally {
+          notificationRefreshPending = false;
+          if (refreshButton) refreshButton.disabled = false;
+        }
+      }
+
+      notificationCenter?.addEventListener('show.bs.offcanvas', refreshNotificationCenter);
+      document.getElementById('refreshNotifications')?.addEventListener('click', refreshNotificationCenter);
+
       notificationCenter?.addEventListener('click', function(event) {
+        const filterButton = event.target.closest('[data-notification-filter]');
+        if (filterButton && notificationCenter.contains(filterButton)) {
+          activeNotificationFilter = filterButton.dataset.notificationFilter || 'all';
+          applyNotificationFilter();
+          return;
+        }
+
+        const markAllButton = event.target.closest('#markAllNotificationsRead');
+        if (markAllButton) {
+          markAllButton.disabled = true;
+          fetch('/api/notifications/mark-seen', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': notificationCsrfToken },
+            credentials: 'same-origin',
+          })
+            .then(function(response) {
+              if (!response.ok) throw new Error('No se pudieron marcar las alertas.');
+              return response.json();
+            })
+            .then(function(payload) {
+              renderNotificationItems([]);
+              updateNotificationBadges(payload.count ?? 0);
+              updateNotificationSummary([], 0);
+            })
+            .catch(function() {
+              if (notificationSummary) notificationSummary.textContent = 'No se pudieron marcar todas como leídas. Reintentá.';
+            })
+            .finally(function() {
+              markAllButton.disabled = false;
+            });
+          return;
+        }
+
         const link = event.target.closest('.js-notification-item');
         if (!link || !notificationCenter.contains(link)) return;
 
@@ -1127,7 +1318,7 @@
         fetch('/api/notifications/mark-read', {
           method: 'POST',
           headers: {
-            'X-CSRFToken': '{{ csrf_token() }}',
+            'X-CSRFToken': notificationCsrfToken,
             'Content-Type': 'application/json',
           },
           credentials: 'same-origin',
@@ -1135,23 +1326,21 @@
           keepalive: true,
         })
           .then(function(response) {
-            if (!response.ok) throw new Error('No se pudo marcar la notificacion como leida.');
+            if (!response.ok) throw new Error('No se pudo marcar la notificación como leída.');
             return response.json();
           })
           .then(function(payload) {
             link.remove();
             updateNotificationBadges(payload.count);
-            if (!notificationCenter.querySelector('.js-notification-item')) {
-              const body = notificationCenter.querySelector('.offcanvas-body');
-              if (body) {
-                body.innerHTML = '<div class="empty-state">Sin alertas importantes.</div>';
-              }
-            }
+            const remaining = notificationList ? Array.from(notificationList.querySelectorAll('.js-notification-item')) : [];
+            updateNotificationSummary(remaining.map(function(node) {
+              return { severity: node.dataset.severity };
+            }), payload.count);
+            if (!remaining.length) renderNotificationItems([]);
             window.location.assign(targetHref);
           })
           .catch(function() {
-            // Nunca bloqueamos la navegacion hacia el destino por un fallo de
-            // lectura; el usuario igualmente puede consultar la alerta.
+            // La navegación nunca queda bloqueada por un fallo de lectura.
             window.location.assign(targetHref);
           });
       });

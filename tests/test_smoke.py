@@ -9377,7 +9377,11 @@ def test_notifications_are_read_and_removed_individually():
         second = client.get("/api/notifications")
         assert second.get_json()["count"] == 2
 
-        first_key = first_payload["items"][0]["notification_key"]
+        first_key = next(
+            item["notification_key"]
+            for item in first_payload["items"]
+            if item["title"] == "Venta nueva"
+        )
         first_read = client.post(
             "/api/notifications/mark-read",
             json={"notification_key": first_key},
