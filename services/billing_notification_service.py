@@ -54,15 +54,14 @@ class NotificationService:
                     row.id for row in db_session.query(User.id).filter(
                         User.company_id == int(company_id),
                         User.role == "admin",
-                        getattr(User, "is_active", True) == True,
+                        User.active.is_(True),
                     ).all()
                 ]
                 href = "/admin/portal"
-                if payment_id:
-                    href = "/admin/portal?payment_id=" + str(payment_id)
                 stable_event = event_id or f"{source}:{event}:{payment_id or subscription_id or invoice_id or 'system'}:{status or ''}"
-                record_notification_event(
-                    db_session,
+                with db_session.begin_nested():
+                    record_notification_event(
+                        db_session,
                     event_key=stable_event,
                     title="Incidencia de pago" if normalized_status in {"failed", "rejected", "refunded", "cancelled", "canceled", "charged_back"} else "Incidencia de billing",
                     body=str(detail or event)[:1500],
@@ -71,9 +70,24 @@ class NotificationService:
                     priority="high",
                     company_id=int(company_id),
                     recipient_user_ids=recipients,
-                    source_type=source,
-                    source_id=str(payment_id or subscription_id or invoice_id or event_id or ""),
-                )
+                        source_type=source,
+                        source_id=str(payment_id or subscription_id or invoice_id or event_id or ""),
+                    )
+                    if "webhook_validation_error" in event_name or "webhook_error" in event_name:
+                        platform_users = [row.id for row in db_session.query(User.id).filter(User.role == "superadmin", User.active.is_(True)).all()]
+                        record_notification_event(
+                            db_session,
+                            event_key=f"platform:{stable_event}",
+                            title="Validación de webhook",
+                            body=str(detail or event)[:1500],
+                            href="/superadmin",
+                            category="system",
+                            priority="critical",
+                            company_id=None,
+                            recipient_user_ids=platform_users,
+                            source_type=source,
+                            source_id=str(event_id or payment_id or ""),
+                        )
             except Exception:
                 # Notification delivery must never abort or roll back billing.
                 import logging
