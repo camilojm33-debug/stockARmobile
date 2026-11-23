@@ -3,6 +3,7 @@
 {% block title %}{{ order.number }} - Pedidos IA{% endblock %}
 
 {% block content %}
+{% set delivery = order.delivery %}
 <div class="app-shell">
   <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
     <div>
