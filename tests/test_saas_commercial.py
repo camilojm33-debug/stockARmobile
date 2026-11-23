@@ -1561,6 +1561,7 @@ def test_prospect_import_records_new_updated_and_duplicate_rows(app):
             "phone_consent_status": "unknown",
             "do_not_contact": False,
             "source": "import_publico",
+            "website": None,
         }
         first = import_prospect_rows(
             db.session,
@@ -1579,18 +1580,33 @@ def test_prospect_import_records_new_updated_and_duplicate_rows(app):
         assert first_records[0].lead_id is not None
         assert first_records[1].lead_id == first_records[0].lead_id
 
+        updated_row = {**row, "website": "https://ferreteria.example"}
         second = import_prospect_rows(
             db.session,
-            rows=[row],
-            filename="repeticion.csv",
+            rows=[updated_row],
+            filename="actualizacion.csv",
             user_id=user.id,
         )
         db.session.commit()
         assert second.inserted_count == 0
-        assert second.updated_count == 0
-        assert second.duplicate_count == 1
+        assert second.updated_count == 1
+        assert second.duplicate_count == 0
         assert SaaSLeadImportRecord.query.filter_by(
-            import_id=second.id, outcome="duplicate"
+            import_id=second.id, outcome="updated"
+        ).count() == 1
+
+        third = import_prospect_rows(
+            db.session,
+            rows=[updated_row],
+            filename="repeticion.csv",
+            user_id=user.id,
+        )
+        db.session.commit()
+        assert third.inserted_count == 0
+        assert third.updated_count == 0
+        assert third.duplicate_count == 1
+        assert SaaSLeadImportRecord.query.filter_by(
+            import_id=third.id, outcome="duplicate"
         ).count() == 1
 
 
