@@ -3422,6 +3422,7 @@ def api_notifications():
         "notifications": payload["items"],
         "count": payload["count"],
         "notification_count": payload["count"],
+        "urgent_count": payload.get("urgent_count", 0),
     })
 
 
