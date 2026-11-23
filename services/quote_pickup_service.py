@@ -14,8 +14,8 @@ def _decimal(value: Any) -> Decimal:
         result = Decimal(str(value or "0"))
     except (InvalidOperation, ValueError, TypeError):
         raise ValueError("Ingresá una cantidad válida.")
-    if not result.is_finite():
-        raise ValueError("Ingresá una cantidad válida.")
+    if not result.is_finite() or result < 0:
+        raise ValueError("Ingresá una cantidad válida; no puede ser negativa.")
     return result
 
 
