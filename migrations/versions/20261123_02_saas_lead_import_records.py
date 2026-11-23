@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20261123_02_saas_lead_import_records"
+revision = "20261123_02_lead_import_rows"
 down_revision = "20261123_01_quote_item_pickup"
 branch_labels = None
 depends_on = None
