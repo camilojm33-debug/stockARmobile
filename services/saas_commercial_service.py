@@ -540,7 +540,15 @@ def apply_prospect_filters(query, filters: dict):
         )
 
     source = str(filters.get("source") or "").strip()
-    if source:
+    if source == "import_publico":
+        # Preserve useful filtering for legacy imports that predate row-level
+        # provenance, while including every newly tracked import regardless of
+        # the prospect's original source label from the spreadsheet.
+        query = query.filter(
+            SaaSLead.source == source
+            | SaaSLead.import_records.any(SaaSLeadImportRecord.outcome == "new")
+        )
+    elif source:
         query = query.filter(SaaSLead.source == source)
 
     if filters.get("never_campaign"):
