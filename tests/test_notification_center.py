@@ -114,3 +114,90 @@ def test_individual_and_bulk_notification_reads_persist(app, monkeypatch):
             assert final_payload["items"] == []
             assert final_payload["count"] == 0
             assert final_payload["urgent_count"] == 0
+
+
+
+def test_final_feed_normalizes_notifications_added_by_extensions(app, monkeypatch):
+    with app.app_context():
+        admin = User(
+            username="notification_admin",
+            email="notification_admin@example.test",
+            password_hash="unused-test-hash",
+            role="admin",
+            active=True,
+        )
+        db.session.add(admin)
+        db.session.commit()
+
+        extension_items = [
+            {
+                "type": "warning",
+                "title": "Pago a proveedor",
+                "body": "Una obligación vence pronto.",
+                "href": "/compras/proveedores/1/pagos/1",
+            }
+        ]
+        # Simulate a module that wraps build_notifications() and appends an
+        # item after the main notification facade has returned.
+        monkeypatch.setattr(
+            notification_service,
+            "build_notifications",
+            lambda: extension_items,
+        )
+
+        with app.test_request_context("/"):
+            login_user(admin)
+            payload = notification_service.get_notification_payload()
+
+            assert payload["count"] == 1
+            assert payload["urgent_count"] == 1
+            assert payload["items"][0]["severity"] == "high"
+            assert payload["items"][0]["category"] == "purchases"
+
+
+def test_final_feed_rechecks_employee_permissions_after_extensions(app, monkeypatch):
+    with app.app_context():
+        employee = User(
+            username="notification_extension_employee",
+            email="notification_extension_employee@example.test",
+            password_hash="unused-test-hash",
+            role="user",
+            permissions_json='["inventory"]',
+            active=True,
+        )
+        db.session.add(employee)
+        db.session.commit()
+
+        extension_items = [
+            {
+                "type": "success",
+                "title": "Ventas",
+                "body": "Datos de ventas.",
+                "href": "/ventas/",
+                "permission": "sales",
+            },
+            {
+                "type": "warning",
+                "title": "Stock bajo",
+                "body": "Revisar inventario.",
+                "href": "/productos/",
+                "permission": "inventory",
+            },
+            {
+                "type": "danger",
+                "title": "Administración",
+                "body": "Solo administradores.",
+                "href": "/superadmin",
+            },
+        ]
+        monkeypatch.setattr(
+            notification_service,
+            "build_notifications",
+            lambda: extension_items,
+        )
+
+        with app.test_request_context("/"):
+            login_user(employee)
+            payload = notification_service.get_notification_payload()
+
+            assert [item["title"] for item in payload["items"]] == ["Stock bajo"]
