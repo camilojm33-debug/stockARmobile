@@ -2850,9 +2850,19 @@ def crm_campaigns():
 
     _require_superadmin()
     default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
-    from app import SaaSLeadImport
+    from app import SaaSLeadImport, SaaSLeadImportRecord
     from services.saas_commercial_service import segment_filters_from_request
-    import_batches = SaaSLeadImport.query.order_by(SaaSLeadImport.created_at.desc()).limit(100).all()
+    import_batches = (
+        SaaSLeadImport.query.join(
+            SaaSLeadImportRecord,
+            SaaSLeadImportRecord.import_id == SaaSLeadImport.id,
+        )
+        .filter(SaaSLeadImportRecord.outcome == "new")
+        .distinct()
+        .order_by(SaaSLeadImport.created_at.desc())
+        .limit(100)
+        .all()
+    )
     campaign_filters = segment_filters_from_request(request)
     if request.method == "POST":
         filters = segment_filters_from_request(request)
@@ -3015,7 +3025,7 @@ def crm_campaign_bulk_consent(campaign_id):
 @bp.get("/crm/campaigns/<int:campaign_id>")
 @superadmin_required
 def crm_campaign_detail(campaign_id):
-    from app import SaaSCampaign, SaaSLead, SaaSLeadImport, db
+    from app import SaaSCampaign, SaaSLead, SaaSLeadImport, SaaSLeadImportRecord, db
     from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
     from services.saas_campaign_preflight import campaign_preflight
@@ -3038,7 +3048,17 @@ def crm_campaign_detail(campaign_id):
         SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False)),
         consent_filters,
     )
-    import_batches = SaaSLeadImport.query.order_by(SaaSLeadImport.created_at.desc()).limit(100).all()
+    import_batches = (
+        SaaSLeadImport.query.join(
+            SaaSLeadImportRecord,
+            SaaSLeadImportRecord.import_id == SaaSLeadImport.id,
+        )
+        .filter(SaaSLeadImportRecord.outcome == "new")
+        .distinct()
+        .order_by(SaaSLeadImport.created_at.desc())
+        .limit(100)
+        .all()
+    )
     if campaign.channel in {"email", "both"}:
         candidates = candidate_query.filter(
             SaaSLead.email.isnot(None),
