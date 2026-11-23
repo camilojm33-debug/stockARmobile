@@ -293,6 +293,20 @@ def _persist_notifications(items):
         if not source_key:
             continue
         key = sha256(f"{user_id}:{company_id or 0}:{source_key}".encode("utf-8")).hexdigest()
+        source_type = str(item.get("source_type") or "snapshot")[:80] or None
+        source_id = str(item.get("source_id") or "")[:120] or None
+        if source_type == "ai_order" and source_id:
+            NotificationEvent.query.filter_by(
+                user_id=user_id,
+                company_id=company_id,
+                source_type="ai_order",
+                source_id=source_id,
+                resolved_at=None,
+                archived_at=None,
+            ).filter(NotificationEvent.notification_key != key).update(
+                {"resolved_at": now, "read_at": now, "updated_at": now},
+                synchronize_session=False,
+            )
         row = NotificationEvent.query.filter_by(user_id=user_id, notification_key=key).first()
         if row is None:
             row = NotificationEvent(
@@ -304,8 +318,8 @@ def _persist_notifications(items):
                 title=str(item.get("title") or "Notificación")[:180],
                 body=str(item.get("body") or ""),
                 href=str(item.get("href") or "/")[:700],
-                source_type=str(item.get("source_type") or "snapshot")[:80] or None,
-                source_id=str(item.get("source_id") or "")[:120] or None,
+                source_type=source_type,
+                source_id=source_id,
                 created_at=now,
                 updated_at=now,
             )
