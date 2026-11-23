@@ -59,7 +59,7 @@ class NotificationService:
                 ]
                 href = "/admin/portal"
                 stable_event = event_id or f"{source}:{event}:{payment_id or subscription_id or invoice_id or 'system'}:{status or ''}"
-                                with db_session.begin_nested():
+                with db_session.begin_nested():
                     record_notification_event(
                         db_session,
                         event_key=stable_event,
