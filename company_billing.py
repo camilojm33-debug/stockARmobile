@@ -4702,8 +4702,8 @@ def company_settings_user_reset_password(user_id):
     force_change = (request.form.get("force_change") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     if new_password or confirm_password:
-        if len(new_password) < 6:
-            flash("La nueva contraseña debe tener al menos 6 caracteres.", "danger")
+        if len(new_password) < 8:
+            flash("La nueva contraseña debe tener al menos 8 caracteres.", "danger")
             return redirect(url_for("company_billing.company_settings", panel="employees"))
         if new_password != confirm_password:
             flash("Las contraseñas no coinciden.", "danger")
@@ -4738,8 +4738,8 @@ def company_settings_change_password():
     if not current_user.check_password(current_password):
         flash("La contrasena actual es incorrecta.", "danger")
         return redirect(url_for("company_billing.company_settings"))
-    if len(new_password) < 6:
-        flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+    if len(new_password) < 8:
+        flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
         return redirect(url_for("company_billing.company_settings"))
     if new_password != confirm_password:
         flash("Las contrasenas no coinciden.", "danger")
