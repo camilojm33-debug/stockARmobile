@@ -677,10 +677,6 @@ def activity_edit(activity_id):
         clients=clients,
         opportunities=opportunities,
         activity_types=ACTIVITY_TYPES,
-        consent_link_url=(
-            url_for("crm.public_consent", token=client.marketing_consent_token, _external=True)
-            if client.marketing_consent_token else None
-        ),
     )
 
 
