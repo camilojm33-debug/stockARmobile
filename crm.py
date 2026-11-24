@@ -8,9 +8,17 @@ import re
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy import func, or_
+from sqlalchemy.orm import joinedload
 
 from app import db, tenant_required, scope_query_to_company
 from stockarmobile.decorators import ai_pro_crm_required
+from stockarmobile.helpers.dates import (
+    DEFAULT_TIMEZONE,
+    format_local_datetime,
+    local_day_bounds_utc_naive,
+    parse_local_datetime_to_utc_naive,
+    utcnow_naive,
+)
 from crm_models import CRMActivity, CRMOpportunity
 
 bp = Blueprint("crm", __name__)
@@ -40,7 +48,26 @@ def _company_id():
 
 
 def _now():
-    return datetime.utcnow()
+    return utcnow_naive()
+
+
+def _company_timezone_name():
+    from app import Company
+
+    company_id = _company_id()
+    if not company_id:
+        return DEFAULT_TIMEZONE
+    company = db.session.get(Company, company_id)
+    return (getattr(company, "timezone", None) or DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
+
+
+def _page_number():
+    return max(1, request.args.get("page", 1, type=int) or 1)
+
+
+def _append_if_missing(rows, item):
+    if item is not None and all(existing.id != item.id for existing in rows):
+        rows.append(item)
 
 
 def _opportunity_query():
@@ -52,12 +79,7 @@ def _activity_query():
 
 
 def _parse_datetime(value):
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return None
+    return parse_local_datetime_to_utc_naive(value, _company_timezone_name())
 
 
 def _client_for_company(client_id):
@@ -88,7 +110,12 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
     quote = None
     sale = None
     if quote_id:
-        quote = scope_query_to_company(Quote.query, Quote).filter(Quote.id == quote_id).first()
+        quote = (
+            scope_query_to_company(Quote.query, Quote)
+            .filter(Quote.id == quote_id)
+            .with_for_update()
+            .first()
+        )
         if quote is None or int(quote.client_id or 0) != int(client_id):
             raise ValueError("El presupuesto debe pertenecer al mismo cliente y empresa.")
         duplicate = _opportunity_query().filter(CRMOpportunity.quote_id == quote.id)
@@ -98,7 +125,12 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
             raise ValueError("Ese presupuesto ya está vinculado a otra oportunidad del CRM.")
 
     if sale_id:
-        sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first()
+        sale = (
+            scope_query_to_company(Sale.query, Sale)
+            .filter(Sale.id == sale_id)
+            .with_for_update()
+            .first()
+        )
         if sale is None or int(sale.client_id or 0) != int(client_id):
             raise ValueError("La venta debe pertenecer al mismo cliente y empresa.")
         current_opportunity_link = (
@@ -131,14 +163,66 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
     return quote, sale
 
 
-def _opportunity_form_options():
+def _opportunity_form_options(*, lookup="", selected_client_id=None, opportunity=None):
     from app import Client, Quote, Sale, User
 
+    lookup = (lookup or "").strip()
+    clients_query = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client)
+    quotes_query = scope_query_to_company(Quote.query, Quote)
+    sales_query = scope_query_to_company(Sale.query, Sale)
+
+    if lookup:
+        like = f"%{lookup}%"
+        clients_query = clients_query.filter(
+            or_(Client.name.ilike(like), Client.phone.ilike(like), Client.whatsapp.ilike(like))
+        )
+        quotes_query = quotes_query.outerjoin(Client, Quote.client_id == Client.id).filter(
+            or_(Quote.number.ilike(like), Client.name.ilike(like))
+        )
+        sales_query = sales_query.outerjoin(Client, Sale.client_id == Client.id).filter(
+            or_(Sale.customer.ilike(like), Client.name.ilike(like))
+        )
+
+    clients = clients_query.order_by(Client.name).limit(100).all()
+    quotes = (
+        quotes_query.options(joinedload(Quote.client))
+        .order_by(Quote.date.desc(), Quote.id.desc()).limit(100).all()
+    )
+    sales = (
+        sales_query.options(joinedload(Sale.client))
+        .order_by(Sale.date.desc(), Sale.id.desc()).limit(100).all()
+    )
+
+    selected_client = _client_for_company(selected_client_id) if selected_client_id else None
+    _append_if_missing(clients, selected_client)
+    if opportunity is not None:
+        _append_if_missing(clients, _client_for_company(opportunity.client_id))
+        if opportunity.quote_id:
+            linked_quote = (
+                scope_query_to_company(Quote.query, Quote)
+                .options(joinedload(Quote.client))
+                .filter(Quote.id == opportunity.quote_id).first()
+            )
+            _append_if_missing(quotes, linked_quote)
+        if opportunity.sale_id:
+            linked_sale = (
+                scope_query_to_company(Sale.query, Sale)
+                .options(joinedload(Sale.client))
+                .filter(Sale.id == opportunity.sale_id).first()
+            )
+            _append_if_missing(sales, linked_sale)
+
+    owners = (
+        scope_query_to_company(User.query.filter(User.active.is_(True)), User)
+        .order_by(User.username).limit(100).all()
+    )
     return {
-        "clients": scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all(),
-        "quotes": scope_query_to_company(Quote.query, Quote).order_by(Quote.date.desc(), Quote.id.desc()).limit(250).all(),
-        "sales": scope_query_to_company(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).limit(250).all(),
-        "owners": scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.username).all(),
+        "clients": clients,
+        "quotes": quotes,
+        "sales": sales,
+        "owners": owners,
+        "lookup": lookup,
+        "timezone_name": _company_timezone_name(),
     }
 
 
@@ -216,28 +300,63 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
 @ai_pro_crm_required
 def index():
     company_id = _company_id()
+    timezone_name = _company_timezone_name()
+    now = _now()
+    today_start, today_end = local_day_bounds_utc_naive(tz_name=timezone_name)
     open_opps = _opportunity_query().filter(CRMOpportunity.status == "open")
+    weighted_value = db.session.query(
+        func.coalesce(
+            func.sum(CRMOpportunity.value * CRMOpportunity.probability / 100),
+            0,
+        )
+    ).filter(
+        CRMOpportunity.company_id == company_id,
+        CRMOpportunity.status == "open",
+    ).scalar()
     stats = {
         "open_count": open_opps.count(),
         "pipeline_value": float(db.session.query(func.coalesce(func.sum(CRMOpportunity.value), 0)).filter(
             CRMOpportunity.company_id == company_id, CRMOpportunity.status == "open"
         ).scalar() or 0),
-        "weighted_value": float(sum(row.weighted_value for row in open_opps.all())),
+        "weighted_value": float(weighted_value or 0),
         "overdue_activities": _activity_query().filter(
             CRMActivity.status == "pending",
             CRMActivity.due_at.isnot(None),
-            CRMActivity.due_at < _now(),
+            CRMActivity.due_at < now,
         ).count(),
         "today_activities": _activity_query().filter(
             CRMActivity.status == "pending",
-            CRMActivity.due_at.isnot(None),
-            CRMActivity.due_at >= _now().replace(hour=0, minute=0, second=0, microsecond=0),
-            CRMActivity.due_at < (_now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)),
+            CRMActivity.due_at >= today_start,
+            CRMActivity.due_at < today_end,
         ).count(),
     }
-    priorities = _activity_query().filter(CRMActivity.status == "pending").order_by(CRMActivity.due_at.asc().nullslast(), CRMActivity.id.desc()).limit(8).all()
-    hot = open_opps.order_by(CRMOpportunity.probability.desc(), CRMOpportunity.value.desc()).limit(6).all()
-    return render_template("crm/index.html", stats=stats, priorities=priorities, hot=hot, stages=STAGES)
+    priorities = (
+        _activity_query()
+        .options(
+            joinedload(CRMActivity.client),
+            joinedload(CRMActivity.opportunity).joinedload(CRMOpportunity.client),
+        )
+        .filter(CRMActivity.status == "pending")
+        .order_by(CRMActivity.due_at.asc().nullslast(), CRMActivity.id.desc())
+        .limit(8).all()
+    )
+    hot = (
+        open_opps.options(
+            joinedload(CRMOpportunity.client),
+            joinedload(CRMOpportunity.owner),
+        )
+        .order_by(CRMOpportunity.probability.desc(), CRMOpportunity.value.desc())
+        .limit(6).all()
+    )
+    return render_template(
+        "crm/index.html",
+        stats=stats,
+        priorities=priorities,
+        hot=hot,
+        stages=STAGES,
+        timezone_name=timezone_name,
+        format_local_datetime=format_local_datetime,
+    )
 
 
 @bp.route("/pipeline")
@@ -264,7 +383,15 @@ def pipeline():
     if search:
         like = f"%{search}%"
         query = query.join(CRMOpportunity.client).filter(or_(CRMOpportunity.title.ilike(like), CRMOpportunity.source.ilike(like), Client.name.ilike(like)))
-    opportunities = query.order_by(CRMOpportunity.updated_at.desc()).limit(500).all()
+    pagination = (
+        query.options(
+            joinedload(CRMOpportunity.client),
+            joinedload(CRMOpportunity.owner),
+        )
+        .order_by(CRMOpportunity.updated_at.desc(), CRMOpportunity.id.desc())
+        .paginate(page=_page_number(), per_page=40, error_out=False)
+    )
+    opportunities = pagination.items
     grouped = {stage: [] for stage, _ in STAGES}
     for opportunity in opportunities:
         grouped.setdefault(opportunity.stage, []).append(opportunity)
@@ -278,7 +405,10 @@ def pipeline():
         owner_filter=owner_filter,
         search=search,
         owners=owners,
-        result_count=len(opportunities),
+        result_count=pagination.total,
+        pagination=pagination,
+        timezone_name=_company_timezone_name(),
+        format_local_datetime=format_local_datetime,
     )
 
 
@@ -442,13 +572,30 @@ def prospect_new():
 def opportunity_new():
     from app import db
 
-    options = _opportunity_form_options()
+    lookup = (request.form.get("lookup") if request.method == "POST" else request.args.get("lookup")) or ""
+    selected_client_id = (
+        request.form.get("client_id", type=int)
+        if request.method == "POST" else request.args.get("client_id", type=int)
+    )
+    options = _opportunity_form_options(
+        lookup=lookup,
+        selected_client_id=selected_client_id,
+    )
     if request.method == "POST":
         try:
-            values = _parse_opportunity_form(request.form.get("client_id", type=int))
+            values = _parse_opportunity_form(selected_client_id)
         except ValueError as exc:
             flash(str(exc), "danger")
-            return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None, selected_client_id=request.form.get("client_id", type=int)), 400
+            return render_template(
+                "crm/opportunity_form.html",
+                **options,
+                stages=STAGES,
+                opportunity=None,
+                selected_client_id=selected_client_id,
+                lookup=lookup,
+                timezone_name=_company_timezone_name(),
+                format_local_datetime=format_local_datetime,
+            ), 400
         now = _now()
         opportunity = CRMOpportunity(
             company_id=_company_id(),
@@ -472,7 +619,16 @@ def opportunity_new():
         db.session.commit()
         flash("Oportunidad creada y vinculada a sus registros comerciales.", "success")
         return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
-    return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None, selected_client_id=request.args.get("client_id", type=int))
+    return render_template(
+        "crm/opportunity_form.html",
+        **options,
+        stages=STAGES,
+        opportunity=None,
+        selected_client_id=selected_client_id,
+        lookup=lookup,
+        timezone_name=_company_timezone_name(),
+        format_local_datetime=format_local_datetime,
+    )
 
 
 @bp.route("/opportunities/<int:opportunity_id>/edit", methods=["GET", "POST"])
@@ -482,13 +638,26 @@ def opportunity_edit(opportunity_id):
     from app import db
 
     opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first_or_404()
-    options = _opportunity_form_options()
+    lookup = (request.form.get("lookup") if request.method == "POST" else request.args.get("lookup")) or ""
+    options = _opportunity_form_options(
+        lookup=lookup,
+        selected_client_id=opportunity.client_id,
+        opportunity=opportunity,
+    )
     if request.method == "POST":
         try:
             values = _parse_opportunity_form(request.form.get("client_id", type=int), opportunity_id=opportunity.id)
         except ValueError as exc:
             flash(str(exc), "danger")
-            return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=opportunity), 400
+            return render_template(
+                "crm/opportunity_form.html",
+                **options,
+                stages=STAGES,
+                opportunity=opportunity,
+                lookup=lookup,
+                timezone_name=_company_timezone_name(),
+                format_local_datetime=format_local_datetime,
+            ), 400
         previous_loss_reason = (opportunity.loss_reason or "").strip()
         if previous_loss_reason and values["loss_reason"] != previous_loss_reason:
             _archive_loss_reason(
@@ -513,7 +682,15 @@ def opportunity_edit(opportunity_id):
         db.session.commit()
         flash("Oportunidad actualizada.", "success")
         return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
-    return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=opportunity)
+    return render_template(
+        "crm/opportunity_form.html",
+        **options,
+        stages=STAGES,
+        opportunity=opportunity,
+        lookup=lookup,
+        timezone_name=_company_timezone_name(),
+        format_local_datetime=format_local_datetime,
+    )
 
 
 @bp.route("/opportunities/<int:opportunity_id>")
@@ -521,8 +698,22 @@ def opportunity_edit(opportunity_id):
 @ai_pro_crm_required
 def opportunity_detail(opportunity_id):
     opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first_or_404()
-    activities = _activity_query().filter(CRMActivity.opportunity_id == opportunity.id).order_by(CRMActivity.due_at.desc().nullslast(), CRMActivity.id.desc()).all()
-    return render_template("crm/opportunity_detail.html", opportunity=opportunity, activities=activities, activity_types=ACTIVITY_TYPES, stages=STAGES)
+    activities = (
+        _activity_query()
+        .options(joinedload(CRMActivity.client))
+        .filter(CRMActivity.opportunity_id == opportunity.id)
+        .order_by(CRMActivity.due_at.desc().nullslast(), CRMActivity.id.desc())
+        .limit(50).all()
+    )
+    return render_template(
+        "crm/opportunity_detail.html",
+        opportunity=opportunity,
+        activities=activities,
+        activity_types=ACTIVITY_TYPES,
+        stages=STAGES,
+        timezone_name=_company_timezone_name(),
+        format_local_datetime=format_local_datetime,
+    )
 
 
 @bp.route("/opportunities/<int:opportunity_id>/stage", methods=["POST"])
@@ -584,7 +775,10 @@ def activities():
             flash("El cliente no pertenece a tu empresa o no existe.", "danger")
             return redirect(url_for("crm.activities"))
         opportunity_id = request.form.get("opportunity_id", type=int)
-        opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first() if opportunity_id else None
+        opportunity = (
+            _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first()
+            if opportunity_id else None
+        )
         if opportunity_id and opportunity is None:
             flash("La oportunidad no pertenece a tu empresa o ya no existe.", "danger")
             return redirect(url_for("crm.activities"))
@@ -613,25 +807,63 @@ def activities():
     status_filter = (request.args.get("status") or "pending").strip().lower()
     if status_filter not in {"pending", "completed", "all"}:
         status_filter = "pending"
+    selector_search = (request.args.get("lookup") or "").strip()
+    client_id = request.args.get("client_id", type=int)
+    opportunity_id = request.args.get("opportunity_id", type=int)
+
     activity_query = _activity_query()
     if status_filter in {"pending", "completed"}:
         activity_query = activity_query.filter(CRMActivity.status == status_filter)
-    activities = activity_query.order_by(
-        CRMActivity.due_at.asc().nullslast(),
-        CRMActivity.id.desc(),
-    ).limit(250).all()
-    clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
-    opportunities = _opportunity_query().filter(CRMOpportunity.status == "open").order_by(CRMOpportunity.updated_at.desc()).all()
+    pagination = (
+        activity_query.options(
+            joinedload(CRMActivity.client),
+            joinedload(CRMActivity.opportunity).joinedload(CRMOpportunity.client),
+        )
+        .order_by(CRMActivity.due_at.asc().nullslast(), CRMActivity.id.desc())
+        .paginate(page=_page_number(), per_page=30, error_out=False)
+    )
+
+    clients_query = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client)
+    opportunities_query = _opportunity_query().filter(CRMOpportunity.status == "open")
+    if selector_search:
+        like = f"%{selector_search}%"
+        clients_query = clients_query.filter(
+            or_(Client.name.ilike(like), Client.phone.ilike(like), Client.whatsapp.ilike(like))
+        )
+        opportunities_query = opportunities_query.join(CRMOpportunity.client).filter(
+            or_(CRMOpportunity.title.ilike(like), Client.name.ilike(like))
+        )
+    clients = clients_query.order_by(Client.name).limit(100).all()
+    opportunities = (
+        opportunities_query.options(joinedload(CRMOpportunity.client))
+        .order_by(CRMOpportunity.updated_at.desc(), CRMOpportunity.id.desc())
+        .limit(100).all()
+    )
+    selected_client = _client_for_company(client_id) if client_id else None
+    if selected_client is not None:
+        _append_if_missing(clients, selected_client)
+    selected_opportunity = (
+        _opportunity_query().options(joinedload(CRMOpportunity.client))
+        .filter(CRMOpportunity.id == opportunity_id).first()
+        if opportunity_id else None
+    )
+    if selected_opportunity is not None:
+        _append_if_missing(opportunities, selected_opportunity)
+
     return render_template(
         "crm/activities.html",
-        activities=activities,
+        activities=pagination.items,
+        pagination=pagination,
         clients=clients,
         opportunities=opportunities,
         activity_types=ACTIVITY_TYPES,
-        selected_client_id=request.args.get("client_id", type=int),
-        selected_opportunity_id=request.args.get("opportunity_id", type=int),
+        selected_client_id=client_id,
+        selected_opportunity_id=opportunity_id,
         status_filter=status_filter,
+        selector_search=selector_search,
         now=_now(),
+        timezone_name=_company_timezone_name(),
+        format_local_datetime=format_local_datetime,
     )
 
 
@@ -674,21 +906,42 @@ def activity_edit(activity_id):
         flash("Seguimiento actualizado.", "success")
         return redirect(url_for("crm.activities", status="all"))
 
-    clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
-    opportunities_query = _opportunity_query()
-    if activity.opportunity_id:
-        opportunities_query = opportunities_query.filter(
-            or_(CRMOpportunity.status == "open", CRMOpportunity.id == activity.opportunity_id)
+    selector_search = (request.args.get("lookup") or "").strip()
+    clients_query = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client)
+    opportunities_query = _opportunity_query().filter(
+        or_(CRMOpportunity.status == "open", CRMOpportunity.id == activity.opportunity_id)
+        if activity.opportunity_id else CRMOpportunity.status == "open"
+    )
+    if selector_search:
+        like = f"%{selector_search}%"
+        clients_query = clients_query.filter(
+            or_(Client.name.ilike(like), Client.phone.ilike(like), Client.whatsapp.ilike(like))
         )
-    else:
-        opportunities_query = opportunities_query.filter(CRMOpportunity.status == "open")
-    opportunities = opportunities_query.order_by(CRMOpportunity.updated_at.desc()).all()
+        opportunities_query = opportunities_query.join(CRMOpportunity.client).filter(
+            or_(CRMOpportunity.title.ilike(like), Client.name.ilike(like))
+        )
+    clients = clients_query.order_by(Client.name).limit(100).all()
+    opportunities = (
+        opportunities_query.options(joinedload(CRMOpportunity.client))
+        .order_by(CRMOpportunity.updated_at.desc(), CRMOpportunity.id.desc())
+        .limit(100).all()
+    )
+    _append_if_missing(clients, _client_for_company(activity.client_id))
+    if activity.opportunity_id:
+        selected_opportunity = (
+            _opportunity_query().options(joinedload(CRMOpportunity.client))
+            .filter(CRMOpportunity.id == activity.opportunity_id).first()
+        )
+        _append_if_missing(opportunities, selected_opportunity)
     return render_template(
         "crm/activity_form.html",
         activity=activity,
         clients=clients,
         opportunities=opportunities,
         activity_types=ACTIVITY_TYPES,
+        selector_search=selector_search,
+        timezone_name=_company_timezone_name(),
+        format_local_datetime=format_local_datetime,
     )
 
 
@@ -729,6 +982,14 @@ def client_contact(client_id, channel):
         abort(404)
     channel = (channel or "").strip().lower()
     if channel == "whatsapp":
+        consent_status = str(client.whatsapp_marketing_consent or "unknown").strip().lower()
+        confirm_non_marketing = request.form.get("confirm_non_marketing") == "1"
+        if consent_status != "opted_in" and not confirm_non_marketing:
+            flash(
+                "Este contacto no tiene autorización de marketing por WhatsApp. Confirmá que el mensaje será exclusivamente de atención o gestión no promocional.",
+                "warning",
+            )
+            return redirect(url_for("crm.client_360", client_id=client.id, confirm_whatsapp=1))
         raw_phone = str(client.whatsapp or "").strip()
         from services.whatsapp_share_service import normalize_whatsapp_number
         phone = normalize_whatsapp_number(raw_phone)
@@ -749,7 +1010,14 @@ def client_contact(client_id, channel):
         type=activity_type,
         status="pending",
         subject=subject[:180],
-        description="Contacto abierto desde la ficha CRM. Marcá el seguimiento como completado después de enviar el mensaje; el CRM no puede confirmar por sí solo que se haya enviado.",
+        description=(
+            "Contacto abierto desde la ficha CRM. Marcá el seguimiento como completado después de enviar el mensaje; "
+            "el CRM no puede confirmar por sí solo que se haya enviado."
+            + (
+                f" Sin autorización de marketing ({consent_status}); el usuario confirmó que será una comunicación no promocional."
+                if channel == "whatsapp" and consent_status != "opted_in" else ""
+            )
+        ),
         created_at=now,
         updated_at=now,
     )
@@ -812,7 +1080,7 @@ def public_consent(token):
         page_context["error"] = "No se puede autorizar un canal que no tiene un dato de contacto válido."
         return render_template("crm/public_consent.html", **page_context), 400
 
-    now = datetime.utcnow()
+    now = _now()
     source = "public_consent_link"
     evidence_prefix = "Preferencia registrada por el titular mediante el enlace público de consentimiento"
     changed = {}
@@ -866,6 +1134,7 @@ def client_360(client_id):
     if not client:
         abort(404)
 
+    timezone_name = _company_timezone_name()
     all_sales_query = scope_query_to_company(Sale.query.filter(Sale.client_id == client.id), Sale)
     all_sales_query = all_sales_query.filter(
         or_(Sale.status.is_(None), Sale.status.notin_(["cancelada", "anulada", "cancelled", "voided"]))
@@ -880,8 +1149,24 @@ def client_360(client_id):
     quotes_count = all_quotes_query.count()
     quotes = all_quotes_query.order_by(Quote.date.desc()).limit(12).all()
 
-    opportunities = _opportunity_query().filter(CRMOpportunity.client_id == client.id).order_by(CRMOpportunity.updated_at.desc()).all()
-    activities = _activity_query().filter(CRMActivity.client_id == client.id).order_by(CRMActivity.created_at.desc()).limit(50).all()
+    opportunities_total = _opportunity_query().filter(CRMOpportunity.client_id == client.id).count()
+    opportunities = (
+        _opportunity_query()
+        .options(joinedload(CRMOpportunity.owner))
+        .filter(CRMOpportunity.client_id == client.id)
+        .order_by(CRMOpportunity.updated_at.desc(), CRMOpportunity.id.desc())
+        .limit(50).all()
+    )
+    activities = (
+        _activity_query()
+        .options(
+            joinedload(CRMActivity.client),
+            joinedload(CRMActivity.opportunity),
+        )
+        .filter(CRMActivity.client_id == client.id)
+        .order_by(CRMActivity.created_at.desc())
+        .limit(50).all()
+    )
     whatsapp_consent_events = WhatsAppConsentEvent.query.filter_by(
         company_id=_company_id(), client_id=client.id
     ).order_by(WhatsAppConsentEvent.occurred_at.desc()).limit(20).all()
@@ -926,6 +1211,7 @@ def client_360(client_id):
         quotes=quotes,
         quotes_count=quotes_count,
         opportunities=opportunities,
+        opportunities_total=opportunities_total,
         activities=activities,
         whatsapp_consent_events=whatsapp_consent_events,
         timeline=timeline,
@@ -936,6 +1222,9 @@ def client_360(client_id):
             url_for("crm.public_consent", token=client.marketing_consent_token, _external=True)
             if client.marketing_consent_token else None
         ),
+        confirm_whatsapp=request.args.get("confirm_whatsapp") == "1",
+        timezone_name=timezone_name,
+        format_local_datetime=format_local_datetime,
     )
 
 
@@ -949,5 +1238,14 @@ def clients():
     if search:
         like = f"%{search}%"
         query = query.filter(or_(Client.name.ilike(like), Client.phone.ilike(like), Client.whatsapp.ilike(like)))
-    clients = query.order_by(Client.name).all()
-    return render_template("crm/clients.html", clients=clients, search=search)
+    pagination = query.order_by(Client.name).paginate(
+        page=_page_number(),
+        per_page=36,
+        error_out=False,
+    )
+    return render_template(
+        "crm/clients.html",
+        clients=pagination.items,
+        pagination=pagination,
+        search=search,
+    )
