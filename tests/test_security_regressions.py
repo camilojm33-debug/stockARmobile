@@ -17,7 +17,7 @@ def authenticated_tenant_client(app):
         db.session.flush()
         user = User(
             username="security_qa_admin",
-            email="security-qa@example.test",
+            email="security-qa@example.com",
             role="admin",
             active=True,
             company_id=company.id,
@@ -301,11 +301,11 @@ def test_register_form_preserves_legacy_password_compatibility(app):
 
     with app.app_context():
         legacy_password_form = RegisterForm(
-            data={"username": "Comercio QA", "email": "qa@example.test", "password": "1234567"},
+            data={"username": "Comercio QA", "email": "qa@example.com", "password": "1234567"},
             meta={"csrf": False},
         )
         too_short_form = RegisterForm(
-            data={"username": "Comercio QA", "email": "qa@example.test", "password": "12345"},
+            data={"username": "Comercio QA", "email": "qa@example.com", "password": "12345"},
             meta={"csrf": False},
         )
 
