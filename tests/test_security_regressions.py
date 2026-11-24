@@ -314,7 +314,7 @@ def test_register_form_preserves_legacy_password_compatibility(app):
 
 
 def test_registration_requires_eight_characters_for_new_accounts(app):
-    email = "new-password-policy@example.test"
+    email = "new-password-policy@example.com"
     response = app.test_client().post(
         "/auth/register",
         data={
