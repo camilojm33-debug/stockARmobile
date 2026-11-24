@@ -1311,3 +1311,130 @@ def test_crm_pages_paginate_and_selector_search_finds_older_clients(app):
     assert searchable_form.status_code == 200
     assert b"Cliente CRM 040" in searchable_form.data
 
+    owner_search = http.get("/crm/pipeline?q=crm_pagination_admin&status=all")
+    assert owner_search.status_code == 200
+    assert b"Cliente CRM 040" in owner_search.data
+
+def test_crm_opted_out_whatsapp_requires_confirmation_and_keeps_opt_out(app):
+    from datetime import datetime
+    from app import Client, Company, User, db
+    from crm_models import CRMActivity
+
+    company = Company(
+        name="CRM WhatsApp baja",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_opted_out_admin",
+        email="crm-opted-out@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    client_record = Client(
+        name="Cliente que rechazó marketing",
+        company_id=company.id,
+        whatsapp="3624228396",
+        phone="3624228396",
+        whatsapp_marketing_consent="opted_out",
+        whatsapp_marketing_consent_recorded_at=datetime(2026, 1, 1, 12, 0),
+        whatsapp_marketing_consent_source="public_consent_link",
+        whatsapp_marketing_consent_evidence="El titular solicitó la baja.",
+        active=True,
+    )
+    db.session.add_all([user, client_record])
+    db.session.commit()
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+
+    first_attempt = http.post(f"/crm/clients/{client_record.id}/contact/whatsapp")
+    assert first_attempt.status_code == 302
+    assert first_attempt.headers["Location"].endswith("?confirm_whatsapp=1")
+    assert CRMActivity.query.filter_by(company_id=company.id).count() == 0
+    db.session.refresh(client_record)
+    assert client_record.whatsapp_marketing_consent == "opted_out"
+
+    confirmation = http.get(first_attempt.headers["Location"])
+    assert confirmation.status_code == 200
+    assert "El cliente rechazó los mensajes de marketing".encode() in confirmation.data
+
+    response = http.post(
+        f"/crm/clients/{client_record.id}/contact/whatsapp",
+        data={"confirm_non_marketing": "1"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://wa.me/5493624228396"
+    db.session.refresh(client_record)
+    assert client_record.whatsapp_marketing_consent == "opted_out"
+    assert client_record.whatsapp_marketing_consent_source == "public_consent_link"
+    assert client_record.whatsapp_marketing_consent_evidence == "El titular solicitó la baja."
+
+    activity = CRMActivity.query.filter_by(company_id=company.id).one()
+    assert "opted_out" in activity.description
+    assert "comunicación no promocional" in activity.description
+
+
+def test_crm_opportunity_close_date_round_trips_in_company_local_time(app):
+    from datetime import datetime
+    from app import Client, Company, User, db
+    from crm_models import CRMOpportunity
+
+    company = Company(
+        name="CRM Cierre local",
+        active=True,
+        timezone="America/Argentina/Buenos_Aires",
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_close_date_admin",
+        email="crm-close-date@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    client_record = Client(
+        name="Cliente cierre local",
+        company_id=company.id,
+        active=True,
+    )
+    db.session.add_all([user, client_record])
+    db.session.commit()
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+    response = http.post(
+        "/crm/opportunities/new",
+        data={
+            "client_id": str(client_record.id),
+            "title": "Cierre en horario local",
+            "stage": "nuevo",
+            "value": "50000",
+            "probability": "35",
+            "expected_close_date": "2030-01-15T10:45",
+            "source": "Prueba",
+            "owner_user_id": str(user.id),
+            "quote_id": "",
+            "sale_id": "",
+            "notes": "",
+            "loss_reason": "",
+        },
+    )
+    assert response.status_code == 302
+    opportunity = CRMOpportunity.query.filter_by(company_id=company.id).one()
+    assert opportunity.expected_close_date == datetime(2030, 1, 15, 13, 45)
+
+    edit_page = http.get(f"/crm/opportunities/{opportunity.id}/edit")
+    assert edit_page.status_code == 200
+    assert b'value="2030-01-15T10:45"' in edit_page.data
+    detail_page = http.get(f"/crm/opportunities/{opportunity.id}")
+    assert detail_page.status_code == 200
+    assert b"15/01/2030 10:45" in detail_page.data
+
