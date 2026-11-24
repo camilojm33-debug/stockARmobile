@@ -581,14 +581,14 @@
                       </label>
                     </div>
                     <div class="input-group input-group-sm">
-                      <input class="form-control password-toggle-input" type="password" name="new_password" placeholder="Nueva contraseña o dejá vacío para temporal">
+                      <input class="form-control password-toggle-input" type="password" name="new_password" placeholder="Nueva contraseña o dejá vacío para temporal" minlength="8">
                       <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
                     </div>
                     <div class="input-group input-group-sm">
-                      <input class="form-control password-toggle-input" type="password" name="confirm_password" placeholder="Confirmar contraseña">
+                      <input class="form-control password-toggle-input" type="password" name="confirm_password" placeholder="Confirmar contraseña" minlength="8">
                       <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
                     </div>
-                    <div class="small text-muted">Si no completás los campos, se genera una contraseña temporal como antes.</div>
+                    <div class="small text-muted">Si no completás los campos, se genera una contraseña temporal. Las contraseñas manuales deben tener al menos 8 caracteres.</div>
                     <button class="btn btn-sm btn-outline-warning" type="submit">Guardar contraseña</button>
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Quitar a {{ user.name }} de esta empresa? Se conservará su cuenta y su acceso a otras empresas.');">
@@ -695,14 +695,14 @@
               <div class="col-md-6">
                 <label class="form-label">Nueva contraseña</label>
                 <div class="input-group">
-                  <input class="form-control password-toggle-input" type="password" name="new_password" required>
+                  <input class="form-control password-toggle-input" type="password" name="new_password" minlength="8" required>
                   <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
                 </div>
               </div>
               <div class="col-md-6">
                 <label class="form-label">Confirmar contraseña</label>
                 <div class="input-group">
-                  <input class="form-control password-toggle-input" type="password" name="confirm_password" required>
+                  <input class="form-control password-toggle-input" type="password" name="confirm_password" minlength="8" required>
                   <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
                 </div>
               </div>

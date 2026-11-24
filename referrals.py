@@ -894,8 +894,8 @@ def admin_referrals_sellers_create():
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         temp_password = (request.form.get("temp_password") or "").strip()
-        if len(temp_password) < 6:
-            flash("La contrasena inicial debe tener al menos 6 caracteres.", "danger")
+        if len(temp_password) < 8:
+            flash("La contrasena inicial debe tener al menos 8 caracteres.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         user = User(username=username, email=email, role="seller", active=True)
@@ -1014,8 +1014,8 @@ def admin_referrals_sellers_edit(seller_id):
         confirm_password = (request.form.get("confirm_password") or "").strip()
         force_change = (request.form.get("force_change") or "").strip().lower() in {"1", "true", "yes", "on"}
         if new_password or confirm_password:
-            if len(new_password) < 6:
-                flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+            if len(new_password) < 8:
+                flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
                 return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
             if new_password != confirm_password:
                 flash("Las contrasenas no coinciden.", "danger")

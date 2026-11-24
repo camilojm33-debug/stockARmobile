@@ -131,21 +131,50 @@ def onboarding():
     current_company_id = getattr(current_user, "company_id", None)
     if pending_company_id and int(pending_company_id) != int(current_company_id or 0):
         return redirect(url_for("dashboard.index"))
+    from app import CashSession, Client, Company, Product, Sale
+
+    company_id = int(current_company_id or 0)
+    company = db.session.get(Company, company_id) if company_id else None
+    has_business_profile = bool(
+        company
+        and (company.phone or company.whatsapp)
+        and company.contact_email
+        and (company.city or company.province)
+    )
+    has_configuration = bool(
+        company
+        and company.currency
+        and company.timezone
+        and company.date_format
+        and company.numbering_format
+    )
+    has_products = Product.query.filter_by(company_id=company_id, active=True).first() is not None
+    has_clients = Client.query.filter_by(company_id=company_id, active=True).first() is not None
+    has_first_sale = Sale.query.filter_by(company_id=company_id, status="confirmada").first() is not None
+    has_closed_cash = (
+        CashSession.query.filter_by(company_id=company_id)
+        .filter(CashSession.closed_at.isnot(None))
+        .first()
+        is not None
+    )
+
     steps = [
-        {"step": 1, "title": "Datos del negocio", "description": "Completa información comercial, fiscal y de contacto en Mi Empresa."},
-        {"step": 2, "title": "Moneda y configuración", "description": "Confirma moneda, formato y ajustes generales antes de operar."},
-        {"step": 3, "title": "Productos", "description": "Carga tus productos y define stock mínimo para empezar ordenado."},
-        {"step": 4, "title": "Clientes", "description": "Registra clientes frecuentes para ventas rápidas y seguimiento."},
-        {"step": 5, "title": "Primera venta", "description": "Abre caja, agrega productos y registra tu primera operación."},
-        {"step": 6, "title": "Caja y reporte", "description": "Cierra caja, revisa totales y valida diferencias al final del día."},
+        {"step": 1, "title": "Datos del negocio", "description": "Completa información comercial, fiscal y de contacto en Mi Empresa.", "done": has_business_profile, "url": url_for("company_billing.company_settings"), "action": "Completar empresa"},
+        {"step": 2, "title": "Moneda y configuración", "description": "Confirma moneda, formato y zona horaria antes de operar.", "done": has_configuration, "url": url_for("company_billing.company_settings"), "action": "Revisar configuración"},
+        {"step": 3, "title": "Productos", "description": "Carga productos, precios y stock mínimo para empezar ordenado.", "done": has_products, "url": url_for("products.index"), "action": "Cargar productos"},
+        {"step": 4, "title": "Clientes", "description": "Registra clientes frecuentes para ventas rápidas y seguimiento.", "done": has_clients, "url": url_for("clients.index"), "action": "Agregar clientes"},
+        {"step": 5, "title": "Primera venta", "description": "Abre caja, agrega productos y registra tu primera operación.", "done": has_first_sale, "url": url_for("sales.index"), "action": "Registrar venta"},
+        {"step": 6, "title": "Caja y reporte", "description": "Realiza un cierre de caja y revisa los resultados de la jornada.", "done": has_closed_cash, "url": url_for("cash.index"), "action": "Ir a caja"},
     ]
+    completed_steps = sum(1 for step in steps if step["done"])
+    progress = round(completed_steps / len(steps) * 100)
     if request.method == "POST":
         session.pop("post_register_onboarding_company_id", None)
         session["guided_tour_pending"] = True
         session.pop("guided_tour_seen", None)
         flash("Onboarding completado. Te mostramos el recorrido guiado.", "success")
         return redirect(url_for("dashboard.index"))
-    return render_template("dashboard/onboarding.html", steps=steps, progress=100)
+    return render_template("dashboard/onboarding.html", steps=steps, progress=progress, completed_steps=completed_steps)
 
 
 @bp.route("/tour/complete", methods=["POST"])
