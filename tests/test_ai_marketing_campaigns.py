@@ -1969,6 +1969,30 @@ def test_campaign_price_is_resolved_for_each_customer_instead_of_using_retail_pr
         assert "$ 10.000" not in wholesale_copy
 
 
+def test_campaign_picker_does_not_claim_price_is_ready_after_consent_check(monkeypatch):
+    from types import SimpleNamespace
+    import ai_agents
+
+    client = SimpleNamespace(
+        whatsapp="5493624000099",
+        phone="",
+        whatsapp_marketing_consent="opted_in",
+        whatsapp_marketing_consent_recorded_at=object(),
+        whatsapp_marketing_consent_source="formulario",
+        whatsapp_marketing_consent_evidence="aceptación expresa",
+    )
+    monkeypatch.setattr(
+        "services.ai_agent.tenant_campaign_service._client_phone",
+        lambda _client: "5493624000099",
+    )
+
+    result = ai_agents._campaign_contact_eligibility(client)
+
+    assert result["eligible"] is True
+    assert result["status"] == "WhatsApp y permiso OK"
+    assert "tarifa individual" in result["reason"]
+
+
 def test_campaign_does_not_fallback_to_retail_when_wholesale_price_is_unavailable(app, monkeypatch):
     from decimal import Decimal
     from app import Client, Company, Product, User, db
@@ -2327,6 +2351,8 @@ def test_campaign_preflight_excludes_wholesale_without_own_price_before_queue(ap
             f"price_resolver_calls={price_resolver_calls!r}"
         )
         assert result["pricing_excluded"] == 1
+        assert result["pricing_exclusions"][0]["client_id"] == wholesale.id
+        assert "no tiene una lista mayorista asignada" in result["pricing_exclusions"][0]["reason"]
         assert [row.client_id for row in queued] == [retail.id]
         # Retail pricing must not depend on wholesale plan/list resolution.
         assert [call["customer_type"] for call in price_resolver_calls] == ["minorista", "mayorista"]
