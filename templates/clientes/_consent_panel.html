@@ -74,7 +74,7 @@
         <div class="border-top py-2 small">
           <strong>{{ label }}</strong>
           {% if recorded_at %}
-            · {{ recorded_at.strftime('%d/%m/%Y %H:%M') }}
+            · {% if format_local_datetime is defined and timezone_name is defined %}{{ format_local_datetime(recorded_at, timezone_name, '%d/%m/%Y %H:%M') }}{% else %}{{ recorded_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}
             <div class="text-muted">{{ source or 'Origen no informado' }}</div>
             {% if evidence %}<div class="text-muted text-break">{{ evidence }}</div>{% endif %}
           {% else %}
@@ -88,7 +88,7 @@
             {% for event in whatsapp_consent_events %}
             <div class="border-top py-2 small">
               <strong>{{ event.previous_status }} → {{ event.new_status }}</strong>
-              <div class="text-muted">{{ event.occurred_at.strftime('%d/%m/%Y %H:%M') }} · {{ event.source }}{% if event.actor %} · {{ event.actor.username }}{% endif %}</div>
+              <div class="text-muted">{% if format_local_datetime is defined and timezone_name is defined %}{{ format_local_datetime(event.occurred_at, timezone_name, '%d/%m/%Y %H:%M') }}{% else %}{{ event.occurred_at.strftime('%d/%m/%Y %H:%M') }}{% endif %} · {{ event.source }}{% if event.actor %} · {{ event.actor.username }}{% endif %}</div>
               <div class="text-break">{{ event.evidence }}</div>
             </div>
             {% endfor %}
