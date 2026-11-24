@@ -18,14 +18,27 @@
   </div>
   <div class="card app-card mb-3"><div class="card-body">
     <form method="get" class="crm-filter-grid">
-      <input class="form-control crm-filter-search" name="q" value="{{ search }}" placeholder="Buscar oportunidad, cliente u origen">
+      <input class="form-control crm-filter-search" name="q" value="{{ search }}" placeholder="Buscar oportunidad, cliente, origen o responsable">
       <select name="status" class="form-select"><option value="open" {% if status_filter == 'open' %}selected{% endif %}>Abiertas</option><option value="closed" {% if status_filter == 'closed' %}selected{% endif %}>Cerradas</option><option value="all" {% if status_filter == 'all' %}selected{% endif %}>Todas</option></select>
       <select name="stage" class="form-select"><option value="">Todas las etapas</option>{% for value,label in stages %}<option value="{{ value }}" {% if stage_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
       <select name="owner_id" class="form-select"><option value="">Todos los responsables</option>{% for owner in owners %}<option value="{{ owner.id }}" {% if owner_filter == owner.id %}selected{% endif %}>{{ owner.username }}</option>{% endfor %}</select>
       <button class="btn btn-outline-primary">Filtrar</button>
     </form>
-    <div class="small text-muted mt-2">{{ result_count }} oportunidad(es) · Se muestran hasta 500 resultados por consulta.</div>
+    <div class="small text-muted mt-2">{{ result_count }} oportunidad(es) · Página {{ pagination.page }} de {{ pagination.pages or 1 }}.</div>
   </div></div>
+  {% if pagination.pages > 1 %}
+  <nav class="mt-3" aria-label="Paginación del pipeline">
+    <ul class="pagination pagination-sm justify-content-center flex-wrap">
+      <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}"><a class="page-link" href="{{ url_for('crm.pipeline', page=pagination.prev_num, q=search, status=status_filter, stage=stage_filter, owner_id=owner_filter) if pagination.has_prev else '#' }}">Anterior</a></li>
+      {% for page_num in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+        {% if page_num %}
+          <li class="page-item {% if page_num == pagination.page %}active{% endif %}"><a class="page-link" href="{{ url_for('crm.pipeline', page=page_num, q=search, status=status_filter, stage=stage_filter, owner_id=owner_filter) }}">{{ page_num }}</a></li>
+        {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+      {% endfor %}
+      <li class="page-item {% if not pagination.has_next %}disabled{% endif %}"><a class="page-link" href="{{ url_for('crm.pipeline', page=pagination.next_num, q=search, status=status_filter, stage=stage_filter, owner_id=owner_filter) if pagination.has_next else '#' }}">Siguiente</a></li>
+    </ul>
+  </nav>
+  {% endif %}
   <div class="crm-pipeline" role="region" aria-label="Etapas del pipeline comercial; desplazate horizontalmente para ver todas" tabindex="0">
     {% for stage,label in stages %}
       <section class="crm-column">
