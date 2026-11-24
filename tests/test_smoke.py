@@ -4789,7 +4789,7 @@ def test_seo_niche_pages_return_200_with_full_seo_metadata():
 
         # CTA obligatorios, sin rutas nuevas.
         assert 'href="/auth/register?selected_plan=trial"' in html
-        assert 'href="/auth/demo"' in html
+        assert 'href="/#video-demo"' in html
 
         # Contenido especifico del nicho.
         for fragment in page["must_contain"]:
