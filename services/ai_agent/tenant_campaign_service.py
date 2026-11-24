@@ -563,6 +563,7 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         "added": added,
         "target_count": campaign.target_count,
         "pricing_excluded": pricing_excluded,
+        "pricing_exclusions": pricing_exclusions,
     }
 
 
