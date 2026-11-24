@@ -78,7 +78,9 @@ def test_landing_promotes_commercial_tools_and_plan_comparison(app):
         "/sistema-para-supermercados",
         "/sistema-de-presupuestos",
         "/control-de-stock",
-        "/herramienta-comercial",
+        "/precios-mayoristas-para-comercios",
+        "/sistema-de-promociones-comerciales",
+        "/control-global-de-precios",
     ],
 )
 def test_public_demo_ctas_use_read_only_video_instead_of_shared_demo(app, path):
