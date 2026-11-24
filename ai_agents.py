@@ -2035,6 +2035,8 @@ def campaign_update_recipients(campaign_id):
         added_count = len(current_ids) - previous_count
         campaign_data["audience_selection_mode"] = "selected"
         campaign_data["selected_client_ids"] = sorted(current_ids)
+        campaign_data.pop("pricing_exclusions", None)
+        campaign_data.pop("pricing_excluded_count", None)
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         db.session.commit()
         if action == "add_all_eligible":
@@ -2057,12 +2059,16 @@ def campaign_update_recipients(campaign_id):
         current_ids.discard(remove_id)
         campaign_data["audience_selection_mode"] = "selected"
         campaign_data["selected_client_ids"] = sorted(current_ids)
+        campaign_data.pop("pricing_exclusions", None)
+        campaign_data.pop("pricing_excluded_count", None)
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         db.session.commit()
         flash("Destinatario quitado de la campaña.", "success")
     elif action == "clear":
         campaign_data["audience_selection_mode"] = "segment"
         campaign_data["selected_client_ids"] = []
+        campaign_data.pop("pricing_exclusions", None)
+        campaign_data.pop("pricing_excluded_count", None)
         campaign.system_data_json = json.dumps(campaign_data, ensure_ascii=False)
         db.session.commit()
         flash("La campaña volvió a usar el público general del segmento.", "success")
@@ -2104,6 +2110,11 @@ def campaign_edit(campaign_id):
             campaign_data = {}
         if not isinstance(campaign_data, dict):
             campaign_data = {}
+
+        # A previous failed preflight becomes stale as soon as the merchant
+        # edits the copy, product, quantity or schedule.
+        campaign_data.pop("pricing_exclusions", None)
+        campaign_data.pop("pricing_excluded_count", None)
 
         # Let the merchant attach the actual catalog product to an existing
         # draft. Price variables are resolved against this product and each
