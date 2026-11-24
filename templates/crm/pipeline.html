@@ -18,7 +18,7 @@
   </div>
   <div class="card app-card mb-3"><div class="card-body">
     <form method="get" class="crm-filter-grid">
-      <input class="form-control crm-filter-search" name="q" value="{{ search }}" placeholder="Buscar oportunidad, cliente u origen">
+      <input class="form-control crm-filter-search" name="q" value="{{ search }}" placeholder="Buscar oportunidad, cliente, origen o responsable">
       <select name="status" class="form-select"><option value="open" {% if status_filter == 'open' %}selected{% endif %}>Abiertas</option><option value="closed" {% if status_filter == 'closed' %}selected{% endif %}>Cerradas</option><option value="all" {% if status_filter == 'all' %}selected{% endif %}>Todas</option></select>
       <select name="stage" class="form-select"><option value="">Todas las etapas</option>{% for value,label in stages %}<option value="{{ value }}" {% if stage_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
       <select name="owner_id" class="form-select"><option value="">Todos los responsables</option>{% for owner in owners %}<option value="{{ owner.id }}" {% if owner_filter == owner.id %}selected{% endif %}>{{ owner.username }}</option>{% endfor %}</select>
