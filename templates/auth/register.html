@@ -106,7 +106,8 @@
           <div class="mb-4">
             {{ form.password.label(class_="form-label fw-semibold") }}
             <div class="input-group input-group-lg">
-              {{ form.password(id="registerPassword", class_="form-control", autocomplete="new-password") }}
+              {{ form.password(id="registerPassword", class_="form-control", autocomplete="new-password", minlength="8") }}
+              <small class="form-text w-100">Usá al menos 8 caracteres para proteger tu cuenta.</small>
               <button class="btn btn-outline-secondary" type="button" id="toggleRegisterPassword" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
             </div>
           </div>
