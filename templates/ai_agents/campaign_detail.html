@@ -56,9 +56,20 @@
     </div>
   </div>
 
+  {% if campaign_editable and campaign_price_excluded_count > 0 %}
+  <div class="alert alert-warning mb-3">
+    <strong>La campaña no se encoló por un problema de precio.</strong>
+    {{ campaign_price_excluded_count }} contacto(s) cumplen los requisitos de WhatsApp y autorización, pero no tienen un precio individual validado.
+    {% if campaign_price_exclusions %}
+    <div class="small mt-2"><strong>Primer bloqueo:</strong> {{ campaign_price_exclusions[0].client_name }}: {{ campaign_price_exclusions[0].reason }}</div>
+    {% endif %}
+    <a class="alert-link d-inline-block mt-2" href="#step-pricing">Ir a revisar producto y tarifas mayoristas</a>
+  </div>
+  {% endif %}
+
   <div class="campaign-summary-grid mb-3">
     <div class="campaign-summary-card"><span class="small text-muted">Contactos en el público</span><strong>{{ audience_diagnostics.total }}</strong></div>
-    <div class="campaign-summary-card"><span class="small text-muted">Habilitados ahora</span><strong>{{ detected_audience_count }}</strong></div>
+    <div class="campaign-summary-card"><span class="small text-muted">WhatsApp y permiso OK</span><strong>{{ detected_audience_count }}</strong></div>
     <div class="campaign-summary-card"><span class="small text-muted">Preparados para enviar</span><strong>{{ campaign.target_count or 0 }}</strong></div>
     <div class="campaign-summary-card"><span class="small text-muted">Entregados</span><strong>{{ campaign_metrics.delivered }}</strong></div>
   </div>
@@ -86,7 +97,7 @@
       </div>
 
       <div class="alert alert-info small">
-        <strong>Regla de envío:</strong> cada contacto debe tener WhatsApp válido y <strong>Con WhatsApp y permiso registrado</strong> (autorización promocional expresa, con fecha, origen y evidencia). Los contactos con baja quedan excluidos. <strong>No se enviará nada con el público en cero.</strong>
+        <strong>Regla de envío:</strong> cada contacto debe tener WhatsApp válido y <strong>permiso promocional documentado</strong> (con fecha, origen y evidencia). Los contactos con baja quedan excluidos. Además, si el mensaje incluye un precio, el producto debe tener una tarifa válida para cada cliente; a los mayoristas se les calcula con su propia lista vigente y el tramo aplicable. <strong>No se enviará nada si el público preparado queda en cero.</strong>
       </div>
 
       {% if campaign_can_reopen_for_recipients %}
