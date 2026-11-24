@@ -1740,6 +1740,7 @@ def test_prospect_date_segments_use_superadmin_local_calendar_days(app):
             role="superadmin",
             active=True,
         )
+        user.set_password("test-password")
         db.session.add(user)
         db.session.flush()
 
