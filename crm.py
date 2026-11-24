@@ -118,11 +118,18 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
         )
         if quote is None or int(quote.client_id or 0) != int(client_id):
             raise ValueError("El presupuesto debe pertenecer al mismo cliente y empresa.")
-        duplicate = _opportunity_query().filter(CRMOpportunity.quote_id == quote.id)
-        if opportunity_id:
-            duplicate = duplicate.filter(CRMOpportunity.id != opportunity_id)
-        if duplicate.first():
-            raise ValueError("Ese presupuesto ya está vinculado a otra oportunidad del CRM.")
+        current_opportunity_quote = (
+            _opportunity_query()
+            .filter(CRMOpportunity.id == opportunity_id, CRMOpportunity.quote_id == quote.id)
+            .first()
+            if opportunity_id else None
+        )
+        if current_opportunity_quote is None:
+            duplicate = _opportunity_query().filter(CRMOpportunity.quote_id == quote.id)
+            if opportunity_id:
+                duplicate = duplicate.filter(CRMOpportunity.id != opportunity_id)
+            if duplicate.first():
+                raise ValueError("Ese presupuesto ya está vinculado a otra oportunidad del CRM.")
 
     if sale_id:
         sale = (
@@ -156,9 +163,27 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
         if quote is not None and quote.converted_sale_id and int(quote.converted_sale_id) != int(sale.id):
             raise ValueError("La venta seleccionada no corresponde al presupuesto vinculado.")
     elif quote is not None and quote.converted_sale_id:
-        sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == quote.converted_sale_id).first()
+        sale = (
+            scope_query_to_company(Sale.query, Sale)
+            .filter(Sale.id == quote.converted_sale_id)
+            .with_for_update()
+            .first()
+        )
         if sale is not None and int(sale.client_id or 0) != int(client_id):
             raise ValueError("La venta convertida no corresponde al cliente de la oportunidad.")
+        if sale is not None:
+            current_opportunity_link = (
+                _opportunity_query()
+                .filter(CRMOpportunity.id == opportunity_id, CRMOpportunity.sale_id == sale.id)
+                .first()
+                if opportunity_id else None
+            )
+            if current_opportunity_link is None:
+                duplicate_sale = _opportunity_query().filter(CRMOpportunity.sale_id == sale.id)
+                if opportunity_id:
+                    duplicate_sale = duplicate_sale.filter(CRMOpportunity.id != opportunity_id)
+                if duplicate_sale.first():
+                    raise ValueError("La venta convertida ya está vinculada a otra oportunidad del CRM.")
 
     return quote, sale
 
@@ -166,7 +191,7 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
 def _opportunity_form_options(*, lookup="", selected_client_id=None, opportunity=None):
     from app import Client, Quote, Sale, User
 
-    lookup = (lookup or "").strip()
+    lookup = (lookup or "").strip()[:120]
     clients_query = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client)
     quotes_query = scope_query_to_company(Quote.query, Quote)
     sales_query = scope_query_to_company(Sale.query, Sale)
@@ -212,10 +237,13 @@ def _opportunity_form_options(*, lookup="", selected_client_id=None, opportunity
             )
             _append_if_missing(sales, linked_sale)
 
-    owners = (
-        scope_query_to_company(User.query.filter(User.active.is_(True)), User)
-        .order_by(User.username).limit(100).all()
-    )
+    owners_query = scope_query_to_company(User.query.filter(User.active.is_(True)), User)
+    if lookup:
+        like = f"%{lookup}%"
+        owners_query = owners_query.filter(
+            or_(User.username.ilike(like), User.email.ilike(like))
+        )
+    owners = owners_query.order_by(User.username).limit(100).all()
     return {
         "clients": clients,
         "quotes": quotes,
@@ -393,7 +421,12 @@ def pipeline():
     grouped = {stage: [] for stage, _ in STAGES}
     for opportunity in opportunities:
         grouped.setdefault(opportunity.stage, []).append(opportunity)
-    owners = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.username).all()
+    owners = (
+        scope_query_to_company(User.query.filter(User.active.is_(True)), User)
+        .order_by(User.username)
+        .limit(100)
+        .all()
+    )
     return render_template(
         "crm/pipeline.html",
         grouped=grouped,
@@ -805,7 +838,7 @@ def activities():
     status_filter = (request.args.get("status") or "pending").strip().lower()
     if status_filter not in {"pending", "completed", "all"}:
         status_filter = "pending"
-    selector_search = (request.args.get("lookup") or "").strip()
+    selector_search = (request.args.get("lookup") or "").strip()[:120]
     client_id = request.args.get("client_id", type=int)
     opportunity_id = request.args.get("opportunity_id", type=int)
 
@@ -904,7 +937,7 @@ def activity_edit(activity_id):
         flash("Seguimiento actualizado.", "success")
         return redirect(url_for("crm.activities", status="all"))
 
-    selector_search = (request.args.get("lookup") or "").strip()
+    selector_search = (request.args.get("lookup") or "").strip()[:120]
     clients_query = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client)
     opportunities_query = _opportunity_query().filter(
         or_(CRMOpportunity.status == "open", CRMOpportunity.id == activity.opportunity_id)
