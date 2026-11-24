@@ -296,17 +296,36 @@ def test_public_demo_remains_available_outside_production(app, monkeypatch):
         assert session["guided_tour_pending"] is True
 
 
-def test_registration_requires_eight_character_passwords():
+def test_register_form_preserves_legacy_password_compatibility(app):
     from app import RegisterForm
 
-    short_form = RegisterForm(
-        data={"username": "Comercio QA", "email": "qa@example.test", "password": "1234567"},
-        meta={"csrf": False},
-    )
-    accepted_form = RegisterForm(
-        data={"username": "Comercio QA", "email": "qa@example.test", "password": "12345678"},
-        meta={"csrf": False},
+    with app.app_context():
+        legacy_password_form = RegisterForm(
+            data={"username": "Comercio QA", "email": "qa@example.test", "password": "1234567"},
+            meta={"csrf": False},
+        )
+        too_short_form = RegisterForm(
+            data={"username": "Comercio QA", "email": "qa@example.test", "password": "12345"},
+            meta={"csrf": False},
+        )
+
+        assert legacy_password_form.validate()
+        assert not too_short_form.validate()
+
+
+def test_registration_requires_eight_characters_for_new_accounts(app):
+    email = "new-password-policy@example.test"
+    response = app.test_client().post(
+        "/auth/register",
+        data={
+            "username": "Comercio QA",
+            "email": email,
+            "password": "1234567",
+            "selected_plan": "trial",
+            "accept_legal_terms": "1",
+        },
     )
 
-    assert not short_form.validate()
-    assert accepted_form.validate()
+    assert response.status_code == 200
+    with app.app_context():
+        assert User.query.filter_by(email=email).first() is None
