@@ -1771,7 +1771,15 @@ def _campaign_contact_eligibility(client):
         return {"eligible": False, "status": "Sin autorización", "reason": "Falta registrar el consentimiento expreso para promociones.", "opted_out": False}
     if not str(getattr(client, "whatsapp_marketing_consent_source", "") or "").strip() or not str(getattr(client, "whatsapp_marketing_consent_evidence", "") or "").strip():
         return {"eligible": False, "status": "Evidencia incompleta", "reason": "Falta el origen o la evidencia del consentimiento.", "opted_out": False}
-    return {"eligible": True, "status": "Listo para enviar", "reason": "WhatsApp válido y consentimiento documentado.", "opted_out": False}
+    return {
+        "eligible": True,
+        "status": "WhatsApp y permiso OK",
+        "reason": (
+            "WhatsApp válido y consentimiento documentado. "
+            "La tarifa individual todavía se valida en la etapa Precios."
+        ),
+        "opted_out": False,
+    }
 
 
 def _campaign_contact_selection_query(company_id, *, search="", customer_type="all", contact_state="all"):
@@ -2217,12 +2225,25 @@ def campaign_transition(campaign_id):
                 campaign.started_at = None
                 campaign.finished_at = None
                 db.session.commit()
-                flash(
-                    "La campaña no se encoló porque no hay destinatarios listos. "
-                    "Revisá los contactos, el consentimiento y las tarifas mayoristas. "
-                    "No se enviará nada con el público en cero.",
-                    "warning",
-                )
+                excluded_by_price = int(preparation.get("pricing_excluded") or 0)
+                exclusions = preparation.get("pricing_exclusions") or []
+                if excluded_by_price and exclusions:
+                    first_issue = exclusions[0]
+                    client_name = str(first_issue.get("client_name") or "Un destinatario")
+                    reason = str(first_issue.get("reason") or "No se pudo resolver su precio.")
+                    message = (
+                        f"No se encoló la campaña: {excluded_by_price} contacto(s) quedaron afuera "
+                        "por validación de precio. "
+                        f"Primer bloqueo: {client_name}: {reason} "
+                        "Corregí el producto, la lista mayorista vigente o la cantidad en la etapa Precios."
+                    )
+                else:
+                    message = (
+                        "No se encoló la campaña: ningún contacto superó la validación completa de WhatsApp, "
+                        "consentimiento y mensaje. Revisá los datos del público y volvé a intentar. "
+                        "No se enviará nada con el público en cero."
+                    )
+                flash(message, "warning")
                 return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
             CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
             db.session.commit()
