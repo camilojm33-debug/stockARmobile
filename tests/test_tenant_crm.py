@@ -878,3 +878,145 @@ def test_editing_client_details_without_consent_fields_preserves_existing_permis
     assert stored.phone_marketing_consent == "opted_in"
     assert stored.whatsapp_marketing_consent == "opted_in"
     assert stored.whatsapp_marketing_consent_evidence == "Aceptó en el local."
+
+def test_crm_activity_edit_page_renders_and_updates_followup(app):
+    from datetime import datetime
+    from app import Client, Company, User, db
+    from crm_models import CRMActivity, CRMOpportunity
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    company = Company(
+        name="CRM Edición de seguimientos",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_activity_edit_admin",
+        email="crm-activity-edit@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    client_record = Client(
+        name="Cliente seguimiento editable",
+        company_id=company.id,
+        active=True,
+    )
+    db.session.add_all([user, client_record])
+    db.session.flush()
+    opportunity = CRMOpportunity(
+        company_id=company.id,
+        client_id=client_record.id,
+        title="Demo pendiente",
+        stage="nuevo",
+        status="open",
+        value=25000,
+        probability=20,
+        owner_user_id=user.id,
+        created_at=datetime(2026, 1, 1, 10, 0),
+        updated_at=datetime(2026, 1, 1, 10, 0),
+    )
+    db.session.add(opportunity)
+    db.session.flush()
+    activity = CRMActivity(
+        company_id=company.id,
+        client_id=client_record.id,
+        opportunity_id=opportunity.id,
+        user_id=user.id,
+        type="seguimiento",
+        status="pending",
+        subject="Llamar por la demo",
+        description="Coordinar horario.",
+        due_at=datetime(2030, 1, 10, 9, 0),
+        created_at=datetime(2026, 1, 1, 10, 0),
+        updated_at=datetime(2026, 1, 1, 10, 0),
+    )
+    db.session.add(activity)
+    db.session.commit()
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+
+    page = http.get(f"/crm/activities/{activity.id}/edit")
+    assert page.status_code == 200
+    assert "Editar seguimiento".encode() in page.data
+    assert "Llamar por la demo".encode() in page.data
+    assert client_record.name.encode() in page.data
+
+    response = http.post(
+        f"/crm/activities/{activity.id}/edit",
+        data={
+            "client_id": str(client_record.id),
+            "opportunity_id": str(opportunity.id),
+            "type": "llamada",
+            "subject": "Confirmar la demostración",
+            "description": "Volver a llamar y coordinar el horario.",
+            "due_at": "2030-01-15T10:45",
+        },
+    )
+    assert response.status_code == 302
+    db.session.refresh(activity)
+    assert activity.client_id == client_record.id
+    assert activity.opportunity_id == opportunity.id
+    assert activity.type == "llamada"
+    assert activity.subject == "Confirmar la demostración"
+    assert activity.description == "Volver a llamar y coordinar el horario."
+    assert activity.due_at == datetime(2030, 1, 15, 10, 45)
+    assert activity.status == "pending"
+
+
+def test_crm_activity_edit_does_not_expose_another_tenant_activity(app):
+    from datetime import datetime
+    from app import Client, Company, User, db
+    from crm_models import CRMActivity
+
+    app.config["WTF_CSRF_ENABLED"] = False
+    own_company = Company(
+        name="CRM Empresa propia",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    foreign_company = Company(
+        name="CRM Empresa ajena",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add_all([own_company, foreign_company])
+    db.session.flush()
+    own_user = User(
+        username="crm_activity_own_admin",
+        email="crm-activity-own@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=own_company.id,
+    )
+    foreign_client = Client(
+        name="Cliente de otra empresa",
+        company_id=foreign_company.id,
+        active=True,
+    )
+    db.session.add_all([own_user, foreign_client])
+    db.session.flush()
+    foreign_activity = CRMActivity(
+        company_id=foreign_company.id,
+        client_id=foreign_client.id,
+        user_id=None,
+        type="tarea",
+        status="pending",
+        subject="Seguimiento privado",
+        description=None,
+        due_at=None,
+        created_at=datetime(2026, 1, 1, 10, 0),
+        updated_at=datetime(2026, 1, 1, 10, 0),
+    )
+    db.session.add(foreign_activity)
+    db.session.commit()
+
+    http = app.test_client()
+    _login_crm_user(http, own_user)
+    response = http.get(f"/crm/activities/{foreign_activity.id}/edit")
+    assert response.status_code == 404
