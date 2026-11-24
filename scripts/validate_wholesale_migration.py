@@ -23,7 +23,7 @@ from flask_migrate import stamp, upgrade
 
 BASE_REVISION = "20261024_01_release_readiness"
 LEGACY_MULTIBRANCH_REVISION = "20261101_01_multibranch"
-HEAD_REVISION = "20261123_01_quote_item_pickup"
+HEAD_REVISION = "20261123_02_lead_import_rows"
 
 
 _VALIDATION_STARTED_AT = time.monotonic()
@@ -261,6 +261,7 @@ def main() -> None:
                 "last_payment_id", "last_payment_at",
             },
             "saas_settings": {"key", "value", "updated_at", "updated_by_user_id"},
+            "saas_lead_import_records": {"import_id", "lead_id", "row_number", "outcome", "company_name", "created_at"},
             "branch_stock_transfer_batches": {
                 "company_id", "source_branch_id", "target_branch_id", "idempotency_key",
                 "payload_hash", "note", "created_by_user_id", "created_at",
@@ -280,7 +281,7 @@ def main() -> None:
             "branches", "user_branch_access", "branch_stock", "branch_stock_movements",
             "branch_stock_transfers", "branch_stock_transfer_batches",
             "whatsapp_channel_registrations", "company_memberships", "branch_vendor_licenses",
-            "saas_settings", "quote_item_pickup_events",
+            "saas_settings", "quote_item_pickup_events", "saas_lead_import_records",
         }
         missing_tables = {name for name in expected_tables if not inspector.has_table(name)}
         if missing_tables:

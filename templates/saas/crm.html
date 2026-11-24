@@ -153,6 +153,7 @@
             <a class="crm-quick-link" href="#crmLeads"><i class="bi bi-people"></i>Prospectos <span class="badge text-bg-secondary">{{ leads|length }}</span></a>
             <a class="crm-quick-link" href="#crmTasks"><i class="bi bi-check2-square"></i>Tareas <span class="badge text-bg-secondary">{{ task_counts['pendiente'] }}</span></a>
             <a class="crm-quick-link" href="#crmAlerts"><i class="bi bi-bell"></i>Alertas <span class="badge text-bg-secondary">{{ alerts|length }}</span></a>
+            <a class="crm-quick-link" href="{{ url_for('saas.crm_new_prospects') }}"><i class="bi bi-stars"></i>Nuevos prospectos</a>
             <a class="crm-quick-link" href="{{ url_for('saas.crm_inbox') }}"><i class="bi bi-inbox"></i>Bandeja</a>
             <a class="crm-quick-link" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone"></i>Campañas</a>
           </nav>

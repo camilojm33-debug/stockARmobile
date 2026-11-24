@@ -2648,6 +2648,167 @@ def crm_import():
     return render_template("saas/crm_import.html", preview=None)
 
 
+@bp.get("/crm/new-prospects")
+@superadmin_required
+def crm_new_prospects():
+    from datetime import datetime as _datetime, timedelta as _timedelta
+    from app import SaaSLead, SaaSLeadImport, SaaSLeadImportRecord, db, utcnow
+    from services.saas_commercial_service import apply_prospect_filters, segment_filters_from_request
+
+    _require_superadmin()
+    now = utcnow()
+    local_now = now.replace(tzinfo=timezone.utc).astimezone(_admin_timezone())
+    filters = segment_filters_from_request(request)
+    period = (request.args.get("period") or "30d").strip().lower()
+    if period in {"today", "7d", "15d", "30d"}:
+        days = {"today": 0, "7d": 7, "15d": 15, "30d": 30}[period]
+        filters["created_from"] = (local_now - _timedelta(days=days)).date().isoformat()
+        if period == "today":
+            filters["created_from"] = local_now.date().isoformat()
+        filters["created_to"] = ""
+    elif period == "all":
+        filters["created_from"] = ""
+        filters["created_to"] = ""
+    else:
+        period = "custom"
+
+    q = (request.args.get("q") or "").strip()[:160]
+    channel = (request.args.get("channel") or "all").strip().lower()
+    if channel not in {"all", "email", "email_optin", "whatsapp", "whatsapp_optin"}:
+        channel = "all"
+
+    lead_query = apply_prospect_filters(SaaSLead.query, filters)
+    if q:
+        like = f"%{q}%"
+        lead_query = lead_query.filter(
+            db.or_(
+                SaaSLead.company_name.ilike(like),
+                SaaSLead.contact_name.ilike(like),
+                SaaSLead.email.ilike(like),
+                SaaSLead.phone.ilike(like),
+                SaaSLead.whatsapp.ilike(like),
+                SaaSLead.industry.ilike(like),
+                SaaSLead.locality.ilike(like),
+                SaaSLead.province.ilike(like),
+            )
+        )
+    if channel in {"email", "email_optin"}:
+        lead_query = lead_query.filter(
+            SaaSLead.email.isnot(None),
+            db.func.length(db.func.trim(SaaSLead.email)) > 0,
+            SaaSLead.email_status != "invalid",
+        )
+    if channel == "email_optin":
+        lead_query = lead_query.filter(SaaSLead.email_consent_status == "opted_in")
+    if channel in {"whatsapp", "whatsapp_optin"}:
+        lead_query = lead_query.filter(
+            SaaSLead.whatsapp.isnot(None),
+            db.func.length(db.func.trim(SaaSLead.whatsapp)) > 0,
+        )
+    if channel == "whatsapp_optin":
+        lead_query = lead_query.filter(SaaSLead.whatsapp_consent_status == "opted_in")
+
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    per_page = 50
+    lead_total = lead_query.count()
+    leads = (
+        lead_query.order_by(SaaSLead.created_at.desc(), SaaSLead.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    local_today_start = _datetime.combine(
+        local_now.date(),
+        _datetime.min.time(),
+    ).replace(tzinfo=_admin_timezone())
+    today_start = local_today_start.astimezone(timezone.utc).replace(tzinfo=None)
+    last_7_days = now - _timedelta(days=7)
+    last_30_days = now - _timedelta(days=30)
+    summary = {
+        "today": SaaSLead.query.filter(SaaSLead.created_at >= today_start).count(),
+        "last_7_days": SaaSLead.query.filter(SaaSLead.created_at >= last_7_days).count(),
+        "last_30_days": SaaSLead.query.filter(SaaSLead.created_at >= last_30_days).count(),
+        "never_contacted": SaaSLead.query.filter(SaaSLead.last_contacted_at.is_(None)).count(),
+        "never_campaign": SaaSLead.query.filter(~SaaSLead.campaign_recipients.any()).count(),
+        "email_optin": SaaSLead.query.filter(
+            SaaSLead.do_not_contact.is_(False),
+            SaaSLead.email.isnot(None),
+            SaaSLead.email_status != "invalid",
+            SaaSLead.email_consent_status == "opted_in",
+        ).count(),
+        "whatsapp_optin": SaaSLead.query.filter(
+            SaaSLead.do_not_contact.is_(False),
+            SaaSLead.whatsapp.isnot(None),
+            SaaSLead.whatsapp_consent_status == "opted_in",
+        ).count(),
+    }
+
+    imports = SaaSLeadImport.query.order_by(SaaSLeadImport.created_at.desc(), SaaSLeadImport.id.desc()).limit(30).all()
+    import_stat_rows = (
+        db.session.query(
+            SaaSLeadImportRecord.import_id,
+            SaaSLeadImportRecord.outcome,
+            db.func.count(SaaSLeadImportRecord.id),
+        )
+        .filter(SaaSLeadImportRecord.import_id.in_([item.id for item in imports] or [-1]))
+        .group_by(SaaSLeadImportRecord.import_id, SaaSLeadImportRecord.outcome)
+        .all()
+    )
+    import_stats = {}
+    for import_id, outcome, count in import_stat_rows:
+        import_stats.setdefault(import_id, {})[outcome] = int(count)
+
+    selected_import_id = filters.get("import_id") or 0
+    selected_import = db.session.get(SaaSLeadImport, selected_import_id) if selected_import_id else None
+    selected_import_records = []
+    if selected_import:
+        selected_import_records = (
+            SaaSLeadImportRecord.query.filter_by(import_id=selected_import.id)
+            .order_by(SaaSLeadImportRecord.row_number.asc())
+            .limit(300)
+            .all()
+        )
+
+    campaign_params = {
+        key: value for key, value in {
+            "created_from": filters.get("created_from"),
+            "created_to": filters.get("created_to"),
+            "import_id": filters.get("import_id") or None,
+            "source": filters.get("source"),
+            "never_campaign": "1" if filters.get("never_campaign") else "",
+            "never_contacted": "1" if filters.get("never_contacted") else "",
+            "industry": filters.get("industry"),
+            "province": filters.get("province"),
+            "locality": filters.get("locality"),
+            "segment": filters.get("segment"),
+            "min_score": filters.get("min_score") or 0,
+        }.items() if value not in (None, "")
+    }
+    campaign_url = url_for("saas.crm_campaigns", **campaign_params)
+
+    return render_template(
+        "saas/crm_new_prospects.html",
+        leads=leads,
+        imports=imports,
+        import_stats=import_stats,
+        selected_import=selected_import,
+        selected_import_records=selected_import_records,
+        summary=summary,
+        filters=filters,
+        period=period,
+        q=q,
+        channel=channel,
+        lead_total=lead_total,
+        lead_page=page,
+        lead_pages=max(1, (lead_total + per_page - 1) // per_page),
+        campaign_url=campaign_url,
+    )
+
+
 @bp.get("/crm/leads/export")
 @superadmin_required
 def crm_leads_export():
@@ -2694,9 +2855,21 @@ def crm_campaigns():
 
     _require_superadmin()
     default_whatsapp_parameter_fields = ",".join(MASTER_TEMPLATE_PARAMETER_FIELDS)
+    from app import SaaSLeadImport, SaaSLeadImportRecord
+    from services.saas_commercial_service import segment_filters_from_request
+    import_batches = (
+        SaaSLeadImport.query.join(
+            SaaSLeadImportRecord,
+            SaaSLeadImportRecord.import_id == SaaSLeadImport.id,
+        )
+        .filter(SaaSLeadImportRecord.outcome == "new")
+        .distinct()
+        .order_by(SaaSLeadImport.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    campaign_filters = segment_filters_from_request(request)
     if request.method == "POST":
-        from services.saas_commercial_service import segment_filters_from_request
-
         filters = segment_filters_from_request(request)
         channel = (request.form.get("channel") or "email").strip().lower()
         subject = (request.form.get("subject") or "").strip()[:255]
@@ -2746,6 +2919,8 @@ def crm_campaigns():
         "saas/crm_campaigns.html",
         campaigns=campaigns,
         summary=summary,
+        campaign_filters=campaign_filters,
+        import_batches=import_batches,
         marketing_send_enabled=marketing_send_enabled,
         smtp_configured=smtp_configured,
         commercial_whatsapp=commercial_whatsapp,
@@ -2855,7 +3030,7 @@ def crm_campaign_bulk_consent(campaign_id):
 @bp.get("/crm/campaigns/<int:campaign_id>")
 @superadmin_required
 def crm_campaign_detail(campaign_id):
-    from app import SaaSCampaign, db
+    from app import SaaSCampaign, SaaSLead, SaaSLeadImport, SaaSLeadImportRecord, db
     from services.ai_agent.whatsapp_master_template_service import MASTER_TEMPLATE_PARAMETER_FIELDS
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
     from services.saas_campaign_preflight import campaign_preflight
@@ -2870,19 +3045,25 @@ def crm_campaign_detail(campaign_id):
         segment_filters = {}
     if not isinstance(segment_filters, dict):
         segment_filters = {}
-    from app import SaaSLead
-    from services.saas_commercial_service import parse_segment_json
+    from services.saas_commercial_service import apply_prospect_filters, parse_segment_json
 
     consent_candidates = []
     consent_filters = parse_segment_json(campaign.segment_json)
-    candidate_query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
-    for field in ("industry", "province", "locality", "segment"):
-        value = str(consent_filters.get(field) or "").strip()
-        if value:
-            candidate_query = candidate_query.filter(getattr(SaaSLead, field).ilike(f"%{value}%"))
-    min_score = int(consent_filters.get("min_score") or 0)
-    if min_score:
-        candidate_query = candidate_query.filter(SaaSLead.lead_score >= min_score)
+    candidate_query = apply_prospect_filters(
+        SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False)),
+        consent_filters,
+    )
+    import_batches = (
+        SaaSLeadImport.query.join(
+            SaaSLeadImportRecord,
+            SaaSLeadImportRecord.import_id == SaaSLeadImport.id,
+        )
+        .filter(SaaSLeadImportRecord.outcome == "new")
+        .distinct()
+        .order_by(SaaSLeadImport.created_at.desc())
+        .limit(100)
+        .all()
+    )
     if campaign.channel in {"email", "both"}:
         candidates = candidate_query.filter(
             SaaSLead.email.isnot(None),
@@ -2905,6 +3086,7 @@ def crm_campaign_detail(campaign_id):
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
         segment_filters=segment_filters,
+        import_batches=import_batches,
         campaign_scheduled_local=_format_admin_datetime_local(campaign.scheduled_at, "%Y-%m-%dT%H:%M"),
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),

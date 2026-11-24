@@ -234,8 +234,32 @@
                 <details class="mt-1">
                   <summary class="small fw-semibold text-primary" style="cursor:pointer;">Más filtros (opcional)</summary>
                   <div class="row g-3 mt-1">
-                    <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" placeholder="Ej.: captación"></div>
-                    <div class="col-md-6"><label class="form-label fw-semibold">Puntaje mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
+                    <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" value="{{ campaign_filters.get('segment','') }}" placeholder="Ej.: captación"></div>
+                    <div class="col-md-6"><label class="form-label fw-semibold">Puntaje mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="{{ campaign_filters.get('min_score',0) }}"></div>
+                    <div class="col-md-6"><label class="form-label fw-semibold">Prospectos incorporados desde</label><input class="form-control" type="date" name="created_from" value="{{ campaign_filters.get('created_from','') }}"></div>
+                    <div class="col-md-6"><label class="form-label fw-semibold">Hasta</label><input class="form-control" type="date" name="created_to" value="{{ campaign_filters.get('created_to','') }}"></div>
+                    <div class="col-md-6">
+                      <label class="form-label fw-semibold">Fuente de incorporación</label>
+                      <select class="form-select" name="source">
+                        <option value="">Todas</option>
+                        {% for value,label in [('manual','Carga manual'),('import_publico','Importación Excel/CSV'),('ops_auto','Automatización operativa'),('whatsapp_comercial','WhatsApp comercial'),('gmail_comercial','Gmail comercial')] %}
+                        <option value="{{ value }}" {{ 'selected' if campaign_filters.get('source') == value else '' }}>{{ label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-md-6">
+                      <label class="form-label fw-semibold">Importación específica</label>
+                      <select class="form-select" name="import_id">
+                        <option value="0">Cualquier importación</option>
+                        {% for batch in import_batches %}
+                        <option value="{{ batch.id }}" {{ 'selected' if campaign_filters.get('import_id')|int == batch.id else '' }}>#{{ batch.id }} · {{ batch.file_name }} · {{ batch.inserted_count }} nuevos</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-12">
+                      <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="never_campaign" value="1" id="campaignNeverSent" {{ 'checked' if campaign_filters.get('never_campaign') else '' }}><label class="form-check-label" for="campaignNeverSent">Nunca incluidos en campañas anteriores</label></div>
+                      <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="never_contacted" value="1" id="campaignNeverContacted" {{ 'checked' if campaign_filters.get('never_contacted') else '' }}><label class="form-check-label" for="campaignNeverContacted">Sin contacto comercial previo</label></div>
+                    </div>
                   </div>
                 </details>
               </div>

@@ -1,0 +1,194 @@
+{% extends "base_master.html" %}
+{% block title %}Nuevos prospectos · SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell superadmin-page">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-stars"></i> Prospección comercial</span>
+      <h1 class="h3 fw-bold mb-1">Nuevos prospectos</h1>
+      <p class="text-muted mb-0">Identificá qué comercios se incorporaron, de dónde llegaron y cuáles están habilitados para tus campañas.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_import') }}"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Importar Excel/CSV</a>
+      <a class="btn btn-primary" href="{{ campaign_url }}"><i class="bi bi-megaphone me-1"></i>Crear campaña con estos filtros</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}">Volver al CRM</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    {% for label,value,icon,caption in [
+      ('Incorporados hoy',summary.today,'bi-calendar-day','Altas desde medianoche'),
+      ('Últimos 7 días',summary.last_7_days,'bi-calendar-week','Actividad reciente'),
+      ('Últimos 30 días',summary.last_30_days,'bi-calendar-range','Nuevos del mes'),
+      ('Nunca recibieron campaña',summary.never_campaign,'bi-megaphone','Sin destinatario histórico'),
+      ('Sin contacto comercial',summary.never_contacted,'bi-person-dash','Sin seguimiento registrado'),
+      ('Email autorizado',summary.email_optin,'bi-envelope-check','Permiso registrado'),
+      ('WhatsApp autorizado',summary.whatsapp_optin,'bi-whatsapp','Permiso registrado')
+    ] %}
+    <div class="col-6 col-xl-3">
+      <div class="card app-card h-100"><div class="card-body">
+        <div class="d-flex align-items-start justify-content-between gap-2">
+          <div><div class="small text-muted text-uppercase fw-semibold">{{ label }}</div><div class="h3 fw-bold mb-1 mt-2">{{ value }}</div><div class="small text-muted">{{ caption }}</div></div>
+          <span class="rounded-3 p-2 bg-body-secondary"><i class="bi {{ icon }} fs-5"></i></span>
+        </div>
+      </div></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <section class="card app-card mb-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+        <div><h2 class="h5 fw-bold mb-1">Buscar y segmentar</h2><div class="small text-muted">Los mismos filtros se trasladan a la pantalla de creación de campañas.</div></div>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Período">
+          {% for key,label in [('today','Hoy'),('7d','7 días'),('15d','15 días'),('30d','30 días'),('all','Toda la base')] %}
+          <a class="btn {{ 'btn-primary' if period == key else 'btn-outline-secondary' }}" href="{{ url_for('saas.crm_new_prospects', period=key) }}">{{ label }}</a>
+          {% endfor %}
+        </div>
+      </div>
+      <form method="get" class="row g-3 align-items-end">
+        <input type="hidden" name="period" value="custom">
+        <div class="col-md-4"><label class="form-label fw-semibold">Buscar comercio o contacto</label><input class="form-control" name="q" value="{{ q }}" placeholder="Nombre, email, teléfono o rubro"></div>
+        <div class="col-md-2"><label class="form-label fw-semibold">Desde</label><input class="form-control" type="date" name="created_from" value="{{ filters.created_from or '' }}"></div>
+        <div class="col-md-2"><label class="form-label fw-semibold">Hasta</label><input class="form-control" type="date" name="created_to" value="{{ filters.created_to or '' }}"></div>
+        <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ filters.industry or '' }}" placeholder="Ej.: Ferretería"></div>
+        <div class="col-md-3"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ filters.province or '' }}" placeholder="Ej.: Chaco"></div>
+        <div class="col-md-3"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" value="{{ filters.locality or '' }}" placeholder="Ej.: Resistencia"></div>
+        <div class="col-md-3"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" value="{{ filters.segment or '' }}" placeholder="Ej.: kioscos"></div>
+        <div class="col-md-4"><label class="form-label fw-semibold">Fuente</label>
+          <select class="form-select" name="source">
+            <option value="">Todas las fuentes</option>
+            {% for value,label in [('manual','Carga manual'),('import_publico','Importación Excel/CSV'),('ops_auto','Automatización operativa'),('whatsapp_comercial','WhatsApp comercial'),('gmail_comercial','Gmail comercial')] %}
+            <option value="{{ value }}" {{ 'selected' if filters.source == value else '' }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4"><label class="form-label fw-semibold">Importación</label>
+          <select class="form-select" name="import_id">
+            <option value="0">Cualquier importación</option>
+            {% for batch in imports %}
+            <option value="{{ batch.id }}" {{ 'selected' if filters.import_id|int == batch.id else '' }}>#{{ batch.id }} · {{ batch.file_name }} · {{ batch.inserted_count }} nuevos</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4"><label class="form-label fw-semibold">Canal / autorización</label>
+          <select class="form-select" name="channel">
+            <option value="all" {{ 'selected' if channel == 'all' else '' }}>Todos los contactos</option>
+            <option value="email" {{ 'selected' if channel == 'email' else '' }}>Con email válido</option>
+            <option value="email_optin" {{ 'selected' if channel == 'email_optin' else '' }}>Email autorizado</option>
+            <option value="whatsapp" {{ 'selected' if channel == 'whatsapp' else '' }}>Con WhatsApp</option>
+            <option value="whatsapp_optin" {{ 'selected' if channel == 'whatsapp_optin' else '' }}>WhatsApp autorizado</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="never_campaign" value="1" id="newNeverCampaign" {{ 'checked' if filters.never_campaign else '' }}><label class="form-check-label" for="newNeverCampaign">Nunca incluidos en una campaña</label></div>
+          <div class="form-check"><input class="form-check-input" type="checkbox" name="never_contacted" value="1" id="newNeverContacted" {{ 'checked' if filters.never_contacted else '' }}><label class="form-check-label" for="newNeverContacted">Sin contacto comercial previo</label></div>
+        </div>
+        <div class="col-md-8 d-flex flex-wrap gap-2">
+          <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Aplicar filtros</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_new_prospects', period='30d') }}">Limpiar</a>
+          <a class="btn btn-outline-success" href="{{ campaign_url }}"><i class="bi bi-megaphone me-1"></i>Usar selección en campaña</a>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  {% if selected_import %}
+  <section class="card app-card mb-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div><span class="badge text-bg-primary">Importación #{{ selected_import.id }}</span><h2 class="h5 fw-bold mt-2 mb-1">{{ selected_import.file_name }}</h2><div class="small text-muted">Registrada {{ selected_import.created_at.strftime('%d/%m/%Y %H:%M') if selected_import.created_at else '—' }} · Fuente: {{ selected_import.source }}</div></div>
+        <a class="btn btn-primary btn-sm" href="{{ url_for('saas.crm_new_prospects', import_id=selected_import.id, period='all') }}"><i class="bi bi-people me-1"></i>Ver esta importación</a>
+      </div>
+      <div class="row g-2">
+        {% for label,value in [('Leídos',selected_import.rows_read),('Nuevos',selected_import.inserted_count),('Actualizados',selected_import.updated_count),('Duplicados',selected_import.duplicate_count),('Inválidos',selected_import.invalid_count)] %}
+        <div class="col-6 col-lg"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">{{ label }}</div><div class="h4 fw-bold mb-0">{{ value }}</div></div></div>
+        {% endfor %}
+      </div>
+      {% if selected_import_records %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Fila</th><th>Resultado</th><th>Comercio</th><th>Contacto</th><th>Email / WhatsApp</th><th>Rubro</th></tr></thead>
+          <tbody>
+          {% for row in selected_import_records %}
+          <tr>
+            <td>{{ row.row_number }}</td>
+            <td><span class="badge {{ 'text-bg-success' if row.outcome == 'new' else 'text-bg-warning' if row.outcome == 'updated' else 'text-bg-secondary' }}">{{ {'new':'Nuevo','updated':'Actualizado','duplicate':'Duplicado'}.get(row.outcome,row.outcome) }}</span></td>
+            <td class="fw-semibold">{{ row.company_name or '—' }}</td><td>{{ row.contact_name or '—' }}</td>
+            <td class="small">{{ row.email or row.whatsapp or row.phone or '—' }}</td><td>{{ row.industry or '—' }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="alert alert-info small mt-3 mb-0">Esta importación es anterior al historial detallado por fila. Sus totales se conservan, pero el sistema no puede reconstruir retrospectivamente qué fila produjo cada alta.</div>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="card app-card mb-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div><h2 class="h5 fw-bold mb-1">Prospectos encontrados</h2><div class="small text-muted">{{ lead_total }} resultado(s) · página {{ lead_page }} de {{ lead_pages }}</div></div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ campaign_url }}"><i class="bi bi-megaphone me-1"></i>Preparar campaña con esta audiencia</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead><tr><th>Comercio / contacto</th><th>Rubro y zona</th><th>Datos</th><th>Consentimientos</th><th>Origen / alta</th><th>Campañas</th></tr></thead>
+          <tbody>
+          {% for lead in leads %}
+          <tr>
+            <td><div class="fw-semibold">{{ lead.company_name }}</div><div class="small text-muted">{{ lead.contact_name or 'Sin contacto' }}</div></td>
+            <td>{{ lead.industry or '—' }}<div class="small text-muted">{{ lead.locality or '—' }}{% if lead.province %}, {{ lead.province }}{% endif %}</div></td>
+            <td class="small">{{ lead.email or 'Sin email' }}<div class="text-muted">{{ lead.whatsapp or lead.phone or 'Sin teléfono' }}</div></td>
+            <td class="small">
+              <span class="badge {{ 'text-bg-success' if lead.email_consent_status == 'opted_in' else 'text-bg-secondary' }}">Email: {{ 'Sí' if lead.email_consent_status == 'opted_in' else 'No' }}</span>
+              <span class="badge {{ 'text-bg-success' if lead.whatsapp_consent_status == 'opted_in' else 'text-bg-secondary' }}">WA: {{ 'Sí' if lead.whatsapp_consent_status == 'opted_in' else 'No' }}</span>
+              {% if lead.do_not_contact %}<div><span class="badge text-bg-danger mt-1">No contactar</span></div>{% endif %}
+            </td>
+            <td><span class="badge text-bg-light border">{{ lead.source or '—' }}</span><div class="small text-muted">{{ lead.created_at.strftime('%d/%m/%Y %H:%M') if lead.created_at else '—' }}</div></td>
+            <td class="small">{{ lead.campaign_recipients|length }} destinatario(s)<div class="text-muted">{{ 'Sin campañas' if not lead.campaign_recipients else 'Con historial' }}</div></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6"><div class="text-center py-5"><i class="bi bi-search fs-2 text-muted"></i><div class="fw-semibold mt-2">No encontramos prospectos con esos filtros</div><div class="small text-muted">Probá ampliar el período o quitar algún criterio.</div></div></td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if lead_page <= 1 else '' }}" href="{{ url_for('saas.crm_new_prospects', page=lead_page-1, period=period, q=q, source=filters.source, import_id=filters.import_id, channel=channel, created_from=filters.created_from, created_to=filters.created_to, industry=filters.industry, province=filters.province, locality=filters.locality, segment=filters.segment, never_campaign='1' if filters.never_campaign else '', never_contacted='1' if filters.never_contacted else '') }}">Anterior</a>
+        <span class="small text-muted">Página {{ lead_page }} / {{ lead_pages }}</span>
+        <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if lead_page >= lead_pages else '' }}" href="{{ url_for('saas.crm_new_prospects', page=lead_page+1, period=period, q=q, source=filters.source, import_id=filters.import_id, channel=channel, created_from=filters.created_from, created_to=filters.created_to, industry=filters.industry, province=filters.province, locality=filters.locality, segment=filters.segment, never_campaign='1' if filters.never_campaign else '', never_contacted='1' if filters.never_contacted else '') }}">Siguiente</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="card app-card">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div><h2 class="h5 fw-bold mb-1">Historial de importaciones</h2><div class="small text-muted">Cada archivo queda registrado y podés abrir el detalle de los resultados.</div></div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_import') }}">Nueva importación</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead><tr><th>Fecha</th><th>Archivo</th><th>Filas</th><th>Nuevos</th><th>Actualizados</th><th>Duplicados</th><th>Inválidos</th><th></th></tr></thead>
+          <tbody>
+          {% for batch in imports %}
+          <tr>
+            <td class="small">{{ batch.created_at.strftime('%d/%m/%Y %H:%M') if batch.created_at else '—' }}</td>
+            <td><div class="fw-semibold">{{ batch.file_name }}</div><div class="small text-muted">#{{ batch.id }} · {{ batch.source }}</div></td>
+            <td>{{ batch.rows_read }}</td><td><span class="badge text-bg-success">{{ batch.inserted_count }}</span></td><td>{{ batch.updated_count }}</td><td>{{ batch.duplicate_count }}</td><td>{{ batch.invalid_count }}</td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_new_prospects', import_id=batch.id, period='all') }}">Ver filas</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">Todavía no hay importaciones registradas.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
