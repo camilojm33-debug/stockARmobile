@@ -31,6 +31,28 @@ def resolve_timezone(tz_name=None):
         return ZoneInfo(DEFAULT_TIMEZONE)
 
 
+
+def local_naive_to_utc_naive(value, tz_name=None):
+    """Interpret a naive datetime as company-local and return UTC-naive for DB storage."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value.replace(tzinfo=resolve_timezone(tz_name)).astimezone(UTC).replace(tzinfo=None)
+
+
+def parse_local_datetime_to_utc_naive(value, tz_name=None):
+    """Parse an HTML datetime-local/ISO value using the company timezone."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return local_naive_to_utc_naive(parsed, tz_name)
+
+
 def utc_naive_to_aware(value):
     """Interpret a DB-naive timestamp as UTC without changing its instant."""
     if value is None:
