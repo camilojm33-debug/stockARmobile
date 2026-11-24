@@ -1717,5 +1717,71 @@
   {% block extra_scripts %}{% endblock %}
   {% block extra_scripts_inline %}{% endblock %}
   {% block scripts_extra %}{% endblock %}
+  {% if current_user.is_authenticated and current_user.role == 'superadmin' %}
+  <script>
+    // Preserve the reading position when Superadmin moves between paginated
+    // pages. Scope the saved position to the current listing (all query filters
+    // except page), so another screen/search never inherits this scroll.
+    (function () {
+      'use strict';
+      const storageKey = 'stockarmobile:superadmin-pagination-scroll';
+      function listingContext(url) {
+        const parsed = new URL(url, window.location.origin);
+        parsed.searchParams.delete('page');
+        parsed.hash = '';
+        return parsed.pathname + '?' + parsed.searchParams.toString();
+      }
+      function readSaved() {
+        try {
+          const raw = sessionStorage.getItem(storageKey);
+          return raw ? JSON.parse(raw) : null;
+        } catch (_) {
+          return null;
+        }
+      }
+      function restoreScroll() {
+        const saved = readSaved();
+        if (!saved) return;
+        const current = new URL(window.location.href);
+        const context = listingContext(current.href);
+        const page = current.searchParams.get('page') || '1';
+        if (saved.context !== context || saved.page !== page || Date.now() - saved.savedAt > 120000) {
+          try { sessionStorage.removeItem(storageKey); } catch (_) {}
+          return;
+        }
+        try { sessionStorage.removeItem(storageKey); } catch (_) {}
+        // Wait for the page's layout to settle (including table/card rendering).
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            window.scrollTo(0, Number(saved.scrollY) || 0);
+          });
+        });
+      }
+      document.addEventListener('click', function (event) {
+        const anchor = event.target.closest('a[href]');
+        if (!anchor || event.defaultPrevented || event.button !== 0 ||
+            event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        const target = new URL(anchor.href, window.location.origin);
+        if (target.origin !== window.location.origin ||
+            !target.searchParams.has('page') ||
+            !(anchor.classList.contains('page-link') || anchor.closest('.pagination'))) return;
+        const current = new URL(window.location.href);
+        if (listingContext(target.href) !== listingContext(current.href)) return;
+        const targetPage = target.searchParams.get('page');
+        if (!targetPage || targetPage === (current.searchParams.get('page') || '1')) return;
+        try {
+          sessionStorage.setItem(storageKey, JSON.stringify({
+            context: listingContext(target.href),
+            page: targetPage,
+            scrollY: window.scrollY,
+            savedAt: Date.now()
+          }));
+        } catch (_) {}
+      }, true);
+      window.addEventListener('pageshow', restoreScroll);
+      if (document.readyState === 'complete') restoreScroll();
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>
