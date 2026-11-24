@@ -9,22 +9,43 @@
   </div>
   <div class="card app-card mb-3"><div class="card-body d-flex flex-wrap gap-2 align-items-center">
     {% if client.whatsapp %}
-      <form method="post" target="_blank" action="{{ url_for('crm.client_contact', client_id=client.id, channel='whatsapp') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp Web</button></form>
+      {% if client.whatsapp_marketing_consent != 'opted_in' %}
+        <div class="alert alert-warning small w-100 mb-2">
+          <strong>Sin autorización para promociones por WhatsApp.</strong>
+          {% if client.whatsapp_marketing_consent == 'opted_out' %}
+            El cliente rechazó los mensajes de marketing. No uses este canal para campañas ni ofertas.
+          {% else %}
+            No hay consentimiento promocional registrado. No uses este canal para campañas ni ofertas.
+          {% endif %}
+          La atención individual no promocional debe respetar las preferencias del cliente.
+        </div>
+      {% endif %}
+      {% if confirm_whatsapp %}
+        <form method="post" target="_blank" action="{{ url_for('crm.client_contact', client_id=client.id, channel='whatsapp') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="confirm_non_marketing" value="1">
+          <button class="btn btn-warning" type="submit"><i class="bi bi-shield-check me-1"></i>Confirmar contacto no promocional</button>
+        </form>
+      {% else %}
+        <form method="post" target="_blank" action="{{ url_for('crm.client_contact', client_id=client.id, channel='whatsapp') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn {% if client.whatsapp_marketing_consent == 'opted_in' %}btn-success{% else %}btn-outline-secondary{% endif %}" type="submit"><i class="bi bi-whatsapp me-1"></i>{% if client.whatsapp_marketing_consent == 'opted_in' %}Abrir WhatsApp Web{% else %}Solicitar apertura de WhatsApp{% endif %}</button>
+        </form>
+      {% endif %}
     {% endif %}
     <a class="btn btn-outline-secondary" href="{{ url_for('crm.clients') }}">Volver a clientes</a>
-  </div><div class="px-3 pb-3 small text-muted">Al abrir WhatsApp Web, vos revisás y enviás el mensaje. StockARmobile registra un recordatorio; no lo envía automáticamente.</div></div>
+  </div><div class="px-3 pb-3 small text-muted">Al abrir WhatsApp Web, vos revisás y enviás el mensaje. StockArMobile registra un recordatorio; no lo envía automáticamente. La apertura no otorga consentimiento para promociones.</div></div>
   <div class="row g-3 mb-4">
     <div class="col-6 col-lg-3"><div class="crm-kpi"><div><div class="small text-muted">Compras históricas</div><div class="value">{{ sales_count }}</div></div></div></div>
     <div class="col-6 col-lg-3"><div class="crm-kpi"><div><div class="small text-muted">Total comprado</div><div class="value">ARS {{ '%.2f'|format(total_spent) }}</div></div></div></div>
     <div class="col-6 col-lg-3"><div class="crm-kpi"><div><div class="small text-muted">Presupuestos históricos</div><div class="value">{{ quotes_count }}</div></div></div></div>
-    <div class="col-6 col-lg-3"><div class="crm-kpi"><div><div class="small text-muted">Oportunidades</div><div class="value">{{ opportunities|length }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="crm-kpi"><div><div class="small text-muted">Oportunidades</div><div class="value">{{ opportunities_total }}</div></div></div></div>
   </div>
   <div class="row g-4">
     <div class="col-xl-7"><div class="card app-card"><div class="card-body">
       <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Historial comercial unificado</h2><p class="small text-muted mb-0">Actividades, presupuestos y ventas ordenados por fecha.</p></div><span class="badge text-bg-secondary">{{ timeline|length }} eventos</span></div>
       {% for event in timeline %}
         <div class="border-start border-3 border-{{ event.color }} ps-3 pb-3 mb-2">
-          <div class="d-flex justify-content-between gap-2 flex-wrap"><div class="fw-semibold">{% if event.url %}<a class="text-decoration-none" href="{{ event.url }}">{{ event.title }}</a>{% else %}{{ event.title }}{% endif %}</div>{% if event.date %}<div class="small text-muted">{{ event.date.strftime('%d/%m/%Y %H:%M') }}</div>{% endif %}</div>
+          <div class="d-flex justify-content-between gap-2 flex-wrap"><div class="fw-semibold">{% if event.url %}<a class="text-decoration-none" href="{{ event.url }}">{{ event.title }}</a>{% else %}{{ event.title }}{% endif %}</div>{% if event.date %}<div class="small text-muted">{{ format_local_datetime(event.date, timezone_name, '%d/%m/%Y %H:%M') }}</div>{% endif %}</div>
           <div class="small text-muted">{{ event.subtitle }}</div>{% if event.description %}<div class="small mt-1 text-break">{{ event.description }}</div>{% endif %}
         </div>
       {% else %}<div class="empty-state">Todavía no hay actividad comercial.</div>{% endfor %}
@@ -39,14 +60,14 @@
         <div class="small text-muted mb-1">Canal comercial</div><div>WhatsApp</div>
       </div></div>
       {% include 'clientes/_consent_panel.html' %}
-      <div class="card app-card mb-4"><div class="card-body"><div class="d-flex justify-content-between gap-2 align-items-center mb-3"><h2 class="h6 fw-bold mb-0">Oportunidades</h2><a class="small" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Crear</a></div>
+      <div class="card app-card mb-4"><div class="card-body"><div class="d-flex justify-content-between gap-2 align-items-center mb-3"><div><h2 class="h6 fw-bold mb-0">Oportunidades</h2><div class="small text-muted">Mostrando hasta 50 de {{ opportunities_total }}</div></div><a class="small" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Crear</a></div>
         {% for item in opportunities %}
           <a class="d-block border rounded-3 p-3 mb-2 text-decoration-none text-reset" href="{{ url_for('crm.opportunity_detail', opportunity_id=item.id) }}"><div class="fw-semibold">{{ item.title }}</div><div class="small text-muted">{{ dict(stages).get(item.stage, item.stage)|capitalize }} · ARS {{ '%.2f'|format(item.value or 0) }}</div>{% if item.quote_id %}<div class="small mt-1">Presupuesto #{{ item.quote_id }}</div>{% endif %}{% if item.sale_id %}<div class="small text-success">Venta #{{ item.sale_id }}</div>{% endif %}</a>
         {% else %}<div class="small text-muted">Sin oportunidades asociadas.</div>{% endfor %}
       </div></div>
       <div class="card app-card"><div class="card-body"><div class="d-flex justify-content-between gap-2 align-items-center mb-3"><h2 class="h6 fw-bold mb-0">Próximos seguimientos</h2><a class="small" href="{{ url_for('crm.activities', client_id=client.id) }}">Agregar</a></div>
         {% for item in activities if item.status != 'completed' %}
-          <div class="border rounded-3 p-3 mb-2"><div class="fw-semibold">{{ item.subject }}</div><div class="small text-muted">{{ item.due_at.strftime('%d/%m/%Y %H:%M') if item.due_at else 'Sin fecha programada' }}</div><a class="small" href="{{ url_for('crm.activity_edit', activity_id=item.id) }}">Editar seguimiento</a></div>
+          <div class="border rounded-3 p-3 mb-2"><div class="fw-semibold">{{ item.subject }}</div><div class="small text-muted">{{ format_local_datetime(item.due_at, timezone_name, '%d/%m/%Y %H:%M') if item.due_at else 'Sin fecha programada' }}</div><a class="small" href="{{ url_for('crm.activity_edit', activity_id=item.id) }}">Editar seguimiento</a></div>
         {% else %}<div class="small text-muted">No hay seguimientos pendientes.</div>{% endfor %}
       </div></div>
     </div>
