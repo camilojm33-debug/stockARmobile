@@ -391,17 +391,32 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     _login_crm_user(test_client, user)
     response = test_client.post(f"/crm/clients/{client_record.id}/contact/whatsapp")
     assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/crm/clients/{client_record.id}?confirm_whatsapp=1")
+    assert CRMActivity.query.filter_by(company_id=company.id).count() == 0
+
+    confirmation_page = test_client.get(response.headers["Location"])
+    assert confirmation_page.status_code == 200
+    assert b"Sin autorizaci" in confirmation_page.data
+    assert b"Confirmar contacto no promocional" in confirmation_page.data
+
     from pathlib import Path
     template = Path("templates/crm/client_360.html").read_text(encoding="utf-8")
     assert 'target="_blank"' in template
     base_template = Path("templates/base_master.html").read_text(encoding="utf-8")
     assert "if ((form.target || '').toLowerCase() === '_blank') return;" in base_template
-    assert response.headers["Location"] == "https://wa.me/5493624228396"
+
+    confirmed = test_client.post(
+        f"/crm/clients/{client_record.id}/contact/whatsapp",
+        data={"confirm_non_marketing": "1"},
+    )
+    assert confirmed.status_code == 302
+    assert confirmed.headers["Location"] == "https://wa.me/5493624228396"
     activity = CRMActivity.query.filter_by(company_id=company.id).one()
     assert activity.client_id == client_record.id
     assert activity.type == "whatsapp"
     assert activity.status == "pending"
     assert "no puede confirmar" in activity.description
+    assert "comunicación no promocional" in activity.description
 
     rejected_email = test_client.post(f"/crm/clients/{client_record.id}/contact/email")
     assert rejected_email.status_code == 400
@@ -964,7 +979,8 @@ def test_crm_activity_edit_page_renders_and_updates_followup(app):
     assert activity.type == "llamada"
     assert activity.subject == "Confirmar la demostración"
     assert activity.description == "Volver a llamar y coordinar el horario."
-    assert activity.due_at == datetime(2030, 1, 15, 10, 45)
+    assert activity.due_at == datetime(2030, 1, 15, 13, 45)
+    assert b'value="2030-01-15T10:45"' in http.get(f"/crm/activities/{activity.id}/edit").data
     assert activity.status == "pending"
 
 
@@ -1111,3 +1127,187 @@ def test_crm_sale_cannot_be_linked_to_multiple_opportunities(app):
         )
         assert quote is None
         assert resolved_sale.id == sale.id
+
+def test_crm_local_datetime_helpers_round_trip_in_company_timezone():
+    from datetime import date
+    from stockarmobile.helpers.dates import (
+        format_local_datetime,
+        local_day_bounds_utc_naive,
+        parse_local_datetime_to_utc_naive,
+    )
+
+    timezone_name = "America/Argentina/Buenos_Aires"
+    stored = parse_local_datetime_to_utc_naive("2026-11-24T10:15", timezone_name)
+    assert stored == datetime(2026, 11, 24, 13, 15)
+    assert format_local_datetime(stored, timezone_name, "%Y-%m-%dT%H:%M") == "2026-11-24T10:15"
+
+    start_utc, end_utc = local_day_bounds_utc_naive(
+        date(2026, 11, 24),
+        timezone_name,
+    )
+    assert start_utc == datetime(2026, 11, 24, 3, 0)
+    assert end_utc == datetime(2026, 11, 25, 3, 0)
+
+
+def test_crm_datetime_migration_converts_existing_local_values_once(app):
+    import importlib.util
+    from pathlib import Path
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+    from app import Client, Company, User, db
+    from crm_models import CRMActivity, CRMOpportunity
+
+    company = Company(
+        name="CRM Migración horaria",
+        active=True,
+        timezone="America/Argentina/Buenos_Aires",
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_migration_timezone",
+        email="crm-migration-timezone@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    client_record = Client(
+        name="Cliente migración horaria",
+        company_id=company.id,
+        active=True,
+    )
+    db.session.add_all([user, client_record])
+    db.session.flush()
+    opportunity = CRMOpportunity(
+        company_id=company.id,
+        client_id=client_record.id,
+        title="Oportunidad con fecha local",
+        stage="nuevo",
+        status="open",
+        value=1000,
+        probability=20,
+        owner_user_id=user.id,
+        expected_close_date=datetime(2030, 1, 15, 10, 45),
+        created_at=datetime(2026, 1, 1, 12, 0),
+        updated_at=datetime(2026, 1, 1, 12, 0),
+    )
+    activity = CRMActivity(
+        company_id=company.id,
+        client_id=client_record.id,
+        user_id=user.id,
+        type="tarea",
+        status="pending",
+        subject="Actividad con fecha local",
+        due_at=datetime(2030, 1, 16, 9, 30),
+        created_at=datetime(2026, 1, 1, 12, 0),
+        updated_at=datetime(2026, 1, 1, 12, 0),
+    )
+    db.session.add_all([opportunity, activity])
+    db.session.commit()
+
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "20261124_01_crm_datetime_utc.py"
+    )
+    spec = importlib.util.spec_from_file_location("crm_datetime_utc_migration", migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    with db.engine.begin() as connection:
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+
+    db.session.expire_all()
+    assert db.session.get(CRMOpportunity, opportunity.id).expected_close_date == datetime(2030, 1, 15, 13, 45)
+    assert db.session.get(CRMActivity, activity.id).due_at == datetime(2030, 1, 16, 12, 30)
+
+
+def test_crm_pages_paginate_and_selector_search_finds_older_clients(app):
+    from app import Client, Company, User, db
+    from crm_models import CRMActivity, CRMOpportunity
+
+    company = Company(
+        name="CRM Listas paginadas",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_pagination_admin",
+        email="crm-pagination@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    db.session.add(user)
+    db.session.flush()
+
+    clients = [
+        Client(
+            name=f"Cliente CRM {index:03d}",
+            company_id=company.id,
+            active=True,
+        )
+        for index in range(41)
+    ]
+    db.session.add_all(clients)
+    db.session.flush()
+    stamp = datetime(2026, 1, 1, 12, 0)
+    opportunities = [
+        CRMOpportunity(
+            company_id=company.id,
+            client_id=clients[index].id,
+            title=f"Oportunidad CRM {index:03d}",
+            stage="nuevo",
+            status="open",
+            value=1000,
+            probability=10,
+            owner_user_id=user.id,
+            created_at=stamp,
+            updated_at=stamp,
+        )
+        for index in range(41)
+    ]
+    activities = [
+        CRMActivity(
+            company_id=company.id,
+            client_id=clients[index].id,
+            user_id=user.id,
+            type="tarea",
+            status="pending",
+            subject=f"Seguimiento CRM {index:03d}",
+            due_at=None,
+            created_at=stamp,
+            updated_at=stamp,
+        )
+        for index in range(31)
+    ]
+    db.session.add_all([*opportunities, *activities])
+    db.session.commit()
+
+    http = app.test_client()
+    _login_crm_user(http, user)
+
+    clients_page = http.get("/crm/clients?page=2")
+    assert clients_page.status_code == 200
+    assert b"Cliente CRM 040" in clients_page.data
+    assert b"41 clientes" in clients_page.data
+
+    pipeline_page = http.get("/crm/pipeline?page=2&status=all")
+    assert pipeline_page.status_code == 200
+    assert b"Oportunidad CRM 000" in pipeline_page.data
+    assert b"41 oportunidad(es)" in pipeline_page.data
+
+    activities_page = http.get("/crm/activities?page=2&status=all")
+    assert activities_page.status_code == 200
+    assert b"Seguimiento CRM 000" in activities_page.data
+    assert b"31 registros" in activities_page.data
+
+    searchable_form = http.get("/crm/opportunities/new?lookup=Cliente+CRM+040")
+    assert searchable_form.status_code == 200
+    assert b"Cliente CRM 040" in searchable_form.data
+
