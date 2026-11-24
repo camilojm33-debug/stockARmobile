@@ -264,3 +264,49 @@ def test_saas_redirect_back_preserves_valid_internal_destinations(app, source):
         response = _redirect_back(default_endpoint="dashboard.index")
         assert response.status_code == 302
         assert response.headers["Location"] == target
+
+def test_public_demo_is_unavailable_in_production(app, monkeypatch):
+    import auth as auth_module
+
+    app.config["IS_PRODUCTION_ENV"] = True
+    monkeypatch.setattr(
+        auth_module,
+        "_ensure_demo_account",
+        lambda: pytest.fail("La cuenta demo no debe inicializarse en producción"),
+    )
+
+    response = app.test_client().get("/auth/demo")
+
+    assert response.status_code == 404
+
+
+def test_public_demo_remains_available_outside_production(app, monkeypatch):
+    import auth as auth_module
+
+    app.config["IS_PRODUCTION_ENV"] = False
+    monkeypatch.setattr(auth_module, "_ensure_demo_account", lambda: object())
+    monkeypatch.setattr(auth_module, "_login_user_and_bind_company", lambda *_args, **_kwargs: None)
+
+    client = app.test_client()
+    response = client.get("/auth/demo")
+
+    assert response.status_code in (301, 302)
+    with client.session_transaction() as session:
+        assert session["demo_mode"] is True
+        assert session["guided_tour_pending"] is True
+
+
+def test_registration_requires_eight_character_passwords():
+    from app import RegisterForm
+
+    short_form = RegisterForm(
+        data={"username": "Comercio QA", "email": "qa@example.test", "password": "1234567"},
+        meta={"csrf": False},
+    )
+    accepted_form = RegisterForm(
+        data={"username": "Comercio QA", "email": "qa@example.test", "password": "12345678"},
+        meta={"csrf": False},
+    )
+
+    assert not short_form.validate()
+    assert accepted_form.validate()
