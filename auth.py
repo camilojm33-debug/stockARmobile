@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from services.password_recovery_service import PasswordRecoveryService
@@ -329,8 +329,8 @@ def reset_password(token):
         new_password = (request.form.get("new_password") or "").strip()
         confirm_password = (request.form.get("confirm_password") or "").strip()
 
-        if len(new_password) < 6:
-            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+        if len(new_password) < 8:
+            flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
             return render_template("auth/reset_password.html", token=token)
         if new_password != confirm_password:
             flash("Las contrasenas no coinciden.", "danger")
@@ -365,8 +365,8 @@ def force_password_change():
         new_password = (request.form.get("new_password") or "").strip()
         confirm_password = (request.form.get("confirm_password") or "").strip()
 
-        if len(new_password) < 6:
-            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+        if len(new_password) < 8:
+            flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
             return render_template("auth/force_password_change.html")
         if new_password != confirm_password:
             flash("Las contrasenas no coinciden.", "danger")
@@ -625,6 +625,11 @@ def register():
 
 @bp.route("/demo", methods=["GET"])
 def demo():
+    # The demo account is a shared writable tenant. Never expose it in production,
+    # where multiple anonymous visitors could otherwise modify the same sample data.
+    if current_app.config.get("IS_PRODUCTION_ENV"):
+        abort(404)
+
     demo_user = _ensure_demo_account()
     _login_user_and_bind_company(demo_user, remember=False)
     session["demo_mode"] = True
