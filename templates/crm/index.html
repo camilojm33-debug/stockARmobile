@@ -119,7 +119,7 @@
             <div class="min-w-0">
               <div class="crm-item-title text-truncate">{{ item.subject }}</div>
               <div class="crm-item-meta">{{ item.client.name }}{% if item.opportunity %} · {{ item.opportunity.title }}{% endif %}</div>
-              {% if item.due_at %}<div class="crm-item-meta"><i class="bi bi-clock me-1"></i>{{ item.due_at.strftime('%d/%m %H:%M') }}</div>{% endif %}
+              {% if item.due_at %}<div class="crm-item-meta"><i class="bi bi-clock me-1"></i>{{ format_local_datetime(item.due_at, timezone_name, '%d/%m %H:%M') }}</div>{% endif %}
             </div>
             <span class="badge text-bg-primary flex-shrink-0">{{ item.type|capitalize }}</span>
           </a>
