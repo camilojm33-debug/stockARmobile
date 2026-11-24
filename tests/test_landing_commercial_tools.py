@@ -65,3 +65,6 @@ def test_landing_promotes_commercial_tools_and_plan_comparison(app):
     assert "Control global de precios" in body
     assert "Compras a proveedores" in body
     assert "/precios-mayoristas-para-comercios" in body
+    assert 'href="#video-demo"' in body
+    assert "Ver demo en video" in body
+    assert 'href="/auth/demo"' not in body
