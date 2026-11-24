@@ -101,6 +101,11 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
         sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first()
         if sale is None or int(sale.client_id or 0) != int(client_id):
             raise ValueError("La venta debe pertenecer al mismo cliente y empresa.")
+        duplicate_sale = _opportunity_query().filter(CRMOpportunity.sale_id == sale.id)
+        if opportunity_id:
+            duplicate_sale = duplicate_sale.filter(CRMOpportunity.id != opportunity_id)
+        if duplicate_sale.first():
+            raise ValueError("Esa venta ya está vinculada a otra oportunidad del CRM.")
         sale_is_annulled = str(sale.status or "").strip().lower() in {"anulada", "cancelada", "cancelled", "voided"}
         if sale_is_annulled:
             already_linked_here = opportunity_id and _opportunity_query().filter(
