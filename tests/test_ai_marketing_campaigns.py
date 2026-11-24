@@ -2405,6 +2405,8 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
                 "channel": "whatsapp",
                 "audience_selection_mode": "selected",
                 "selected_client_ids": [41, 42],
+                "pricing_exclusions": [{"client_name": "Anterior", "reason": "Lista vieja"}],
+                "pricing_excluded_count": 1,
             },
             audience_segment="clientes activos",
             audience_count=2,
@@ -2447,6 +2449,8 @@ def test_campaign_editor_saves_message_schedule_and_personalized_quantity(app, m
         assert campaign.channel == "whatsapp"
         assert campaign.product_id == product.id
         assert saved["pricing_quantity"] == "3"
+        assert "pricing_exclusions" not in saved
+        assert "pricing_excluded_count" not in saved
         assert saved["audience_selection_mode"] == "selected"
         assert saved["selected_client_ids"] == [41, 42]
         assert campaign.scheduled_at == datetime(2026, 11, 20, 18, 30)
