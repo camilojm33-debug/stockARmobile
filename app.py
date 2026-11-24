@@ -2772,7 +2772,7 @@ def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=No
 class RegisterForm(FlaskForm):
     username = StringField("Empresa / Negocio", validators=[DataRequired(), Length(min=3, max=50)])
     email = StringField("Email", validators=[DataRequired(), Email()])
-    password = PasswordField("Contrasena", validators=[DataRequired(), Length(min=8)])
+    password = PasswordField("Contrasena", validators=[DataRequired(), Length(min=6)])
     submit = SubmitField("Registrarse")
 
 
