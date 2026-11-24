@@ -68,3 +68,24 @@ def test_landing_promotes_commercial_tools_and_plan_comparison(app):
     assert 'href="#video-demo"' in body
     assert "Ver demo en video" in body
     assert 'href="/auth/demo"' not in body
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/software-para-ferreterias",
+        "/software-para-corralones",
+        "/sistema-para-kioscos",
+        "/sistema-para-supermercados",
+        "/sistema-de-presupuestos",
+        "/control-de-stock",
+        "/herramienta-comercial",
+    ],
+)
+def test_public_demo_ctas_use_read_only_video_instead_of_shared_demo(app, path):
+    response = app.test_client().get(path)
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'href="/#video-demo"' in body
+    assert "/auth/demo" not in body
+    assert "Ver demo en video" in body
