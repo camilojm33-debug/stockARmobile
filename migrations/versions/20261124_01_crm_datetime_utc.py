@@ -6,7 +6,7 @@ compared them with UTC-naive timestamps from utcnow(). Convert only those two
 user-entered fields using each company's configured timezone. Creation,
 completion and audit timestamps were already stored as UTC and are untouched.
 """
-from datetime import timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from alembic import op
@@ -48,7 +48,7 @@ def _convert_column(bind, table_name, column_name, *, to_utc):
     )
     update_sql = sa.text(
         f"UPDATE {table_name} SET {column_name} = :converted_value WHERE id = :record_id"
-    )
+    ).bindparams(sa.bindparam("converted_value", type_=sa.DateTime()))
 
     while True:
         rows = bind.execute(
@@ -61,6 +61,8 @@ def _convert_column(bind, table_name, column_name, *, to_utc):
         updates = []
         for row in rows:
             stored_value = row["stored_value"]
+            if isinstance(stored_value, str):
+                stored_value = datetime.fromisoformat(stored_value)
             tz = _resolve_timezone(row["timezone_name"])
             if to_utc:
                 aware_value = (
