@@ -221,8 +221,6 @@ def _opportunity_form_options(*, lookup="", selected_client_id=None, opportunity
         "quotes": quotes,
         "sales": sales,
         "owners": owners,
-        "lookup": lookup,
-        "timezone_name": _company_timezone_name(),
     }
 
 
