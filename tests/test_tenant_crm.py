@@ -1020,3 +1020,77 @@ def test_crm_activity_edit_does_not_expose_another_tenant_activity(app):
     _login_crm_user(http, own_user)
     response = http.get(f"/crm/activities/{foreign_activity.id}/edit")
     assert response.status_code == 404
+
+def test_crm_sale_cannot_be_linked_to_multiple_opportunities(app):
+    from datetime import datetime
+    from app import Client, Company, Sale, User, db
+    from crm import _resolve_commercial_links
+    from crm_models import CRMOpportunity
+
+    company = Company(
+        name="CRM Venta única",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_sale_unique_admin",
+        email="crm-sale-unique@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    client_record = Client(
+        name="Cliente con venta vinculada",
+        company_id=company.id,
+        active=True,
+    )
+    db.session.add_all([user, client_record])
+    db.session.flush()
+    sale = Sale(
+        company_id=company.id,
+        client_id=client_record.id,
+        seller_id=user.id,
+        customer=client_record.name,
+        status="confirmada",
+        subtotal=12500,
+        total_amount=12500,
+        date=datetime(2026, 1, 1, 10, 0),
+    )
+    db.session.add(sale)
+    db.session.flush()
+    linked_opportunity = CRMOpportunity(
+        company_id=company.id,
+        client_id=client_record.id,
+        title="Oportunidad ya vinculada",
+        stage="ganado",
+        status="closed",
+        value=12500,
+        probability=100,
+        owner_user_id=user.id,
+        sale_id=sale.id,
+        created_at=datetime(2026, 1, 1, 10, 0),
+        updated_at=datetime(2026, 1, 1, 10, 0),
+    )
+    db.session.add(linked_opportunity)
+    db.session.commit()
+
+    with app.test_request_context("/"):
+        login_user(user)
+        try:
+            _resolve_commercial_links(client_record.id, None, sale.id)
+        except ValueError as exc:
+            assert "ya está vinculada" in str(exc)
+        else:
+            raise AssertionError("Se permitió vincular la misma venta a dos oportunidades.")
+
+        quote, resolved_sale = _resolve_commercial_links(
+            client_record.id,
+            None,
+            sale.id,
+            opportunity_id=linked_opportunity.id,
+        )
+        assert quote is None
+        assert resolved_sale.id == sale.id
