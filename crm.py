@@ -398,7 +398,7 @@ def pipeline():
     if stage_filter not in STAGE_LABELS:
         stage_filter = ""
     owner_filter = request.args.get("owner_id", type=int)
-    search = (request.args.get("q") or "").strip()
+    search = (request.args.get("q") or "").strip()[:120]
     query = _opportunity_query()
     if status_filter in {"open", "closed"}:
         query = query.filter(CRMOpportunity.status == status_filter)
@@ -408,7 +408,17 @@ def pipeline():
         query = query.filter(CRMOpportunity.owner_user_id == owner_filter)
     if search:
         like = f"%{search}%"
-        query = query.join(CRMOpportunity.client).filter(or_(CRMOpportunity.title.ilike(like), CRMOpportunity.source.ilike(like), Client.name.ilike(like)))
+        query = (
+            query.join(CRMOpportunity.client)
+            .outerjoin(CRMOpportunity.owner)
+            .filter(or_(
+                CRMOpportunity.title.ilike(like),
+                CRMOpportunity.source.ilike(like),
+                Client.name.ilike(like),
+                User.username.ilike(like),
+                User.email.ilike(like),
+            ))
+        )
     pagination = (
         query.options(
             joinedload(CRMOpportunity.client),
@@ -421,12 +431,14 @@ def pipeline():
     grouped = {stage: [] for stage, _ in STAGES}
     for opportunity in opportunities:
         grouped.setdefault(opportunity.stage, []).append(opportunity)
-    owners = (
-        scope_query_to_company(User.query.filter(User.active.is_(True)), User)
-        .order_by(User.username)
-        .limit(100)
-        .all()
-    )
+    owners_query = scope_query_to_company(User.query.filter(User.active.is_(True)), User)
+    if search:
+        like = f"%{search}%"
+        owners_query = owners_query.filter(or_(User.username.ilike(like), User.email.ilike(like)))
+    owners = owners_query.order_by(User.username).limit(100).all()
+    if owner_filter:
+        selected_owner = scope_query_to_company(User.query, User).filter(User.id == owner_filter).first()
+        _append_if_missing(owners, selected_owner)
     return render_template(
         "crm/pipeline.html",
         grouped=grouped,
