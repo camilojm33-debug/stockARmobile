@@ -1075,6 +1075,23 @@ def test_crm_sale_cannot_be_linked_to_multiple_opportunities(app):
         updated_at=datetime(2026, 1, 1, 10, 0),
     )
     db.session.add(linked_opportunity)
+    db.session.flush()
+    # Simulate a legacy duplicate: editing an already-linked opportunity
+    # must remain possible even while new duplicate links are blocked.
+    legacy_duplicate = CRMOpportunity(
+        company_id=company.id,
+        client_id=client_record.id,
+        title="Vínculo duplicado legado",
+        stage="ganado",
+        status="closed",
+        value=12500,
+        probability=100,
+        owner_user_id=user.id,
+        sale_id=sale.id,
+        created_at=datetime(2026, 1, 2, 10, 0),
+        updated_at=datetime(2026, 1, 2, 10, 0),
+    )
+    db.session.add(legacy_duplicate)
     db.session.commit()
 
     with app.test_request_context("/"):
