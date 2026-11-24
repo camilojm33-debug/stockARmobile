@@ -479,6 +479,19 @@ def register():
 
             existing_user = User.query.filter(db.func.lower(User.email) == form.email.data.strip().lower()).first()
 
+            # Existing standalone identities may predate the stronger password
+            # policy. Let them authenticate with their current password while
+            # requiring 8+ characters for every newly created account.
+            requires_new_password = existing_user is None or registration_mode == "seller"
+            if requires_new_password and len(form.password.data or "") < 8:
+                flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
+                return render_template(
+                    "auth/register.html",
+                    form=form,
+                    selected_plan=selected_plan_code,
+                    registration_mode=registration_mode,
+                )
+
             if registration_mode != "seller" and existing_user is not None:
                 if existing_user.company_id is None and (existing_user.role or "") != "superadmin":
                     if not existing_user.active:
