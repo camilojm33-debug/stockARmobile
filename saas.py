@@ -2511,7 +2511,8 @@ def crm_panel():
         alert_query = alert_query.filter(SaaSAlert.status == alert_status)
 
     lead_total = lead_query.count()
-    leads = lead_query.order_by(SaaSLead.updated_at.desc(), SaaSLead.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    # Keep newly created/imported prospects at the top even when older leads were edited later.
+    leads = lead_query.order_by(SaaSLead.created_at.desc().nullslast(), SaaSLead.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
     tasks = task_query.order_by(SaaSTask.updated_at.desc(), SaaSTask.id.desc()).limit(20).all()
     alerts = alert_query.order_by(SaaSAlert.updated_at.desc(), SaaSAlert.id.desc()).limit(20).all()
 
@@ -4301,6 +4302,54 @@ def crm_lead_status(lead_id):
     db.session.commit()
     flash("Estado del prospecto actualizado.", "success")
     return _redirect_back("saas.crm_panel")
+
+
+@bp.post("/crm/leads/<int:lead_id>/register-contact")
+@superadmin_required
+def crm_lead_register_contact(lead_id):
+    from app import SaaSLead, db, record_audit, utcnow
+
+    _require_superadmin()
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    channel_labels = {
+        "email": "Email",
+        "whatsapp": "WhatsApp",
+        "llamada": "Llamada telefónica",
+        "instagram": "Instagram",
+        "facebook": "Facebook",
+        "presencial": "Presencial",
+        "otro": "Otro",
+    }
+    channel = (request.form.get("channel") or "").strip().lower()
+    if channel not in channel_labels:
+        flash("Seleccioná un medio de contacto válido.", "danger")
+        return _redirect_back("saas.crm_panel")
+
+    detail = (request.form.get("detail") or "").strip()[:500]
+    now = utcnow()
+    lead.last_contacted_at = now
+    lead.last_contact_channel = channel
+    lead.contact_count = int(lead.contact_count or 0) + 1
+    lead.updated_at = now
+    if lead.status == "nuevo":
+        lead.status = "contactado"
+
+    audit_detail = f"Contacto registrado por {channel_labels[channel]}."
+    if detail:
+        audit_detail += f" Detalle: {detail}"
+    record_audit(
+        action="saas_lead_manual_contact",
+        entity="saas_lead",
+        entity_id=lead.id,
+        detail=audit_detail[:1000],
+        user_id=current_user.id,
+        company_id=lead.company_id,
+    )
+    db.session.commit()
+    flash(f"Contacto registrado por {channel_labels[channel]}.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
 
 
 @bp.route("/crm/tasks/<int:task_id>/status", methods=["POST"])

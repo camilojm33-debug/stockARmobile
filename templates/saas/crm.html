@@ -24,6 +24,42 @@
 {% endfor %}
 
 {% for lead in leads %}
+<div class="modal fade" id="registerLeadContact{{ lead.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('saas.crm_lead_register_contact', lead_id=lead.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Registrar contacto · {{ lead.company_name }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted">Registrá un contacto que ya realizaste con este prospecto. Esta acción no envía mensajes ni modifica sus permisos de consentimiento.</p>
+          <label class="form-label fw-semibold" for="leadContactChannel{{ lead.id }}">Medio utilizado</label>
+          <select class="form-select mb-3" id="leadContactChannel{{ lead.id }}" name="channel" required>
+            <option value="">Seleccionar medio</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="email">Email</option>
+            <option value="llamada">Llamada telefónica</option>
+            <option value="instagram">Instagram</option>
+            <option value="facebook">Facebook</option>
+            <option value="presencial">Presencial</option>
+            <option value="otro">Otro</option>
+          </select>
+          <label class="form-label fw-semibold" for="leadContactDetail{{ lead.id }}">Detalle (opcional)</label>
+          <textarea class="form-control" id="leadContactDetail{{ lead.id }}" name="detail" rows="3" maxlength="500" placeholder="Ej.: Se envió presentación y quedó en responder el viernes."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-success"><i class="bi bi-check2-circle me-1"></i>Guardar contacto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+{% for lead in leads %}
 <div class="modal fade" id="deleteLead{{ lead.id }}" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -323,7 +359,7 @@
 
           <div class="crm-table-wrap">
             <table class="table table-hover align-middle mb-0">
-              <thead><tr><th class="text-nowrap"><label class="d-inline-flex align-items-center gap-1 mb-0" title="Seleccionar todos los prospectos visibles"><input class="form-check-input" type="checkbox" id="crmSelectAllLeads"><span class="small">Todos</span></label></th><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Actividad</th><th class="text-end">Acciones</th></tr></thead>
+              <thead><tr><th class="text-nowrap"><label class="d-inline-flex align-items-center gap-1 mb-0" title="Seleccionar todos los prospectos visibles"><input class="form-check-input" type="checkbox" id="crmSelectAllLeads"><span class="small">Todos</span></label></th><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Último contacto</th><th class="text-end">Acciones</th></tr></thead>
               <tbody>
               {% for lead in leads %}
               <tr>
@@ -332,7 +368,18 @@
                 <td><div class="fw-semibold">{{ lead.contact_name }}</div><div class="crm-table-muted">{{ lead.email or lead.phone or 'Sin datos de contacto' }}</div></td>
                 <td><span class="badge text-bg-light border">{{ lead.status|replace('_',' ') }}</span></td>
                 <td><span class="badge {{ 'text-bg-danger' if lead.priority == 'alta' else ('text-bg-warning' if lead.priority == 'media' else 'text-bg-secondary') }}">{{ lead.priority }}</span></td>
-                <td><div class="small">{{ lead.last_contacted_at.strftime('%d/%m %H:%M') if lead.last_contacted_at else 'Sin contacto' }}</div><div class="crm-table-muted">{{ lead.last_contact_channel or lead.source }}</div></td>
+                <td>
+                  {% if lead.last_contacted_at %}
+                  <div class="small"><span class="badge text-bg-success">Contactado</span> {{ lead.last_contacted_at.strftime('%d/%m %H:%M') }}</div>
+                  <div class="crm-table-muted">Medio: {{ {'email':'Email','whatsapp':'WhatsApp','phone':'Llamada','llamada':'Llamada','instagram':'Instagram','facebook':'Facebook','presencial':'Presencial','otro':'Otro'}.get(lead.last_contact_channel, 'No especificado') }}{% if lead.contact_count %} · {{ lead.contact_count }} contacto(s){% endif %}</div>
+                  {% elif lead.status == 'contactado' %}
+                  <div class="small"><span class="badge text-bg-warning">Marcado como contactado</span></div>
+                  <div class="crm-table-muted">Fecha y medio sin registrar</div>
+                  {% else %}
+                  <div class="small"><span class="badge text-bg-secondary">Pendiente de contacto</span></div>
+                  <div class="crm-table-muted">Origen: {{ lead.source|replace('_',' ')|title if lead.source else 'No especificado' }}</div>
+                  {% endif %}
+                </td>
                 <td class="text-end">
                   <div class="crm-action-stack">
                     <form method="post" action="{{ url_for('saas.crm_lead_status', lead_id=lead.id) }}" class="d-inline-flex gap-1">
@@ -340,6 +387,7 @@
                       <select class="form-select form-select-sm" name="status" aria-label="Estado de {{ lead.company_name }}">{% for status in CRM_LEAD_STATUSES %}<option value="{{ status }}" {% if lead.status == status %}selected{% endif %}>{{ status|replace('_',' ') }}</option>{% endfor %}</select>
                       <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                     </form>
+                    <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#registerLeadContact{{ lead.id }}" title="Registrar un contacto ya realizado"><i class="bi bi-person-check me-1"></i>Registrar</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}"><i class="bi bi-broadcast me-1"></i>Canales</button>
                     <form method="post" action="{{ url_for('saas.crm_lead_consent_link', lead_id=lead.id) }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit" title="Generar enlace de consentimiento"><i class="bi bi-link-45deg"></i></button></form>
                     <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteLead{{ lead.id }}" title="Eliminar prospecto"><i class="bi bi-trash3"></i></button>
