@@ -371,7 +371,7 @@
                 <td>
                   {% if lead.last_contacted_at %}
                   <div class="small"><span class="badge text-bg-success">Contactado</span> {{ lead.last_contacted_at.strftime('%d/%m %H:%M') }}</div>
-                  <div class="crm-table-muted">Medio: {{ {'email':'Email','whatsapp':'WhatsApp','phone':'Llamada','llamada':'Llamada','instagram':'Instagram','facebook':'Facebook','presencial':'Presencial','otro':'Otro'}.get(lead.last_contact_channel, lead.last_contact_channel|replace('_',' ')|title if lead.last_contact_channel else 'No especificado') }}{% if lead.contact_count %} · {{ lead.contact_count }} contacto(s){% endif %}</div>
+                  <div class="crm-table-muted">Medio: {{ {'email':'Email','whatsapp':'WhatsApp','phone':'Llamada','llamada':'Llamada','instagram':'Instagram','facebook':'Facebook','presencial':'Presencial','otro':'Otro'}.get(lead.last_contact_channel, 'No especificado') }}{% if lead.contact_count %} · {{ lead.contact_count }} contacto(s){% endif %}</div>
                   {% elif lead.status == 'contactado' %}
                   <div class="small"><span class="badge text-bg-warning">Marcado como contactado</span></div>
                   <div class="crm-table-muted">Fecha y medio sin registrar</div>
