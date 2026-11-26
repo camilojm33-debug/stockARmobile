@@ -1,33 +1,100 @@
 import io
 
 import pytest
-
 from PIL import Image
-from werkzeug.datastructures import FileStorage
-
-from services.product_image_service import ProductImageError, delete_product_image, save_product_image
-
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from werkzeug.datastructures import FileStorage
 
 from app import Company, Product, User, db
+from services.product_image_service import (
+    ProductImageError,
+    delete_product_image,
+    save_product_image,
+)
+
+
+def _image_upload(filename="producto.png", fmt="PNG"):
+    buffer = io.BytesIO()
+    Image.new("RGB", (12, 12), (40, 120, 80)).save(buffer, format=fmt)
+    buffer.seek(0)
+    return FileStorage(stream=buffer, filename=filename)
+
+
+def test_product_image_service_validates_real_image_and_persists(tmp_path, app):
+    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        photo = save_product_image(_image_upload())
+
+        assert photo.startswith("/productos/imagen/")
+        filename = photo.rsplit("/", 1)[-1]
+        stored = tmp_path / filename
+        assert stored.is_file()
+
+        response = app.test_client().get(photo)
+        assert response.status_code == 200
+        assert response.mimetype == "image/png"
+        assert response.data
+        response.close()
+
+        delete_product_image(photo)
+        assert not stored.exists()
+
+
+def test_product_image_service_rejects_fake_image_with_allowed_extension(tmp_path, app):
+    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
+
+    fake = FileStorage(stream=io.BytesIO(b"not-an-image"), filename="producto.png")
+
+    with app.app_context():
+        with pytest.raises(ProductImageError, match="imagen válida"):
+            save_product_image(fake)
+
+
+def test_product_image_service_rejects_images_over_5mb(tmp_path, app):
+    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
+    upload = FileStorage(
+        stream=io.BytesIO(b"x" * (5 * 1024 * 1024 + 1)),
+        filename="producto.png",
+    )
+
+    with app.app_context():
+        with pytest.raises(ProductImageError, match="5 MB"):
+            save_product_image(upload)
+
+
+def test_product_image_service_replacement_removes_previous_file(tmp_path, app):
+    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        first = save_product_image(_image_upload("first.jpg", "JPEG"))
+        second = save_product_image(_image_upload("second.webp", "WEBP"))
+
+        first_path = tmp_path / first.rsplit("/", 1)[-1]
+        second_path = tmp_path / second.rsplit("/", 1)[-1]
+        assert first_path.exists()
+        assert second_path.exists()
+
+        delete_product_image(first)
+        assert not first_path.exists()
+        assert second_path.exists()
 
 
 def _product_edit_fixture(app, tmp_path):
     app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
     with app.app_context():
         company = Company(name="Empresa edición imagen", active=True)
+        db.session.add(company)
+        db.session.flush()
         user = User(
             username="product_image_admin",
             email="product-image-admin@example.test",
             password_hash="test-only",
             role="admin",
             active=True,
-            company_id=None,
+            company_id=company.id,
         )
-        db.session.add(company)
-        db.session.flush()
-        user.company_id = company.id
         product = Product(
             company_id=company.id,
             barcode="IMG-EDIT-001",
@@ -79,7 +146,7 @@ def _new_http_image(filename="nueva.png", fmt="PNG"):
     buffer = io.BytesIO()
     Image.new("RGB", (16, 16), (10, 80, 160)).save(buffer, format=fmt)
     buffer.seek(0)
-    return (buffer, filename)
+    return buffer, filename
 
 
 def test_product_edit_replaces_image_only_after_database_commit(app, tmp_path):
@@ -165,77 +232,3 @@ def test_product_edit_unexpected_commit_error_cleans_new_file_and_propagates(app
         assert current.name == "Producto original"
     assert old_file.is_file()
     assert len(list(tmp_path.iterdir())) == 1
-
-
-
-
-def _image_upload(filename="producto.png", fmt="PNG"):
-    buffer = io.BytesIO()
-    Image.new("RGB", (12, 12), (40, 120, 80)).save(buffer, format=fmt)
-    buffer.seek(0)
-    return FileStorage(stream=buffer, filename=filename)
-
-
-def test_product_image_service_validates_real_image_and_persists(tmp_path, app):
-    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
-
-    with app.app_context():
-        photo = save_product_image(_image_upload())
-
-        assert photo.startswith("/productos/imagen/")
-        filename = photo.rsplit("/", 1)[-1]
-        stored = tmp_path / filename
-        assert stored.is_file()
-
-        response = app.test_client().get(photo)
-        assert response.status_code == 200
-        assert response.mimetype == "image/png"
-        assert response.data
-        response.close()
-
-        delete_product_image(photo)
-        assert not stored.exists()
-
-
-def test_product_image_service_rejects_fake_image_with_allowed_extension(tmp_path, app):
-    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
-
-    fake = FileStorage(stream=io.BytesIO(b"not-an-image"), filename="producto.png")
-
-    with app.app_context():
-        try:
-            save_product_image(fake)
-        except ProductImageError as exc:
-            assert "imagen válida" in str(exc)
-        else:
-            raise AssertionError("Se aceptó un archivo que no era una imagen")
-
-
-def test_product_image_service_rejects_images_over_5mb(tmp_path, app):
-    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
-    upload = FileStorage(stream=io.BytesIO(b"x" * (5 * 1024 * 1024 + 1)), filename="producto.png")
-
-    with app.app_context():
-        try:
-            save_product_image(upload)
-        except ProductImageError as exc:
-            assert "5 MB" in str(exc)
-        else:
-            raise AssertionError("Se aceptó una imagen mayor a 5 MB")
-
-
-def test_product_image_service_replacement_removes_previous_file(tmp_path, app):
-    app.config["PRODUCT_UPLOAD_DIR"] = str(tmp_path)
-
-    with app.app_context():
-        first = save_product_image(_image_upload("first.jpg", "JPEG"))
-        second = save_product_image(_image_upload("second.webp", "WEBP"))
-
-        first_path = tmp_path / first.rsplit("/", 1)[-1]
-        second_path = tmp_path / second.rsplit("/", 1)[-1]
-        assert first_path.exists()
-        assert second_path.exists()
-
-        delete_product_image(first)
-        assert not first_path.exists()
-        assert second_path.exists()
