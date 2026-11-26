@@ -62,3 +62,32 @@ def test_campaign_failure_has_safe_retry_action():
     assert 'Reintentar fallidos' in template
     assert 'def crm_campaign_retry_failed(campaign_id)' in source
     assert 'status not in {"FALLIDA", "ENVIADA_PARCIAL"}' in source
+
+
+
+def test_superadmin_crm_orders_by_creation_and_distinguishes_contact_medium_from_source():
+    template = (ROOT / "templates/saas/crm.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+
+    assert "SaaSLead.created_at.desc().nullslast(), SaaSLead.id.desc()" in source
+    assert "<th>Último contacto</th>" in template
+    assert "Pendiente de contacto" in template
+    assert "Medio:" in template
+    assert "Origen:" in template
+    assert "lead.last_contact_channel" in template
+
+
+def test_superadmin_can_register_a_completed_contact_without_granting_consent():
+    template = (ROOT / "templates/saas/crm.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+
+    assert '@bp.post("/crm/leads/<int:lead_id>/register-contact")' in source
+    assert 'url_for(\'saas.crm_lead_register_contact\', lead_id=lead.id)' in template
+    assert 'name="channel"' in template
+    assert 'value="whatsapp"' in template
+    assert 'value="email"' in template
+    assert 'last_contacted_at = now' in source
+    assert 'last_contact_channel = channel' in source
+    assert 'contact_count = int(lead.contact_count or 0) + 1' in source
+    assert 'saas_lead_manual_contact' in source
+    assert "no envía mensajes ni modifica sus permisos de consentimiento" in template
