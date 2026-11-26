@@ -1762,9 +1762,11 @@
         if (!anchor || event.defaultPrevented || event.button !== 0 ||
             event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         const target = new URL(anchor.href, window.location.origin);
+        // SuperAdmin lists do not all use Bootstrap's .pagination markup. Some
+        // (including the CRM prospect table) use plain anchors, so identify
+        // pagination by the page query parameter and the same-listing check below.
         if (target.origin !== window.location.origin ||
-            !target.searchParams.has('page') ||
-            !(anchor.classList.contains('page-link') || anchor.closest('.pagination'))) return;
+            !target.searchParams.has('page')) return;
         const current = new URL(window.location.href);
         if (listingContext(target.href) !== listingContext(current.href)) return;
         const targetPage = target.searchParams.get('page');
