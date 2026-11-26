@@ -294,6 +294,7 @@ def edit(product_id=None, id=None):
             return redirect(url_for("products.edit", product_id=product.id))
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
+        old_photo = product.photo
         from stockarmobile.branch_context import get_active_branch_id
         branch_id = get_active_branch_id()
         if branch_id is not None:
@@ -314,41 +315,59 @@ def edit(product_id=None, id=None):
             flash(str(exc), "danger")
             return redirect(url_for("products.edit", product_id=product.id))
         upload = request.files.get("photo_file")
-        if upload and (upload.filename or "").strip():
+        has_upload = bool(upload and (upload.filename or "").strip())
+        new_photo = None
+        if has_upload:
             try:
-                product.photo = _save_product_image(upload)
-            except ValueError as exc:
+                new_photo = save_product_image(upload)
+            except ProductImageError as exc:
+                # _apply_product_form and branch stock reconciliation may already
+                # have changed the session. An invalid image must not save any of it.
+                db.session.rollback()
                 flash(str(exc), "danger")
                 return redirect(url_for("products.edit", product_id=product.id))
-        if old_price != float(product.price or 0) or old_cost != float(product.cost_price or 0):
+            product.photo = new_photo
+
+        try:
+            if old_price != float(product.price or 0) or old_cost != float(product.cost_price or 0):
+                db.session.add(
+                    ProductPriceHistory(
+                        product_id=product.id,
+                        company_id=product.company_id,
+                        user_id=current_user.id,
+                        old_price=old_price,
+                        new_price=float(product.price or 0),
+                        old_cost=old_cost,
+                        new_cost=float(product.cost_price or 0),
+                    )
+                )
             db.session.add(
-                ProductPriceHistory(
+                ProductModification(
                     product_id=product.id,
                     company_id=product.company_id,
                     user_id=current_user.id,
-                    old_price=old_price,
-                    new_price=float(product.price or 0),
-                    old_cost=old_cost,
-                    new_cost=float(product.cost_price or 0),
+                    action="edicion",
+                    detail="Producto actualizado",
                 )
             )
-        db.session.add(
-            ProductModification(
-                product_id=product.id,
-                company_id=product.company_id,
-                user_id=current_user.id,
-                action="edicion",
-                detail="Producto actualizado",
-            )
-        )
-        record_audit(action="product_update", entity="product", entity_id=product.id, detail=f"Producto actualizado: {product.name}")
-        try:
+            record_audit(action="product_update", entity="product", entity_id=product.id, detail=f"Producto actualizado: {product.name}")
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
+            if new_photo:
+                delete_product_image(new_photo)
             flash("No se pudo actualizar: el codigo de barras ya existe.", "danger")
             return redirect(url_for("products.index"))
-        if upload and (upload.filename or "").strip():
+        except Exception:
+            # Keep the previous image and avoid orphaning the newly uploaded file
+            # when any unexpected database/audit failure aborts the transaction.
+            db.session.rollback()
+            if new_photo:
+                delete_product_image(new_photo)
+            raise
+
+        # The old file is removed only after the database points to the new image.
+        if new_photo:
             delete_product_image(old_photo)
         flash("Producto actualizado exitosamente.", "success")
         return redirect(url_for("products.index"))
